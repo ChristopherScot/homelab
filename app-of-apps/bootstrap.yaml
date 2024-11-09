@@ -6,9 +6,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/ChristopherScot/homelab/app-of-apps'
+    repoURL: 'https://github.com/ChristopherScot/homelab'
     targetRevision: HEAD
-    path: apps
+    path: app-of-apps/apps
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: default
