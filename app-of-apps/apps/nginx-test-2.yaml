@@ -1,3 +1,4 @@
+# This links to services/deployments etc in my own repo
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
