@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ .Values.namespace }}
+  name: {{ include "demo-helm-app.fullname" . }}
+  labels:
+    {{- include "demo-helm-app.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.port }}
+      nodePort: {{ .Values.service.nodePort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "demo-helm-app.selectorLabels" . | nindent 4 }}

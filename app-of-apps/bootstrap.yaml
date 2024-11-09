@@ -6,9 +6,9 @@ metadata:
 spec:
   project: default
   source:
-    repoURL: 'https://github.com/ChristopherScot/homelab.git'
+    repoURL: 'https://github.com/ChristopherScot/homelab/app-of-apps'
     targetRevision: HEAD
-    path: app-of-apps
+    path: apps
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: default
@@ -16,10 +16,10 @@ spec:
     automated:
       prune: true
       selfHeal: true
-  sources:
-    - repoURL: 'https://github.com/ChristopherScot/homelab.git'
-      targetRevision: HEAD
-      path: demo-helm-app
-    - repoURL: 'https://github.com/ChristopherScot/homelab.git'
-      targetRevision: HEAD
-      path: nginx-test
+  # sources:
+  #   - repoURL: 'https://github.com/ChristopherScot/homelab.git'
+  #     targetRevision: HEAD
+  #     path: demo-helm-app
+  #   - repoURL: 'https://github.com/ChristopherScot/homelab.git'
+  #     targetRevision: HEAD
+  #     path: nginx-test
