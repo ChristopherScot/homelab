@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: 'https://github.com/ChristopherScot/homelab'
     targetRevision: HEAD
-    path: ngninx-test-2
+    path: nginx-test-2
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: default
