@@ -11,19 +11,22 @@ spec:
     chart: metallb
     helm:
       values: |
-        configInline:
-          address-pools:
-            - name: default
-              protocol: layer2
-              addresses:
-                - 192.168.50.210-192.168.32.255
+        controller:
+          tolerations:
+            - key: "node-role.kubernetes.io/master"
+              operator: "Exists"
+              effect: "NoSchedule"
+        speaker:
+          tolerations:
+            - key: "node-role.kubernetes.io/master"
+              operator: "Exists"
+              effect: "NoSchedule"
   destination:
     server: https://kubernetes.default.svc
     namespace: metallb-system
   syncPolicy:
-    syncOptions:
-      - CreateNamespace=true
     automated:
       prune: true
-      allowEmpty: true
       selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
