@@ -25,7 +25,7 @@ metadata:
 spec:
   type: NodePort
   selector:
-    app: argocd-server
+    svc: argocd-server
   ports:
   - port: 80
     targetPort: 80
