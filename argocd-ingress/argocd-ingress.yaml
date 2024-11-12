@@ -1,32 +1,19 @@
-# apiVersion: networking.k8s.io/v1
-# kind: Ingress
-# metadata:
-#   name: argocd-ingress
-#   namespace: argocd
-#   annotations:
-#     nginx.ingress.kubernetes.io/rewrite-target: /
-# spec:
-#   rules:
-#     - host: server
-#       http:
-#         paths:
-#           - path: /
-#             pathType: Prefix
-#             backend:
-#               service:
-#                 name: argocd-server
-#                 port:
-#                   number: 80
-
-apiVersion: v1
-kind: Service
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: argocd-server-nodeport
+  name: argocd-ingress
+  namespace: argocd
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
-  type: NodePort
-  selector:
-    svc: argocd-server
-  ports:
-  - port: 80
-    targetPort: 80
-    nodePort: 32010
+  rules:
+    - host: server
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: argocd-server
+                port:
+                  number: 80
