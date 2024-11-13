@@ -97,9 +97,10 @@ echo "k3s cluster with NGINX Ingress, MetalLB, and ArgoCD is up and running!"
 
 
 # Output instructions to get the token for joining nodes
-PRIMARY_IP=$(get_ip_address)
 get_ip_address() {
     hostname -I | awk '{print $1}'
 }
+PRIMARY_IP=$(get_ip_address)
+
 echo "To join additional nodes to the cluster se the following command on the new node:"
 echo "sudo ./bootstrap/node.sh $PRIMARY_IP $(sudo cat /var/lib/rancher/k3s/server/node-token)"
