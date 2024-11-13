@@ -11,7 +11,7 @@ spec:
     - host: server
       http:
         paths:
-          - path: /
+          - path: /argo
             pathType: Prefix
             backend:
               service:
