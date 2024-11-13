@@ -18,17 +18,6 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 echo "Setting permissions for kubeconfig file..."
 sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-# Install NGINX Ingress Controller
-echo "Installing NGINX Ingress Controller..."
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
-
-# Wait for NGINX Ingress Controller to be up and running
-echo "Waiting for NGINX Ingress Controller to be up and running..."
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=90s
-
 # Install MetalLB
 echo "Installing MetalLB..."
 kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-native.yaml
@@ -55,6 +44,17 @@ echo "Waiting for MetalLB to be up and running..."
 kubectl wait --namespace metallb-system \
   --for=condition=ready pod \
   --selector=app=metallb \
+  --timeout=90s
+
+# Install NGINX Ingress Controller
+echo "Installing NGINX Ingress Controller..."
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+
+# Wait for NGINX Ingress Controller to be up and running
+echo "Waiting for NGINX Ingress Controller to be up and running..."
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
   --timeout=90s
 
 # Install ArgoCD
@@ -86,5 +86,11 @@ spec:
   selector:
     app.kubernetes.io/name: argocd-server
 EOF
+
+# Output ArgoCD username and password
+echo "Retrieving ArgoCD initial admin password..."
+ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 --decode)
+echo "ArgoCD Username: admin"
+echo "ArgoCD Password: $ARGOCD_PASSWORD"
 
 echo "k3s cluster with NGINX Ingress, MetalLB, and ArgoCD is up and running!"
