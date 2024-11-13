@@ -8,10 +8,10 @@ metadata:
 spec:
   ingressClassName: nginx 
   rules:
-    - host: server
+    - host: homelab
       http:
         paths:
-          - path: /argo
+          - path: /
             pathType: Prefix
             backend:
               service:
