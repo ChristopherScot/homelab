@@ -49,7 +49,7 @@ cat <<EOF | kubectl apply -f -
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
-  name: primary-ipv4
+  name: default
   namespace: metallb-system
 spec:
   ipAddressPools:
