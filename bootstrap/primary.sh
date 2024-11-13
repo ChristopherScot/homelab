@@ -36,7 +36,7 @@ data:
     - name: default
       protocol: layer2
       addresses:
-      - 192.168.50.240-192.168.50.250
+      - 192.168.50.225-192.168.50.250
 EOF
 
 # Wait for MetalLB to be up and running
