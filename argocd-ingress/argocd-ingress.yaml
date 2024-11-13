@@ -6,10 +6,10 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    app.kubernetes.io/name: argocd-server-nodeport
+    app.kubernetes.io/name: argocd-server
   ports:
   - port: 80
-    targetPort: 32080
+    targetPort: 80
     name: http
 ---
 apiVersion: networking.k8s.io/v1
@@ -28,6 +28,6 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: argocd-server-nodeport
+            name: argocd-server
             port:
-              number: 32080
+              number: 80
