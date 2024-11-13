@@ -25,18 +25,14 @@ kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/m
 # Create MetalLB ConfigMap
 echo "Creating MetalLB ConfigMap..."
 cat <<EOF | kubectl apply -f -
-apiVersion: v1
-kind: ConfigMap
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
 metadata:
+  name: first-pool
   namespace: metallb-system
-  name: config
-data:
-  config: |
-    address-pools:
-    - name: default
-      protocol: layer2
-      addresses:
-      - 192.168.50.225-192.168.50.250
+spec:
+  addresses:
+  - 192.168.50.225-192.168.50.250
 EOF
 
 # Wait for MetalLB to be up and running
