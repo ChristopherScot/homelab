@@ -14,6 +14,10 @@ sleep 30
 # Set KUBECONFIG environment variable
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
+# Set permissions for kubeconfig file
+echo "Setting permissions for kubeconfig file..."
+sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+
 # Install NGINX Ingress Controller
 echo "Installing NGINX Ingress Controller..."
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
