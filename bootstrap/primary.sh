@@ -3,9 +3,9 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-# Install k3s with Traefik and Service Load Balancer disabled
-echo "Installing k3s with Traefik and Service Load Balancer disabled..."
-curl -sfL https://get.k3s.io | sh -s - --disable traefik --disable servicelb
+# Install k3s with Traefik and Service Load Balancer disabled, and use etcd as the datastore
+echo "Installing k3s with Traefik and Service Load Balancer disabled, using etcd as the datastore..."
+curl -sfL https://get.k3s.io | sh -s - server --disable traefik --disable servicelb --cluster-init
 
 # Wait for k3s to be up and running
 echo "Waiting for k3s to be up and running..."
@@ -94,3 +94,10 @@ echo "ArgoCD Username: admin"
 echo "ArgoCD Password: $ARGOCD_PASSWORD"
 
 echo "k3s cluster with NGINX Ingress, MetalLB, and ArgoCD is up and running!"
+
+
+# Output instructions to get the token for joining nodes
+echo "To join additional nodes to the cluster, use the following token:"
+echo "Token: $(sudo cat /var/lib/rancher/k3s/server/node-token)"
+echo "Use the following command on the new node:"
+echo "sudo ./attach-node.sh <MASTER_IP> $(sudo cat /var/lib/rancher/k3s/server/node-token)"
