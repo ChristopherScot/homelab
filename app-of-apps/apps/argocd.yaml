@@ -1,54 +1,20 @@
-# apiVersion: argoproj.io/v1alpha1
-# kind: Application
-# metadata:
-#   name: argocd
-#   finalizers:
-#   - resources-finalizer.argocd.argoproj.io
-# spec:
-#   project: default
-#   source:
-#     repoURL: https://github.com/ChristopherScot/homelab
-#     path: argocd
-#     targetRevision: HEAD
-#   destination:
-#     server: https://kubernetes.default.svc
-#     namespace: default
-#   syncPolicy:
-#     automated:
-#       selfHeal: true
-#       prune: true
-
-
----
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: argo
-  namespace: argo-system
-  annotations:
-    argocd.argoproj.io/sync-wave: '0'
-  labels:
-    argocd.argoproj.io/instance: argo
+  name: argocd
+  namespace: argocd
 spec:
-  project: home-kubernetes
-  sources:
-    - repoURL: #{ bootstrap_github_address }#
-      path: kubernetes/apps/argo-system/argo
-      targetRevision: #{ bootstrap_github_branch|default('main', true) }#
-      ref: repo
-    - repoURL: ghcr.io/argoproj/argo-helm
-      chart: argo-cd
-      targetRevision: 7.7.1
-      helm:
-        releaseName: argo
-        valueFiles:
-          - $repo/kubernetes/apps/argo-system/argo/values.sops.yaml
+  project: default
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    targetRevision: "7.7.2"  # Specify the desired version
+    chart: argo-cd
   destination:
-    name: in-cluster
-    namespace: argo-system
+    server: 'https://kubernetes.default.svc'
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
     syncOptions:
-    - CreateNamespace=true
+      - CreateNamespace=true
