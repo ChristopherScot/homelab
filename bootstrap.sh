@@ -31,8 +31,7 @@ kubectl wait --namespace ingress-nginx \
 
 # Install MetalLB
 echo "Installing MetalLB..."
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.12.1/manifests/namespace.yaml
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.12.1/manifests/metallb.yaml
+kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-native.yaml
 
 # Create MetalLB ConfigMap
 echo "Creating MetalLB ConfigMap..."
