@@ -7,10 +7,10 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   rules:
-    - host: server
+    - host: homelab
       http:
         paths:
-          - path: /
+          - path: /argo
             pathType: Prefix
             backend:
               service:
