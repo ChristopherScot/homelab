@@ -22,8 +22,17 @@ sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 echo "Installing MetalLB..."
 kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-native.yaml
 
+
+# Wait for MetalLB to be up and running
+echo "Waiting for MetalLB to be up and running..."
+kubectl wait --namespace metallb-system \
+  --for=condition=ready pod \
+  --selector=app=metallb \
+  --timeout=90s
+
+
 # Create MetalLB IP Address Pool
-echo "Creating MetalLB ConfigMap..."
+echo "Creating MetalLB Address Pool..."
 cat <<EOF | kubectl apply -f -
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
@@ -46,13 +55,6 @@ spec:
   ipAddressPools:
   - primary-pool-ipv4
 EOF
-
-# Wait for MetalLB to be up and running
-echo "Waiting for MetalLB to be up and running..."
-kubectl wait --namespace metallb-system \
-  --for=condition=ready pod \
-  --selector=app=metallb \
-  --timeout=90s
 
 # Install NGINX Ingress Controller
 echo "Installing NGINX Ingress Controller..."
