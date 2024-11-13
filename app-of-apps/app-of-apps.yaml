@@ -16,10 +16,4 @@ spec:
     automated:
       prune: true
       selfHeal: true
-  # sources:
-  #   - repoURL: 'https://github.com/ChristopherScot/homelab.git'
-  #     targetRevision: HEAD
-  #     path: demo-helm-app
-  #   - repoURL: 'https://github.com/ChristopherScot/homelab.git'
-  #     targetRevision: HEAD
-  #     path: nginx-test
+  
