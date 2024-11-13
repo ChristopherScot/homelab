@@ -22,17 +22,29 @@ sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 echo "Installing MetalLB..."
 kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-native.yaml
 
-# Create MetalLB ConfigMap
+# Create MetalLB IP Address Pool
 echo "Creating MetalLB ConfigMap..."
 cat <<EOF | kubectl apply -f -
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
-  name: first-pool
+  name: primary-pool-ipv4
   namespace: metallb-system
 spec:
   addresses:
   - 192.168.50.225-192.168.50.250
+EOF
+
+echo "Creating MetalLB L2Advertisement..."
+cat <<EOF | kubectl apply -f -
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: primary-ipv4
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - primary-pool-ipv4
 EOF
 
 # Wait for MetalLB to be up and running
