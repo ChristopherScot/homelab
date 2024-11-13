@@ -36,7 +36,7 @@ data:
     - name: default
       protocol: layer2
       addresses:
-      - 192.168.1.240-192.168.1.250
+      - 192.168.50.240-192.168.50.250
 EOF
 
 # Wait for MetalLB to be up and running
@@ -102,4 +102,4 @@ get_ip_address() {
     hostname -I | awk '{print $1}'
 }
 echo "To join additional nodes to the cluster se the following command on the new node:"
-echo "sudo ./node.sh $PRIMARY_IP $(sudo cat /var/lib/rancher/k3s/server/node-token)"
+echo "sudo ./bootstrap/node.sh $PRIMARY_IP $(sudo cat /var/lib/rancher/k3s/server/node-token)"
