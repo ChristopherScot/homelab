@@ -4,6 +4,7 @@ metadata:
   name: nginx-frontdoor
   namespace: ingress-nginx
 spec:
+  ingressClassName: nginx 
   type: LoadBalancer
   selector:
     app: nginx-frontdoor
