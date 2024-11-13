@@ -6,7 +6,7 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/name: argocd-server
   ports:
   - port: 80
     targetPort: 80
