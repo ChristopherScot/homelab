@@ -1,37 +1,20 @@
-apiVersion: v1
-kind: Service
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
 metadata:
-  name: argo-lb
+  name: argocd-ingress
   namespace: argocd
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
-  type: LoadBalancer
-  selector:
-    app: argocd-server
-  ports:
-  - port: 80
-    targetPort: 80
-    name: http
-# ---
-# apiVersion: networking.k8s.io/v1
-# kind: Ingress
-# metadata:
-#   name: argocd-ingress
-#   namespace: argocd
-#   annotations:
-#     nginx.ingress.kubernetes.io/rewrite-target: /
-# spec:
-#   rules:
-#   - host: home.lab
-#     http:
-#       paths:
-#       - path: /
-#         pathType: Prefix
-#         backend:
-#           service:
-#             name: argocd-lb
-#             port:
-#               number: 80
-#   tls:
-#   - hosts:
-#     - home.lab
-#     secretName: argocd-tls
+  rules:
+  - host: home.lab
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: argo-lb
+            port:
+              number: 80

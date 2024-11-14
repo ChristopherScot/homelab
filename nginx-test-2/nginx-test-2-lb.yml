@@ -6,7 +6,7 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    app: argocd-server
+    app: nginx-test-2
   ports:
   - port: 80
     targetPort: 80
