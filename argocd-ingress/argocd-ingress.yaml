@@ -6,7 +6,7 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    app.kubernetes.io/name: argocd-server
+    app: argocd-server
   ports:
   - port: 80
     targetPort: 80
