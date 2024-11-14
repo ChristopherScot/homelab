@@ -6,7 +6,7 @@ metadata:
 spec:
   type: LoadBalancer
   selector:
-    app: lab-ingress
+    name: lab-ingress
   ports:
   - port: 80
     targetPort: 80
