@@ -3,6 +3,8 @@ kind: Service
 metadata:
   name: lab-ingress
   namespace: ingress-nginx
+  annotations:
+    metallb.universe.tf/address-pool: pool
 spec:
   type: LoadBalancer
   selector:
