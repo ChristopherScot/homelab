@@ -4,7 +4,7 @@ metadata:
   name: lab-ingress
   namespace: ingress-nginx
   annotations:
-    metallb.universe.tf/address-pool: pool
+    metallb.universe.tf/address-pool: primary-pool-ipv4
 spec:
   type: LoadBalancer
   selector:

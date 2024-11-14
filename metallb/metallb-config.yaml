@@ -1,7 +1,7 @@
 apiVersion: metallb.io/v1beta1
 kind: IPAddressPool
 metadata:
-  name: pool
+  name: primary-pool-ipv4
   namespace: metallb-system
 spec:
   addresses:
@@ -14,4 +14,4 @@ metadata:
   namespace: metallb-system
 spec:
   ipAddressPools:
-  - pool
+  - primary-pool-ipv4
