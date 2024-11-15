@@ -40,14 +40,14 @@ spec:
       serviceAccountName: argocd-server
       containers:
         - name: argocd-server
-          image: quay.io/argoproj/argocd:v2.12.7
+          image: quay.io/argoproj/argocd:v2.13.0
           ports:
             - containerPort: 8080
           readinessProbe:
             httpGet:
               path: /healthz
               port: 8080
-            initialDelaySeconds: 5
+            initialDelaySeconds: 10
             periodSeconds: 10
           args:
             - server
