@@ -40,7 +40,7 @@ spec:
       serviceAccountName: argocd-server
       containers:
         - name: argocd-server
-          image: argoproj/argocd:v2.12.7
+          image: quay.io/argoproj/argocd:v2.12.7
           ports:
             - containerPort: 8080
           readinessProbe:
