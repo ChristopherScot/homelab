@@ -16,7 +16,7 @@ spec:
           service:
             name: nginx-service
             port:
-              number: 32000
+              number: 80
   - host: test2.lab
     http:
       paths:
@@ -26,4 +26,4 @@ spec:
           service:
             name: nginx-service-2
             port:
-              number: 32003
+              number: 80
