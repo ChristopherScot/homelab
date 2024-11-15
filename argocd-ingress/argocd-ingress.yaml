@@ -26,6 +26,7 @@ metadata:
   namespace: argocd
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: external
   rules:
