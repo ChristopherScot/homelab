@@ -7,16 +7,6 @@ metadata:
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   rules:
-  - host: argo.lab
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: argo-lb
-            port:
-              number: 80
   - host: test.lab
     http:
       paths:
@@ -24,6 +14,6 @@ spec:
         pathType: Prefix
         backend:
           service:
-            name: nginx-test-2
+            name: nginx-service-2
             port:
               number: 80
