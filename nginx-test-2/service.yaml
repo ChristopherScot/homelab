@@ -3,10 +3,10 @@ kind: Service
 metadata:
   name: nginx-service-2
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: nginx-test-2
   ports:
   - port: 80
     targetPort: 80
-    nodePort: 32003
+    name: http
