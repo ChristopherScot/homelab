@@ -49,5 +49,6 @@ spec:
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 10
+          command: ["argocd-server"]
           args:
             - --insecure
