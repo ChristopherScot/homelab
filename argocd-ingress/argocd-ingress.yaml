@@ -39,8 +39,4 @@ spec:
           service:
             name: argocd-server
             port:
-              number: 8080
-  tls:
-  - hosts:
-    - argo.lab
-    secretName: argocd-tls
+              number: 80
