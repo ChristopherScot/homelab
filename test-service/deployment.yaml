@@ -16,6 +16,7 @@ spec:
       labels:
         app: test-service
         team: fake-team
+        someotherThing: value
     spec:
       containers:
       - name: test-service
