@@ -19,6 +19,6 @@ spec:
     spec:
       containers:
       - name: test-service
-        image: nginx:latest
+        image: ghcr.io/christopherscot/go-server-template:main
         ports:
         - containerPort: 80
