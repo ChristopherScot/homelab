@@ -17,8 +17,8 @@ metadata:
 spec:
   type: LoadBalancer
   ports:
-    - port: 80
-      targetPort: 8080
+  - port: 80
+    targetPort: 8080
   selector:
     app.kubernetes.io/name: argocd-server
 ---
@@ -39,19 +39,25 @@ spec:
     spec:
       serviceAccountName: argocd-server
       containers:
-        - name: argocd-server
-          image: quay.io/argoproj/argocd:v2.13.0
-          ports:
-            - containerPort: 8080
-          readinessProbe:
-            httpGet:
-              path: /healthz
-              port: 8080
-            initialDelaySeconds: 10
-            periodSeconds: 10
-          command: ["argocd-server"]
-          args:
-            - --insecure
+      - name: argocd-server
+        image: quay.io/argoproj/argocd:v2.13.0
+        ports:
+        - containerPort: 8080
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        command: [ "argocd-server" ]
+        args:
+        - --insecure
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: argocd-redis
+              key: auth
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -61,4 +67,3 @@ metadata:
 data:
   # Disable RBAC
   server.rbac.enabled: "false"
-  
