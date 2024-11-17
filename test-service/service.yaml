@@ -7,11 +7,9 @@ metadata:
     app: test-service
     team: fake-team
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
   - port: 80
-    targetPort: 80
-    nodePort: 92929
   selector:
     app: test-service
     someotherThing: value
