@@ -21,4 +21,4 @@ spec:
       - name: test-service
         image: ghcr.io/christopherscot/go-server-template:main
         ports:
-        - containerPort: 80
+        - containerPort: 3000
