@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-service
+  namespace: default
+  labels:
+    app: test-service
+    team: fake-team
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: test-service
+  template:
+    metadata:
+      labels:
+        app: test-service
+        team: fake-team
+    spec:
+      containers:
+      - name: test-service
+        image: nginx:latest
+        ports:
+        - containerPort: 80
