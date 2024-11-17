@@ -7,6 +7,7 @@ metadata:
     app: test-service
     team: fake-team
 spec:
+  type: NodePort
   ports:
   - port: 80
     targetPort: 80
