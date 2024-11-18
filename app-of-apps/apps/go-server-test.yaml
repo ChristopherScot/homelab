@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: go-server-test
+  namespace: argocd
+  labels:
+    team: me-myself-and-i
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: go-server-test
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
