@@ -1,18 +1,18 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cloudnative-pg-clusters
-  namespace: argocd
+  name: pg-clusters
 spec:
-  project: default
+  destination:
+    namespace: default
+    server: 'https://kubernetes.default.svc'
   source:
+    path: cloudnative-pg-clusters
     repoURL: 'https://github.com/ChristopherScot/homelab'
     targetRevision: HEAD
-    path: cloudnative-pg-clusters
-  destination:
-    server: 'https://kubernetes.default.svc'
-    namespace: default
+  sources: []
+  project: default
   syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
+    automated: {}
+    syncOptions:
+    - CreateNamespace=true
