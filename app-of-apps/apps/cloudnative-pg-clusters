@@ -11,7 +11,7 @@ spec:
     path: cloudnative-pg-clusters
   destination:
     server: 'https://kubernetes.default.svc'
-    namespace: cnpg-system
+    namespace: default
   syncPolicy:
     automated:
       prune: true
