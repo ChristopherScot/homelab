@@ -20,6 +20,6 @@ spec:
     spec:
       containers:
         - name: go-server-test
-          image: ghcr.io/christopherscot/go-server-template:main
+          image: ghcr.io/christopherscot/go-server-template:772aefc70cb2ba41e5031377262231102faae6e7
           ports: 
           - containerPort: 3000
