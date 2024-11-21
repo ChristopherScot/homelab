@@ -4,6 +4,8 @@ kind: Application
 metadata:
   name: nginx-test-2
   namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
