@@ -28,13 +28,3 @@ spec:
             name: nginx-service-2
             port:
               number: 80
-  - host: grafana.lab
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: prometheus-stack-grafana
-            port:
-              number: 80
