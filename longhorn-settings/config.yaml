@@ -1,0 +1,6 @@
+apiVersion: longhorn.io/v1beta1
+kind: Setting
+metadata:
+  name: backup-target
+  namespace: longhorn-system
+value: nfs://node1.local/media/chris/node2-hdd

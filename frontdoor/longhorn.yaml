@@ -57,4 +57,17 @@ spec:
   resources:
     requests:
       storage: 500Gi
-  volumeName: nfs-pv
+  volumeName: nfs-pv-node1
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: nfs-pvc
+  namespace: longhorn-system
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Gi
+  volumeName: nfs-pv-node2
