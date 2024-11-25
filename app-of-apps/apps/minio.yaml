@@ -12,6 +12,7 @@ spec:
     helm:
       values: |
         persistence:
+          replicas: 2
           enabled: true
           storageClass: longhorn
           accessMode: ReadWriteOnce

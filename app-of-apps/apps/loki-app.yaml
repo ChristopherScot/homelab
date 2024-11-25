@@ -8,15 +8,7 @@ spec:
   source:
     repoURL: https://grafana.github.io/helm-charts
     chart: loki
-    targetRevision: 2.5.0 
-    helm:
-      values: |
-        persistence:
-          enabled: true
-          storageClassName: longhorn
-          accessModes:
-            - ReadWriteOnce
-          size: 10Gi
+    targetRevision: 3.3.0
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
