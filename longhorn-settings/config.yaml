@@ -3,4 +3,21 @@ kind: Setting
 metadata:
   name: backup-target
   namespace: longhorn-system
-value: nfs://node1.local/media/chris/node2-hdd
+value: nfs://192.168.50.77:/media/chris/node2-hdd
+---
+apiVersion: longhorn.io/v1beta1
+kind: RecurringJob
+metadata:
+  name: auto-backup
+  namespace: longhorn-system
+spec:
+  # weekly backup
+  cron: "0 0 * * 0"
+  task: "snapshot"
+  groups:
+  - default
+  retain: 1
+  concurrency: 2
+  labels:
+    app: longhorn
+    type: auto-backup
