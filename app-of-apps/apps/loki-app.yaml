@@ -11,6 +11,7 @@ spec:
     targetRevision: 3.3.0
     helm:
       values: |
+        auth_enabled: false
         servicemonitor:
           enabled: false
   destination:
