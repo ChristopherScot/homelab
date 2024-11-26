@@ -12,6 +12,7 @@ spec:
     helm:
       values: |
         replicas: 2
+        mode: standalone
         persistence:
           enabled: true
           storageClass: longhorn
