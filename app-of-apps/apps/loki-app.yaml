@@ -9,15 +9,15 @@ spec:
     server: https://kubernetes.default.svc
     namespace: monitoring
   sources:
+  - repoURL: https://github.com/ChristopherScot/homelab.git
+    path: loki
+    ref: values
   - repoURL: https://grafana.github.io/helm-charts
     chart: loki
     targetRevision: 3.3.0
     helm:
       valueFiles:
       - $values/values.yaml
-  - repoURL: https://github.com/ChristopherScot/homelab.git
-    path: loki
-    ref: values
   syncPolicy:
     automated:
       prune: true
