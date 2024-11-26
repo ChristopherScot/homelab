@@ -6,6 +6,13 @@ metadata:
 value: nfs://192.168.50.77:/media/chris/node2-hdd
 ---
 apiVersion: longhorn.io/v1beta1
+kind: Setting
+metadata:
+  name: default-replica-count
+  namespace: longhorn-system
+value: "2"
+---
+apiVersion: longhorn.io/v1beta1
 kind: RecurringJob
 metadata:
   name: auto-backup
