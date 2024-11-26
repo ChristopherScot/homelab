@@ -63,3 +63,4 @@ persistence:
   accessModes:
   - ReadWriteOnce
   size: 50Gi
+  numberOfReplicas: 2
