@@ -11,14 +11,13 @@ spec:
   sources:
   - repoURL: https://github.com/ChristopherScot/homelab.git
     targetRevision: HEAD
-    path: loki
     ref: values
   - repoURL: https://grafana.github.io/helm-charts
     chart: loki
     targetRevision: 3.3.0
     helm:
       valueFiles:
-      - "\$values/values.yaml"
+      - "$values/loki/values.yaml"
   syncPolicy:
     automated:
       prune: true
