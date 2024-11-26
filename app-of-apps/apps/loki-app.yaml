@@ -10,22 +10,8 @@ spec:
     chart: loki
     targetRevision: 3.3.0
     helm:
-      values: |
-        auth_enabled: false
-        servicemonitor:
-          enabled: false
-        config:
-          table_manager:
-            retention_deletes_enabled: true
-            retention_period: 168h
-        singleBinary: true
-        replicas: 1
-        persistence:
-          enabled: true
-          storageClassName: longhorn
-          accessModes:
-            - ReadWriteOnce
-          size: 50Gi
+      valueFiles:
+      - https://github.com/ChristopherScot/homelab/loki/values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
