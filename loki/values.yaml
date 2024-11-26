@@ -5,7 +5,7 @@ loki:
     configs:
     - from: "2024-04-01"
       store: tsdb
-      object_store: s3
+      object_store: filesystem
       schema: v13
       index:
         prefix: loki_index_
@@ -18,12 +18,12 @@ loki:
     retention_period: 672h # 28 days retention
   compactor:
     retention_enabled: true
-    delete_request_store: s3
+    delete_request_store: filesystem
   ruler:
     enable_api: true
 
 minio:
-  enabled: true
+  enabled: false
 
 deploymentMode: SingleBinary
 
@@ -56,3 +56,10 @@ bloomCompactor:
   replicas: 0
 bloomGateway:
   replicas: 0
+
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  accessModes:
+  - ReadWriteOnce
+  size: 50Gi
