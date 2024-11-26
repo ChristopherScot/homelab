@@ -11,7 +11,7 @@ spec:
     targetRevision: 3.3.0
     helm:
       valueFiles:
-      - https://github.com/ChristopherScot/homelab/loki/values.yaml
+      - https://raw.githubusercontent.com/ChristopherScot/homelab/refs/heads/main/loki/values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: monitoring
