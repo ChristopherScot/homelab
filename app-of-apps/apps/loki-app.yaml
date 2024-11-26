@@ -18,7 +18,7 @@ spec:
     targetRevision: 3.3.0
     helm:
       valueFiles:
-      - $values/values.yaml
+      - "\$values/values.yaml"
   syncPolicy:
     automated:
       prune: true
