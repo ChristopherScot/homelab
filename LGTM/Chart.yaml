@@ -1,5 +1,5 @@
 apiVersion: v2
-name: LGTM-umbrella-chart
+name: lgtm-umbrella-chart
 description: Umbrella chart for LGTM stack
 
 type: application
