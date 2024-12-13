@@ -1,0 +1,14 @@
+apiVersion: v2
+name: LGTM-umbrella-chart
+description: Umbrella chart for LGTM stack
+
+type: application
+version: 0.1.0
+appVersion: "1.16.0"
+dependencies:
+- name: grafana
+  version: 8.7.0
+  repository: https://grafana.github.io/helm-charts
+- name: vault
+  version: 0.29.1
+  repository: https://helm.releases.hashicorp.com
