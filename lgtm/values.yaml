@@ -5,7 +5,7 @@ loki:
     configs:
     - from: "2024-04-01"
       store: tsdb
-      object_store: s3
+      object_store: filesystem
       schema: v13
       index:
         prefix: loki_index_
@@ -52,3 +52,10 @@ bloomCompactor:
   replicas: 0
 bloomGateway:
   replicas: 0
+
+persistence:
+  enabled: true
+  storageClassName: longhorn
+  accessModes:
+  - ReadWriteOnce
+  size: 50Gi

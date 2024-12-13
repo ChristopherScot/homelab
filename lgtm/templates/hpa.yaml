@@ -2,14 +2,14 @@
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: {{ include "loki-umbrella-chart.fullname" . }}
+  name: {{ include "lgtm-umbrella-chart.fullname" . }}
   labels:
-    {{- include "loki-umbrella-chart.labels" . | nindent 4 }}
+    {{- include "lgtm-umbrella-chart.labels" . | nindent 4 }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: {{ include "loki-umbrella-chart.fullname" . }}
+    name: {{ include "lgtm-umbrella-chart.fullname" . }}
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
