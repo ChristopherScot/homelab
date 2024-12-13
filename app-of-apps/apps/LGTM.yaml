@@ -12,7 +12,7 @@ spec:
     namespace: monitoring
   source:
     path: lgtm
-    repoURL: 'https://github.com/ChristopherScot/homelab.git'
+    repoURL: https://github.com/ChristopherScot/homelab
     targetRevision: HEAD
     helm:
       valueFiles:
