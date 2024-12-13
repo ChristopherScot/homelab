@@ -17,7 +17,7 @@ spec:
     repoURL: 'https://github.com/philcz16/app-of-apps'
     targetRevision: HEAD
     helm:
-      valuesFiles:
+      valueFiles:
       - vault.yaml
   sources: []
   project: default

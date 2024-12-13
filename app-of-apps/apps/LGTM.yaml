@@ -14,7 +14,7 @@ spec:
     repoURL: 'https://github.com/ChristopherScot/homelab.git'
     targetRevision: HEAD
     helm:
-      valuesFiles:
+      valueFiles:
       - values.yaml
   sources: []
   project: default
