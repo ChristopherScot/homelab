@@ -21,5 +21,3 @@ spec:
   syncPolicy:
     automated: { prune: true, selfHeal: true }
     syncOptions: [ CreateNamespace=true ]
-  finalizers:
-  - resources-finalizer.argocd.argoproj.io
