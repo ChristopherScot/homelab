@@ -68,6 +68,10 @@ loki:
     accessModes:
     - ReadWriteOnce
     size: 50Gi
+  storage:
+  type: filesystem
+  filesystem:
+    directory: /data/loki
   schemaConfig:
     configs:
     - from: "2024-04-01"
