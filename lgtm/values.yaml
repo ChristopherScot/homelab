@@ -188,3 +188,7 @@ bloomCompactor:
   replicas: 0
 bloomGateway:
   replicas: 0
+
+# Disable ServiceMonitor resources
+serviceMonitor:
+  enabled: false
