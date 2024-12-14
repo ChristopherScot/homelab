@@ -107,10 +107,10 @@ mimir:
     resources:
       requests:
         cpu: 20m
-  # minio:
-  #   resources:
-  #     requests:
-  #       cpu: 20m
+  minio:
+    resources:
+      requests:
+        cpu: 20m
   rollout_operator:
     resources:
       requests:
