@@ -66,7 +66,7 @@ promtail:
     logLevel: info
     serverPort: 3101
     clients:
-      url: http://{{ .Release.Name }}-loki-distributed-gateway.{{ .Release.Namespace }}.svc.cluster.local:80/loki/api/v1/push
+    - url: http://lgtm-loki-distributed-gateway.monitoring.svc.cluster.local:80/loki/api/v1/push
 fluent-bit:
   enabled: true
 grafana:
