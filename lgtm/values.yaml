@@ -56,10 +56,16 @@ loki:
   ruler:
     enable_api: true
   minio:
-    enabled: true
+    enabled: false
   monitoring:
     selfMonitoring:
       enabled: false
+  persistence:
+    enabled: true
+    storageClassName: longhorn
+    accessModes:
+    - ReadWriteOnce
+    size: 50Gi
 # -- Mimir chart values. Resources are set to a minimum by default.
 mimir:
   # -- Deploy Mimir if enabled. See [upstream values.yaml](https://github.com/grafana/mimir/blob/main/operations/helm/charts/mimir-distributed/values.yaml) for full values reference.
@@ -108,10 +114,6 @@ mimir:
   store_gateway:
     zoneAwareReplication:
       enabled: false
-    resources:
-      requests:
-        cpu: 20m
-  minio:
     resources:
       requests:
         cpu: 20m
