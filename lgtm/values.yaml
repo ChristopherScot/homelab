@@ -54,7 +54,7 @@ loki:
   ruler:
     enable_api: true
   minio:
-    enabled: false
+    enabled: true
 
 # -- Mimir chart values. Resources are set to a minimum by default.
 mimir:
@@ -125,3 +125,12 @@ tempo:
 grafana-oncall:
   # -- Deploy Grafana OnCall if enabled. See [upstream values.yaml](https://github.com/grafana/oncall/blob/dev/helm/oncall/values.yaml) for full values reference.
   enabled: false
+
+alloy:
+  configMap:
+    content: |-
+      // Write your Alloy config here:
+      logging {
+        level = "info"
+        format = "logfmt"
+      }
