@@ -140,3 +140,6 @@ alloy:
         level = "info"
         format = "logfmt"
       }
+
+minio:
+  enabled: false
