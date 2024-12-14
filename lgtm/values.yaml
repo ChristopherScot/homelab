@@ -46,6 +46,8 @@ loki:
     replication_factor: 1
   pattern_ingester:
     enabled: true
+  injester:
+    chunk_encoding: snappy
   limits_config:
     allow_structured_metadata: true
     volume_enabled: true
@@ -66,6 +68,19 @@ loki:
     accessModes:
     - ReadWriteOnce
     size: 50Gi
+  schemaConfig:
+    configs:
+    - from: "2024-04-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+  deploymentMode: SingleBinary
+  singleBinary:
+    replicas: 1
+
 # -- Mimir chart values. Resources are set to a minimum by default.
 mimir:
   # -- Deploy Mimir if enabled. See [upstream values.yaml](https://github.com/grafana/mimir/blob/main/operations/helm/charts/mimir-distributed/values.yaml) for full values reference.
@@ -143,3 +158,29 @@ alloy:
 
 minio:
   enabled: false
+
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+ingester:
+  replicas: 0
+querier:
+  replicas: 0
+queryFrontend:
+  replicas: 0
+queryScheduler:
+  replicas: 0
+distributor:
+  replicas: 0
+compactor:
+  replicas: 0
+indexGateway:
+  replicas: 0
+bloomCompactor:
+  replicas: 0
+bloomGateway:
+  replicas: 0
