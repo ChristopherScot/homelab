@@ -84,7 +84,7 @@ loki:
 # -- Mimir chart values. Resources are set to a minimum by default.
 mimir:
   # -- Deploy Mimir if enabled. See [upstream values.yaml](https://github.com/grafana/mimir/blob/main/operations/helm/charts/mimir-distributed/values.yaml) for full values reference.
-  enabled: true
+  enabled: false
   alertmanager:
     resources:
       requests:
