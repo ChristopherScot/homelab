@@ -5,6 +5,8 @@ metadata:
   namespace: argocd
   labels:
     team: me-myself-and-i
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
   source:
