@@ -38,6 +38,8 @@ grafana:
             datasourceUid: prom
 
 loki:
+  test:
+    enabled: false
   # -- Deploy Loki if enabled. See [upstream readme](https://github.com/grafana/helm-charts/tree/main/charts/loki-distributed#values) for full values reference.
   enabled: true
   commonConfig:
@@ -126,9 +128,6 @@ tempo:
 
 grafana-oncall:
   # -- Deploy Grafana OnCall if enabled. See [upstream values.yaml](https://github.com/grafana/oncall/blob/dev/helm/oncall/values.yaml) for full values reference.
-  enabled: false
-
-test:
   enabled: false
 
 alloy:
