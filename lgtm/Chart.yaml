@@ -48,7 +48,7 @@ dependencies:
 - name: loki
   alias: loki
   condition: loki.enabled
-  repository: "https://grafana.github.io/helm-charts"
+  repository: "https://github.com/grafana/loki/tree/main/production/helm/loki"
   version: "^3.3.1"
 - name: mimir-distributed
   alias: mimir
