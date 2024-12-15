@@ -1,3 +1,33 @@
+grafana:
+  enabled: true
+  values:
+  - ./grafana-values.yaml
+
+loki:
+  enabled: true
+  values:
+  - ./loki-values.yaml
+
+mimir:
+  enabled: true
+  values:
+  - ./mimir-values.yaml
+
+tempo:
+  enabled: true
+  values:
+  - ./tempo-values.yaml
+
+grafana-oncall:
+  enabled: false
+  values:
+  - ./grafana-oncall-values.yaml
+
+alloy:
+  enabled: true
+  values:
+  - ./alloy-values.yaml
+  
 ---
 grafana:
   # -- Deploy Grafana if enabled. See [upstream readme](https://github.com/grafana/helm-charts/tree/main/charts/grafana#configuration) for full values reference.
@@ -40,12 +70,6 @@ loki:
   enabled: true
   deploymentMode: Microservices # Use Microservices instead of SingleBinary
 
-  # Define storage configurations to use filesystem with Longhorn
-  storage:
-    type: filesystem
-    filesystem:
-      directory: /data/loki # Mount point for persistent volume
-
   persistence:
     enabled: true
     storageClassName: longhorn
@@ -56,18 +80,21 @@ loki:
   # Define schema and chunk storage configuration
   schemaConfig:
     configs:
-    - from: "2024-01-01"
-      store: boltdb-shipper
+    - from: 2024-01-01
+      store: tsdb
       object_store: filesystem
-      schema: v11
+      schema: v13
       index:
         prefix: loki_index_
         period: 24h
 
+  storage:
+    type: 'filesystem'
   storage_config:
-    boltdb_shipper:
-      shared_store: filesystem # Use filesystem instead of S3
-
+    tsdb_shipper:
+      active_index_directory: '/var/loki/tsdb-index'
+      cache_location: '/var/loki/tsdb-cache'
+      cache_ttl: 24h
   # Component-specific configurations
   distributor:
     replicas: 1
