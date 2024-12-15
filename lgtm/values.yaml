@@ -52,9 +52,9 @@ loki:
     allow_structured_metadata: true
     volume_enabled: true
     retention_period: 672h # 28 days retention
-  compactor:
-    retention_enabled: true
-    delete_request_store: filesystem
+  # compactor:
+  #   retention_enabled: true
+  #   delete_request_store: filesystem
   ruler:
     enable_api: true
   minio:
@@ -96,7 +96,35 @@ loki:
   deploymentMode: SingleBinary
   singleBinary:
     replicas: 1
+  backend:
+    replicas: 0
+  read:
+    replicas: 0
+  write:
+    replicas: 0
 
+  ingester:
+    replicas: 0
+  querier:
+    replicas: 0
+  queryFrontend:
+    replicas: 0
+  queryScheduler:
+    replicas: 0
+  distributor:
+    replicas: 0
+  compactor:
+    replicas: 0
+  indexGateway:
+    replicas: 0
+  bloomCompactor:
+    replicas: 0
+  bloomGateway:
+    replicas: 0
+
+# Disable ServiceMonitor resources
+serviceMonitor:
+  enabled: false
 # -- Mimir chart values. Resources are set to a minimum by default.
 mimir:
   # -- Deploy Mimir if enabled. See [upstream values.yaml](https://github.com/grafana/mimir/blob/main/operations/helm/charts/mimir-distributed/values.yaml) for full values reference.
@@ -171,36 +199,3 @@ alloy:
         level = "info"
         format = "logfmt"
       }
-
-minio:
-  enabled: true
-
-backend:
-  replicas: 0
-read:
-  replicas: 0
-write:
-  replicas: 0
-
-ingester:
-  replicas: 0
-querier:
-  replicas: 0
-queryFrontend:
-  replicas: 0
-queryScheduler:
-  replicas: 0
-distributor:
-  replicas: 0
-compactor:
-  replicas: 0
-indexGateway:
-  replicas: 0
-bloomCompactor:
-  replicas: 0
-bloomGateway:
-  replicas: 0
-
-# Disable ServiceMonitor resources
-serviceMonitor:
-  enabled: false
