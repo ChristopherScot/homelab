@@ -38,6 +38,15 @@ grafana:
             datasourceUid: prom
 
 loki:
+  singleBinary:
+    replicas: 1
+    labels:
+      app.kubernetes.io/component: read
+  service:
+    labels:
+      app.kubernetes.io/component: read
+    selector:
+      app.kubernetes.io/component: read
   test:
     enabled: false
   # -- Deploy Loki if enabled. See [upstream readme](https://github.com/grafana/helm-charts/tree/main/charts/loki-distributed#values) for full values reference.
