@@ -103,8 +103,6 @@ loki:
         prefix: loki_index_
         period: 24h
   deploymentMode: SingleBinary
-  singleBinary:
-    replicas: 1
   backend:
     replicas: 0
   read:
