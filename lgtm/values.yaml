@@ -58,7 +58,7 @@ loki:
   ruler:
     enable_api: true
   minio:
-    enabled: false
+    enabled: true
   monitoring:
     selfMonitoring:
       enabled: false
@@ -68,10 +68,22 @@ loki:
     accessModes:
     - ReadWriteOnce
     size: 50Gi
+  storage_config:
+    chunk_store_config:
+      max_look_back_period: 0s
+    schema_config:
+      configs:
+      - from: "2024-04-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: loki_index_
+          period: 24h
   storage:
-  type: filesystem
-  filesystem:
-    directory: /data/loki
+    type: filesystem
+    filesystem:
+      directory: /data/loki
   schemaConfig:
     configs:
     - from: "2024-04-01"
@@ -161,7 +173,7 @@ alloy:
       }
 
 minio:
-  enabled: false
+  enabled: true
 
 backend:
   replicas: 0
