@@ -1,4 +1,4 @@
-deploymentMode: Microservices # Use Microservices instead of SingleBinary
+deploymentMode: SingleBinary
 
 persistence:
   enabled: true
