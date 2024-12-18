@@ -1,32 +1,38 @@
 grafana:
   enabled: false
-  values:
-  - .values/grafana.yaml
+  helm:
+    valueFiles:
+    - .values/grafana.yaml
 
 loki:
   enabled: true
-  values:
-  - .values/loki.yaml
+  helm:
+    valueFiles:
+    - .values/loki.yaml
 
 mimir:
   enabled: false
-  values:
-  - .values/mimir.yaml
+  helm:
+    valueFiles:
+    - .values/mimir.yaml
 
 tempo:
   enabled: false
-  values:
-  - .values/tempo.yaml
+  helm:
+    valueFiles:
+    - .values/tempo.yaml
 
 grafana-oncall:
   enabled: false
-  values:
-  - .values/grafana-oncall.yaml
+  helm:
+    valueFiles:
+    - .values/grafana-oncall.yaml
 
 alloy:
   enabled: false
-  values:
-  - .values/alloy.yaml
+  helm:
+    valueFiles:
+    - .values/alloy.yaml
 
 serviceMonitor:
   enabled: false
