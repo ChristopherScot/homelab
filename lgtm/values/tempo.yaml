@@ -1,0 +1,2 @@
+ingester:
+  replicas: 1
