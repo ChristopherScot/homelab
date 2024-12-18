@@ -1,32 +1,32 @@
 grafana:
   enabled: false
   values:
-  - ./grafana.yaml
+  - .values/grafana.yaml
 
 loki:
   enabled: true
   values:
-  - ./loki.yaml
+  - .values/loki.yaml
 
 mimir:
   enabled: false
   values:
-  - ./mimir.yaml
+  - .values/mimir.yaml
 
 tempo:
   enabled: false
   values:
-  - ./tempo.yaml
+  - .values/tempo.yaml
 
 grafana-oncall:
   enabled: false
   values:
-  - ./grafana-oncall.yaml
+  - .values/grafana-oncall.yaml
 
 alloy:
   enabled: false
   values:
-  - ./alloy.yaml
+  - .values/alloy.yaml
 
 serviceMonitor:
   enabled: false
