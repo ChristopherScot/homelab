@@ -68,7 +68,7 @@ loki:
         memory: 128Mi
       limits:
         cpu: 500m
-        memory: 256Mi
+        memory: 256Mif
 
   compactor:
     replicas: 1
