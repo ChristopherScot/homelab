@@ -10,8 +10,8 @@ spec:
     server: 'https://kubernetes.default.svc'
   source:
     repoURL: https://helm.releases.hashicorp.com
-    chart: vault
-    targetRevision: 0.29.1 # Replace with the desired version
+    chart: vault-helm
+    targetRevision: 0.29.1
     helm:
       valuesObject:
         global:
