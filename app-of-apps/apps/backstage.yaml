@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: backstage
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: backstage
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: backstage
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

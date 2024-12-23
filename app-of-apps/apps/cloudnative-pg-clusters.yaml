@@ -4,7 +4,7 @@ metadata:
   name: pg-clusters
 spec:
   destination:
-    namespace: default
+    namespace: argocd
     server: 'https://kubernetes.default.svc'
   source:
     path: cloudnative-pg-clusters
