@@ -2,6 +2,8 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: pi-hole-ingress
+  namespace: default
+  ingressClassName: external
   annotations:
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
