@@ -17,6 +17,9 @@ spec:
       containers:
       - name: pihole
         image: pihole/pihole:latest
+        securityContext:
+          runAsUser: 1000
+          runAsGroup: 1000
         env:
         - name: WEBPASSWORD
           valueFrom:
@@ -43,6 +46,10 @@ kind: PersistentVolume
 metadata:
   name: pihole-nfs-pv
 spec:
+  mountOptions:
+  - vers=3
+  - hard
+  - intr
   capacity:
     storage: 1Gi
   accessModes:
