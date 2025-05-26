@@ -36,18 +36,7 @@ spec:
       volumes:
       - name: pihole-storage
         persistentVolumeClaim:
-          claimName: pihole-pvc
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: pihole-pvc
-spec:
-  accessModes:
-  - ReadWriteMany
-  resources:
-    requests:
-      storage: 1Gi
+          claimName: pihole-pvc-nfs
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -66,7 +55,7 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: pihole-pvc
+  name: pihole-pvc-nfs
 spec:
   accessModes:
   - ReadWriteMany
