@@ -4,7 +4,8 @@ metadata:
   name: go-shortener-redirect
   namespace: pihole
   annotations:
-    nginx.ingress.kubernetes.io/permanent-redirect: "http://go-shortener-redirects.s3-website-us-east-1.amazonaws.com$request_uri"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      rewrite ^/(.*)$ http://go-shortener-redirects.s3-website-us-east-1.amazonaws.com/go/$1 permanent;
 spec:
   ingressClassName: external
   rules:
