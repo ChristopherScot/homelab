@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pihole
+  labels:
+    app: pihole
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: pihole
+  template:
+    metadata:
+      labels:
+        app: pihole
+    spec:
+      containers:
+      - name: pi-hole
+        image: pihole/pihole:latest
+        env:
+        - name: DNS1
+          value: "8.8.8.8"
+        - name: DNS2
+          value: "8.8.4.4"
+        ports:
+        - containerPort: 80
+        - containerPort: 53
+        volumeMounts:
+        - name: pihole-storage
+          mountPath: /etc/pihole
+      volumes:
+      - name: pihole-storage
+        persistentVolumeClaim:
+          claimName: pihole-pvc
