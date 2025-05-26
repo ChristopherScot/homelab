@@ -1,0 +1,20 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: go-shortener-redirect
+  namespace: pihole
+  annotations:
+    nginx.ingress.kubernetes.io/permanent-redirect: "http://go-shortener-redirects.s3-website-us-east-1.amazonaws.com$request_uri"
+spec:
+  ingressClassName: external
+  rules:
+  - host: go
+    http:
+      paths:
+      - pathType: Prefix
+        path: /
+        backend:
+          service:
+            name: pihole
+            port:
+              number: 80
