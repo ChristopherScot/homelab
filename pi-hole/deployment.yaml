@@ -47,6 +47,7 @@ spec:
     storage: 1Gi
   accessModes:
   - ReadWriteMany
+  storageClassName: ""
   nfs:
     server: 192.168.50.220
     path: /k8s-pv/pihole
@@ -59,6 +60,7 @@ metadata:
 spec:
   accessModes:
   - ReadWriteMany
+  storageClassName: ""
   resources:
     requests:
       storage: 1Gi
