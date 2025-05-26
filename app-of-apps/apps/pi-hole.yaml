@@ -11,7 +11,7 @@ spec:
     path: pi-hole
   destination:
     server: 'https://kubernetes.default.svc'
-    namespace: pihole
+    namespace: default
   syncPolicy:
     automated:
       prune: true

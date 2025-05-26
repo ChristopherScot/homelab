@@ -15,7 +15,7 @@ spec:
         app: pihole
     spec:
       containers:
-      - name: pi-hole
+      - name: pihole
         image: pihole/pihole:latest
         env:
         - name: DNS1
