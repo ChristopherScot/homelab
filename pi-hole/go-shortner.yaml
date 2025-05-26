@@ -1,11 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-redirect
+  namespace: pihole
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-redirect
+  template:
+    metadata:
+      labels:
+        app: go-redirect
+    spec:
+      containers:
+      - name: go-redirect
+        image: ealenn/redirect
+        env:
+        - name: REDIRECT_TO
+          value: "http://go-shortener-redirects.s3-website-us-east-1.amazonaws.com/go"
+        - name: REDIRECT_CODE
+          value: "301"
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-redirect
+  namespace: pihole
+spec:
+  selector:
+    app: go-redirect
+  ports:
+  - port: 80
+    targetPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-redirect
+  namespace: pihole
+spec:
+  selector:
+    app: go-redirect
+  ports:
+  - port: 80
+    targetPort: 80
+---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: go-shortener-redirect
   namespace: pihole
-  annotations:
-    nginx.ingress.kubernetes.io/configuration-snippet: |
-      rewrite ^/(.*)$ http://go-shortener-redirects.s3-website-us-east-1.amazonaws.com/go/$1 permanent;
 spec:
   ingressClassName: external
   rules:
@@ -16,6 +63,6 @@ spec:
         path: /
         backend:
           service:
-            name: pihole
+            name: go-redirect
             port:
               number: 80
