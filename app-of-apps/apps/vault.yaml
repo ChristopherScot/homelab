@@ -13,7 +13,7 @@ spec:
     chart: vault-helm
     targetRevision: 0.29.1
     helm:
-      values:
+      valuesObject:
         global:
           enabled: true
           tlsDisable: false # Set to true if TLS is not configured
