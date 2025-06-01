@@ -6,17 +6,17 @@ metadata:
   - resources-finalizer.argocd.argoproj.io
 spec:
   destination:
-    namespace: argocd
+    namespace: vault # Change if "argocd" is not intentional
     server: 'https://kubernetes.default.svc'
   source:
     repoURL: https://helm.releases.hashicorp.com
     chart: vault-helm
     targetRevision: 0.29.1
     helm:
-      valuesObject:
+      values:
         global:
           enabled: true
-          tlsDisable: false
+          tlsDisable: false # Set to true if TLS is not configured
           resources:
             requests:
               memory: 256Mi
@@ -24,17 +24,15 @@ spec:
             limits:
               memory: 256Mi
               cpu: 250m
-        # Vault UI
         ui:
           enabled: true
           serviceType: "LoadBalancer"
-          serviceNodePort: null
           externalPort: 8200
   project: default
   syncPolicy:
-  automated:
-    prune: true
-    selfHeal: true
+    automated:
+      prune: true
+      selfHeal: true
   syncOptions:
   - CreateNamespace=true
   - ApplyOutOfSyncOnly=true
