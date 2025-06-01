@@ -1,42 +1,20 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  finalizers:
-  - resources-finalizer.argocd.argoproj.io
-  labels:
-    app.kubernetes.io/instance: app-of-apps
-  name: vault
-  namespace: default
+  name: vault2
 spec:
   destination:
     namespace: vault
     server: https://kubernetes.default.svc
-  project: default
   source:
-    chart: vault
-    # helm:
-    #   values: |
-    #     global:
-    #       enabled: true
-    #       tlsDisable: false
-    #       resources:
-    #         requests:
-    #           memory: 256Mi
-    #           cpu: 250m
-    #         limits:
-    #           memory: 256Mi
-    #           cpu: 250m
-    #     ui:
-    #       enabled: true
-    #       serviceType: "LoadBalancer"
-    #       externalPort: 8200
+    path: ''
     repoURL: https://helm.releases.hashicorp.com
     targetRevision: 0.30.0
-  syncOptions:
-  - CreateNamespace=true
-  - ApplyOutOfSyncOnly=true
-  - ServerSideApply=true
+    chart: vault
+  project: default
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
