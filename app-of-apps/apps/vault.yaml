@@ -14,22 +14,22 @@ spec:
   project: default
   source:
     chart: vault
-    helm:
-      values: |
-        global:
-          enabled: true
-          tlsDisable: false
-          resources:
-            requests:
-              memory: 256Mi
-              cpu: 250m
-            limits:
-              memory: 256Mi
-              cpu: 250m
-        ui:
-          enabled: true
-          serviceType: "LoadBalancer"
-          externalPort: 8200
+    # helm:
+    #   values: |
+    #     global:
+    #       enabled: true
+    #       tlsDisable: false
+    #       resources:
+    #         requests:
+    #           memory: 256Mi
+    #           cpu: 250m
+    #         limits:
+    #           memory: 256Mi
+    #           cpu: 250m
+    #     ui:
+    #       enabled: true
+    #       serviceType: "LoadBalancer"
+    #       externalPort: 8200
     repoURL: https://helm.releases.hashicorp.com
     targetRevision: 0.30.0
   syncOptions:
