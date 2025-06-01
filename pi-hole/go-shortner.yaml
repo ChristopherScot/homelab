@@ -67,6 +67,6 @@ data:
       listen 80;
       server_name _;
       location / {
-        return 301 http://go-shortener-redirects.s3-website-us-east-1.amazonaws.com/go$request_uri;
+        return 302 http://go-shortener-redirects.s3-website-us-east-1.amazonaws.com/go$request_uri;
       }
     }
