@@ -19,10 +19,7 @@ spec:
         image: pihole/pihole:latest
         env:
         - name: WEBPASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: pihole-password
-              key: WEBPASSWORD
+          value: ""
         - name: DNS1
           value: "8.8.8.8"
         - name: DNS2
