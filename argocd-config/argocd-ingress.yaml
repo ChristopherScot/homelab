@@ -5,6 +5,11 @@ metadata:
   namespace: argocd
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "ArgoCD"
+    gethomepage.dev/description: "GitOps controller"
+    gethomepage.dev/group: "Cluster"
+    gethomepage.dev/icon: "argocd.png"
     nginx.ingress.kubernetes.io/rewrite-target: /
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:

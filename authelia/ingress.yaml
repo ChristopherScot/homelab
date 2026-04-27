@@ -5,6 +5,11 @@ metadata:
   namespace: authelia
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Authelia"
+    gethomepage.dev/description: "SSO / forward auth"
+    gethomepage.dev/group: "Cluster"
+    gethomepage.dev/icon: "authelia.png"
 spec:
   ingressClassName: external
   tls:

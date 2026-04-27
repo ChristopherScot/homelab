@@ -5,6 +5,11 @@ metadata:
   namespace: longhorn-system
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Longhorn"
+    gethomepage.dev/description: "Block storage UI"
+    gethomepage.dev/group: "Cluster"
+    gethomepage.dev/icon: "longhorn.png"
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: 10000m
 spec:
