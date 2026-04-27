@@ -16,6 +16,13 @@ spec:
         app: jellyfin
     spec:
       enableServiceLinks: false
+      # hostNetwork so the TV's UDP broadcast on 7359 (and SSDP 1900) reach
+      # Jellyfin — flannel doesn't bridge L2 broadcasts into the pod network,
+      # so client auto-discovery only works when the server sits on the LAN.
+      # Cluster callers continue to use jellyfin.media.svc.cluster.local:8096;
+      # kube-proxy maps the Service to status.podIP regardless of network.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       # Pinned to pop-os because that's the only node with Intel QuickSync
       # (Iris Plus 655). The other two nodes are AMD APUs whose VAAPI support
       # in Jellyfin is rougher. Pin avoids surprise CPU-transcode after a
