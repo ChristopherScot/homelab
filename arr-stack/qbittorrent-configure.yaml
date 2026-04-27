@@ -51,8 +51,10 @@ spec:
                   QBT=http://qbittorrent.media.svc.cluster.local:8080
 
                   echo "==> waiting for qbittorrent to be reachable"
-                  until curl -sf "$QBT/api/v2/app/version" >/dev/null; do sleep 2; done
-                  echo "==> version: $(curl -s "$QBT/api/v2/app/version")"
+                  # /api/v2/app/version requires auth (403); use / which serves
+                  # the WebUI HTML unauthenticated (200).
+                  until curl -sf "$QBT/" -o /dev/null; do sleep 2; done
+                  echo "==> qbit reachable"
 
                   echo "==> logging in"
                   COOKIE=$(curl -sfi "$QBT/api/v2/auth/login" \

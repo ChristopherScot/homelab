@@ -1,0 +1,117 @@
+# Idempotent post-deploy config for Sonarr. Adds:
+#   - root folder /media/tv
+#   - qBittorrent as the download client
+#
+# Quality profiles + custom formats are managed by Recyclarr (separate CronJob),
+# so this Job intentionally doesn't touch those.
+#
+# Trigger:
+#   kubectl create job -n media --from=cronjob/sonarr-configure \
+#     sonarr-configure-$(date +%s)
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: sonarr-configure
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: SONARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: sonarr
+                - name: QBT_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: username
+                - name: QBT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: password
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  SONARR=http://sonarr.media.svc.cluster.local:8989
+                  H="-H X-Api-Key:$SONARR_API_KEY -H Content-Type:application/json"
+
+                  echo "==> waiting for sonarr"
+                  until curl -sf $H "$SONARR/api/v3/system/status" >/dev/null; do sleep 2; done
+
+                  # --- Root folder /media/tv ---
+                  EXISTING=$(curl -sf $H "$SONARR/api/v3/rootfolder" | jq -r '.[] | select(.path=="/media/tv") | .id')
+                  if [ -z "$EXISTING" ]; then
+                    echo "==> adding root folder /media/tv"
+                    curl -sf $H "$SONARR/api/v3/rootfolder" \
+                      -d '{"path":"/media/tv"}' >/dev/null
+                  else
+                    echo "==> root folder /media/tv already exists (id=$EXISTING)"
+                  fi
+
+                  # --- Download client: qBittorrent ---
+                  EXISTING=$(curl -sf $H "$SONARR/api/v3/downloadclient" | jq -r '.[] | select(.name=="qBittorrent") | .id')
+                  PAYLOAD=$(jq -n \
+                    --arg user "$QBT_USERNAME" \
+                    --arg pass "$QBT_PASSWORD" \
+                    '{
+                      enable: true,
+                      protocol: "torrent",
+                      priority: 1,
+                      removeCompletedDownloads: true,
+                      removeFailedDownloads: true,
+                      name: "qBittorrent",
+                      fields: [
+                        {name:"host",value:"qbittorrent.media.svc.cluster.local"},
+                        {name:"port",value:8080},
+                        {name:"useSsl",value:false},
+                        {name:"urlBase",value:""},
+                        {name:"username",value:$user},
+                        {name:"password",value:$pass},
+                        {name:"tvCategory",value:"tv-sonarr"},
+                        {name:"tvImportedCategory",value:""},
+                        {name:"recentTvPriority",value:0},
+                        {name:"olderTvPriority",value:0},
+                        {name:"initialState",value:0},
+                        {name:"sequentialOrder",value:false},
+                        {name:"firstAndLast",value:false},
+                        {name:"contentLayout",value:"Original"}
+                      ],
+                      implementationName: "qBittorrent",
+                      implementation: "QBittorrent",
+                      configContract: "QBittorrentSettings",
+                      tags: []
+                    }')
+                  if [ -z "$EXISTING" ]; then
+                    echo "==> adding qBittorrent download client"
+                    curl -sf $H "$SONARR/api/v3/downloadclient" -d "$PAYLOAD" >/dev/null
+                  else
+                    echo "==> updating qBittorrent download client (id=$EXISTING)"
+                    UPDATED=$(echo "$PAYLOAD" | jq --argjson id "$EXISTING" '. + {id:$id}')
+                    curl -sf $H "$SONARR/api/v3/downloadclient/$EXISTING" -X PUT -d "$UPDATED" >/dev/null
+                  fi
+
+                  echo "==> done"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
