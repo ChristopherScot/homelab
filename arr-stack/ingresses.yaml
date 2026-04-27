@@ -21,6 +21,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "sonarr"
+    gethomepage.dev/widget.url: "http://sonarr.media.svc.cluster.local:8989"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_SONARR_KEY}}"
     gethomepage.dev/pod-selector: "app=sonarr"
     gethomepage.dev/name: "Sonarr"
     gethomepage.dev/description: "TV library manager"
@@ -63,6 +66,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "radarr"
+    gethomepage.dev/widget.url: "http://radarr.media.svc.cluster.local:7878"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_RADARR_KEY}}"
     gethomepage.dev/pod-selector: "app=radarr"
     gethomepage.dev/name: "Radarr"
     gethomepage.dev/description: "Movie library manager"
@@ -105,6 +111,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "prowlarr"
+    gethomepage.dev/widget.url: "http://prowlarr.media.svc.cluster.local:9696"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_PROWLARR_KEY}}"
     gethomepage.dev/pod-selector: "app=gluetun-qbit-prowlarr"
     gethomepage.dev/name: "Prowlarr"
     gethomepage.dev/description: "Indexer manager"
@@ -147,6 +156,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "readarr"
+    gethomepage.dev/widget.url: "http://readarr.media.svc.cluster.local:8787"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_READARR_KEY}}"
     gethomepage.dev/pod-selector: "app=readarr"
     gethomepage.dev/name: "Readarr"
     gethomepage.dev/description: "Book / audiobook manager"
@@ -186,6 +198,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "bazarr"
+    gethomepage.dev/widget.url: "http://bazarr.media.svc.cluster.local:6767"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_BAZARR_KEY}}"
     gethomepage.dev/pod-selector: "app=bazarr"
     gethomepage.dev/name: "Bazarr"
     gethomepage.dev/description: "Subtitle downloader"
@@ -228,6 +243,10 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "qbittorrent"
+    gethomepage.dev/widget.url: "http://qbittorrent.media.svc.cluster.local:8080"
+    gethomepage.dev/widget.username: "{{HOMEPAGE_VAR_QBITTORRENT_USER}}"
+    gethomepage.dev/widget.password: "{{HOMEPAGE_VAR_QBITTORRENT_PASS}}"
     gethomepage.dev/pod-selector: "app=gluetun-qbit-prowlarr"
     gethomepage.dev/name: "qBittorrent"
     gethomepage.dev/description: "Torrent client (behind VPN)"
@@ -270,6 +289,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "jellyseerr"
+    gethomepage.dev/widget.url: "http://jellyseerr.media.svc.cluster.local:5055"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_JELLYSEERR_KEY}}"
     gethomepage.dev/pod-selector: "app=jellyseerr"
     gethomepage.dev/name: "Jellyseerr"
     gethomepage.dev/description: "Media request frontend"
@@ -317,6 +339,11 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "jellyfin"
+    gethomepage.dev/widget.url: "http://jellyfin.media.svc.cluster.local:8096"
+    gethomepage.dev/widget.key: "{{HOMEPAGE_VAR_JELLYFIN_KEY}}"
+    gethomepage.dev/widget.enableBlocks: "true"
+    gethomepage.dev/widget.enableNowPlaying: "true"
     gethomepage.dev/pod-selector: "app=jellyfin"
     gethomepage.dev/name: "Jellyfin"
     gethomepage.dev/description: "Media server"
