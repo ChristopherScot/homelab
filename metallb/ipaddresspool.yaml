@@ -5,13 +5,13 @@ metadata:
   namespace: metallb-system
 spec:
   addresses:
-  - 192.168.50.225-192.168.50.255 
+    - 192.168.50.225-192.168.50.250
 ---
 apiVersion: metallb.io/v1beta1
 kind: L2Advertisement
 metadata:
-  name: l2-advertisement
+  name: primary-ipv4
   namespace: metallb-system
 spec:
   ipAddressPools:
-  - primary-pool-ipv4
+    - primary-pool-ipv4
