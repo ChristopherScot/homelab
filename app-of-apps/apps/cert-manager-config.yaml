@@ -16,11 +16,16 @@ spec:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-      - ServerSideApply=true
+    # NB: not using ServerSideApply. SSA + ignoreDifferences with
+    # managedFieldsManagers has known bugs (argo-cd #20178, #11106, #9071).
+    # Plain client-side apply with explicit jsonPointers works reliably.
   ignoreDifferences:
-    # cert-manager controller injects empty preferredChain default after creation
+    # cert-manager controller normalizes the ClusterIssuer spec after we apply:
+    # - injects empty preferredChain default
+    # - strips namespace from secretAccessKeySecretRef (implicit on ClusterIssuer)
     - group: cert-manager.io
       kind: ClusterIssuer
       jsonPointers:
         - /spec/acme/preferredChain
+      jqPathExpressions:
+        - .spec.acme.solvers[].dns01.route53.secretAccessKeySecretRef.namespace
