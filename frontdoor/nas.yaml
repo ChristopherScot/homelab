@@ -1,0 +1,65 @@
+# Reverse-proxy entry for the Synology NAS at 192.168.50.220:5000.
+# The NAS lives outside the cluster, so we declare a Service with no selector
+# and a matching EndpointSlice that points directly at its LAN IP. ingress-nginx
+# then proxies https://nas.home.chrisscotmartin.com -> http://192.168.50.220:5000
+# (DSM's HTTP port; HTTPS on :5001 has a self-signed cert that nginx wouldn't
+# verify cleanly).
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nas
+  namespace: default
+spec:
+  ports:
+    - name: dsm
+      port: 5000
+      protocol: TCP
+      targetPort: 5000
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: nas
+  namespace: default
+  labels:
+    kubernetes.io/service-name: nas
+addressType: IPv4
+ports:
+  - name: dsm
+    port: 5000
+    protocol: TCP
+endpoints:
+  - addresses:
+      - 192.168.50.220
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: nas-ingress
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # DSM uses WebSockets for live notifications, file uploads, terminal, etc.
+    # Bumped read/send timeouts so long-poll connections don't get killed.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Allow large uploads through DSM's File Station.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+spec:
+  ingressClassName: external
+  tls:
+    - hosts:
+        - nas.home.chrisscotmartin.com
+      secretName: nas-tls
+  rules:
+    - host: nas.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: nas
+                port:
+                  number: 5000
