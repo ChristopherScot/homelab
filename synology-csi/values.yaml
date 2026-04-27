@@ -1,0 +1,57 @@
+---
+# client-info Secret is provided by synology-csi-config (sourced from Vault via
+# external-secrets). Don't let the chart create or template the Secret itself.
+clientInfoSecret:
+  create: false
+  name: synology-csi-client-info
+# Specifies affinity, nodeSelector and tolerations for the controller StatefulSet
+controller:
+  affinity: { }
+  nodeSelector: { }
+  tolerations: [ ]
+fullnameOverride: ""
+images:
+  attacher:
+    image: registry.k8s.io/sig-storage/csi-attacher
+    pullPolicy: IfNotPresent
+    tag: v4.2.0
+  nodeDriverRegistrar:
+    image: registry.k8s.io/sig-storage/csi-node-driver-registrar
+    pullPolicy: IfNotPresent
+    tag: v2.6.3
+  plugin:
+    image: synology/synology-csi
+    pullPolicy: IfNotPresent
+    # Defaults to {{ $.Chart.AppVersion }} if empty or not present:
+    tag: ""
+    supportChrootDir: true
+  provisioner:
+    image: registry.k8s.io/sig-storage/csi-provisioner
+    pullPolicy: IfNotPresent
+    tag: v3.4.0
+  resizer:
+    image: registry.k8s.io/sig-storage/csi-resizer
+    pullPolicy: IfNotPresent
+    tag: v1.7.0
+  snapshotter:
+    image: registry.k8s.io/sig-storage/csi-snapshotter
+    pullPolicy: IfNotPresent
+    tag: v4.2.1
+installCSIDriver: true
+nameOverride: ""
+# Specifies affinity, nodeSelector and tolerations for the node DaemonSet
+node:
+  affinity: { }
+  nodeSelector: { }
+  tolerations: [ ]
+  # If your kubelet path is not standard, specify it here :
+  ## example for miocrok8s distrib : /var/snap/microk8s/common/var/lib/kubelet
+  kubeletPath: /var/lib/kubelet
+# Specifies affinity, nodeSelector and tolerations for the snapshotter StatefulSet
+snapshotter:
+  affinity: { }
+  nodeSelector: { }
+  tolerations: [ ]
+# StorageClasses + VolumeSnapshotClasses are managed in synology-csi-config/.
+storageClasses: {}
+volumeSnapshotClasses: {}
