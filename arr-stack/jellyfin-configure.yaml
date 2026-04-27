@@ -113,6 +113,14 @@ spec:
                   add_lib "TV Shows" "tvshows" "/media/tv"
                   add_lib "Movies" "movies" "/media/movies"
 
+                  # Set a stable display name so clients don't see the pod hash
+                  # (jellyfin-5d47cb98cf-zfq78 etc) in the server-picker.
+                  echo "==> setting ServerName + PublishedServerUrl"
+                  curl -sf $AH "$JF/System/Configuration" \
+                    | jq '.ServerName = "Homelab Jellyfin" | .PublishedServerUrl = "https://jellyfin.home.chrisscotmartin.com"' \
+                    | curl -sf $AH -H Content-Type:application/json \
+                      "$JF/System/Configuration" -X POST -d @-
+
                   echo "==> triggering library scan"
                   curl -sf $AH "$JF/Library/Refresh" -X POST -d '' || true
 
