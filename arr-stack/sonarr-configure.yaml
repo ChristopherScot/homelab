@@ -44,6 +44,12 @@ spec:
                     secretKeyRef:
                       name: qbittorrent-admin
                       key: password
+                - name: JF_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: jellyfin-admin
+                      key: api_key
+                      optional: true
               command:
                 - sh
                 - -c
@@ -106,6 +112,44 @@ spec:
                     echo "==> updating qBittorrent download client (id=$EXISTING)"
                     UPDATED=$(echo "$PAYLOAD" | jq --argjson id "$EXISTING" '. + {id:$id}')
                     curl -sf $H "$SONARR/api/v3/downloadclient/$EXISTING" -X PUT -d "$UPDATED" >/dev/null
+                  fi
+
+                  # --- Jellyfin notification: trigger Library/Refresh on import ---
+                  EXISTING=$(curl -sf $H "$SONARR/api/v3/notification" | jq -r '.[] | select(.name=="Jellyfin") | .id')
+                  JF_IP=$(getent hosts jellyfin.media.svc.cluster.local | awk '{print $1}')
+                  if [ -z "$JF_API_KEY" ]; then
+                    echo "==> JF_API_KEY not set, skipping jellyfin notification"
+                  elif [ -z "$EXISTING" ]; then
+                    echo "==> adding Jellyfin notification (auto-scan on import)"
+                    curl -sf $H "$SONARR/api/v3/notification" -d "$(jq -n \
+                      --arg ip "$JF_IP" \
+                      --arg key "$JF_API_KEY" \
+                      '{
+                        name: "Jellyfin",
+                        implementationName: "Emby",
+                        implementation: "MediaBrowser",
+                        configContract: "MediaBrowserSettings",
+                        onGrab: false,
+                        onDownload: true,
+                        onUpgrade: true,
+                        onSeriesAdd: true,
+                        onSeriesDelete: true,
+                        onEpisodeFileDelete: true,
+                        onEpisodeFileDeleteForUpgrade: true,
+                        onHealthIssue: false,
+                        includeHealthWarnings: false,
+                        tags: [],
+                        fields: [
+                          {name:"host",value:$ip},
+                          {name:"port",value:8096},
+                          {name:"useSsl",value:false},
+                          {name:"apiKey",value:$key},
+                          {name:"sendNotifications",value:false},
+                          {name:"updateLibrary",value:true}
+                        ]
+                      }')" >/dev/null
+                  else
+                    echo "==> Jellyfin notification already exists (id=$EXISTING)"
                   fi
 
                   echo "==> done"
