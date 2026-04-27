@@ -43,17 +43,56 @@ spec:
                   echo "==> waiting for prowlarr"
                   until curl -sf $H "$PROWLARR/api/v1/system/status" >/dev/null; do sleep 2; done
 
+                  # --- FlareSolverr proxy + tag ---
+                  # Resolve flaresolverr's service IP because Prowlarr runs in
+                  # gluetun's netns and can't resolve cluster.local.
+                  FLARE_IP=$(getent hosts flaresolverr.media.svc.cluster.local | awk '{print $1}')
+                  echo "==> flaresolverr ip: $FLARE_IP"
+
+                  # Ensure the 'flaresolverr' tag exists.
+                  TAG_ID=$(curl -sf $H "$PROWLARR/api/v1/tag" | jq -r '.[] | select(.label=="flaresolverr") | .id')
+                  if [ -z "$TAG_ID" ]; then
+                    TAG_ID=$(curl -sf $H "$PROWLARR/api/v1/tag" -d '{"label":"flaresolverr"}' | jq -r '.id')
+                    echo "==> created flaresolverr tag (id=$TAG_ID)"
+                  fi
+
+                  # Ensure the FlareSolverr indexer-proxy exists (named 'FlareSolverr').
+                  PROXY_ID=$(curl -sf $H "$PROWLARR/api/v1/indexerproxy" | jq -r '.[] | select(.name=="FlareSolverr") | .id')
+                  if [ -z "$PROXY_ID" ]; then
+                    PAYLOAD=$(jq -n --arg url "http://$FLARE_IP:8191/" --argjson tag $TAG_ID '{
+                      name: "FlareSolverr",
+                      implementationName: "FlareSolverr",
+                      implementation: "FlareSolverr",
+                      configContract: "FlareSolverrSettings",
+                      tags: [$tag],
+                      onHealthIssue: false,
+                      fields: [
+                        {name:"host",value:$url},
+                        {name:"requestTimeout",value:60}
+                      ]
+                    }')
+                    PROXY_ID=$(curl -sf $H "$PROWLARR/api/v1/indexerproxy" -d "$PAYLOAD" | jq -r '.id')
+                    echo "==> added FlareSolverr proxy (id=$PROXY_ID)"
+                  else
+                    echo "==> FlareSolverr proxy already exists (id=$PROXY_ID)"
+                  fi
+
                   add_indexer() {
-                    local name="$1" definition="$2"
+                    local name="$1" definition="$2" needs_flare="${3:-false}"
                     local existing=$(curl -sf $H "$PROWLARR/api/v1/indexer" | jq -r ".[] | select(.name==\"$name\") | .id")
                     if [ -n "$existing" ]; then
                       echo "==> $name already exists (id=$existing), skipping"
                       return 0
                     fi
                     echo "==> adding $name"
+                    local tags="[]"
+                    if [ "$needs_flare" = "true" ]; then
+                      tags="[$TAG_ID]"
+                    fi
                     local payload=$(jq -n \
                       --arg name "$name" \
                       --arg def "$definition" \
+                      --argjson tags "$tags" \
                       '{
                         enable: true,
                         redirect: false,
@@ -67,7 +106,7 @@ spec:
                         implementationName: "Cardigann",
                         implementation: "Cardigann",
                         configContract: "CardigannSettings",
-                        tags: [],
+                        tags: $tags,
                         fields: [
                           {name: "definitionFile", value: $def}
                         ]
@@ -82,13 +121,13 @@ spec:
                     fi
                   }
 
-                  # name (display) | definitionName (the YAML in Cardigann's defs)
-                  add_indexer "1337x" "1337x" || true
-                  add_indexer "The Pirate Bay" "thepiratebay" || true
-                  add_indexer "EZTV" "eztv" || true
-                  add_indexer "YTS" "yts" || true
-                  add_indexer "LimeTorrents" "limetorrents" || true
-                  add_indexer "Nyaa.si" "nyaasi" || true
+                  # name (display) | definitionName | needs_flaresolverr
+                  add_indexer "1337x" "1337x" true || true
+                  add_indexer "The Pirate Bay" "thepiratebay" false || true
+                  add_indexer "EZTV" "eztv" true || true
+                  add_indexer "YTS" "yts" false || true
+                  add_indexer "LimeTorrents" "limetorrents" false || true
+                  add_indexer "Nyaa.si" "nyaasi" false || true
 
                   echo "==> done"
               resources:
