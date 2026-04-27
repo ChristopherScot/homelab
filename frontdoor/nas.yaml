@@ -40,6 +40,11 @@ metadata:
   namespace: default
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Synology NAS"
+    gethomepage.dev/description: "DSM web admin"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/icon: "synology-dsm.png"
     # DSM uses WebSockets for live notifications, file uploads, terminal, etc.
     # Bumped read/send timeouts so long-poll connections don't get killed.
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"

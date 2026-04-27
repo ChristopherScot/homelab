@@ -1,0 +1,126 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: homepage
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://jameswynn.github.io/helm-charts
+    chart: homepage
+    targetRevision: 2.1.0
+    helm:
+      releaseName: homepage
+      values: |
+        enableRbac: true
+        serviceAccount:
+          create: true
+
+        # Read access cluster-wide so Homepage can auto-discover Ingresses,
+        # Services, and Pods. The chart's built-in role only covers a subset.
+        extraClusterRoles:
+          - apiGroups: [""]
+            resources: [services, pods, namespaces]
+            verbs: [get, list, watch]
+          - apiGroups: ["networking.k8s.io"]
+            resources: [ingresses]
+            verbs: [get, list, watch]
+          - apiGroups: ["traefik.containo.us", "traefik.io"]
+            resources: [ingressroutes]
+            verbs: [get, list, watch]
+          - apiGroups: ["metrics.k8s.io"]
+            resources: [nodes, pods]
+            verbs: [get, list]
+
+        ingress:
+          main:
+            enabled: true
+            ingressClassName: external
+            annotations:
+              cert-manager.io/cluster-issuer: letsencrypt-prod
+              gethomepage.dev/enabled: "true"
+              gethomepage.dev/name: "Homepage"
+              gethomepage.dev/description: "This dashboard"
+              gethomepage.dev/group: "System"
+              gethomepage.dev/icon: "homepage.png"
+            hosts:
+              - host: home.chrisscotmartin.com
+                paths:
+                  - path: /
+                    pathType: Prefix
+            tls:
+              - hosts:
+                  - home.chrisscotmartin.com
+                secretName: homepage-tls
+
+        config:
+          # Bookmarks: edit/extend in this file (chart re-renders on sync).
+          bookmarks:
+            - Developer:
+                - GitHub:
+                    - abbr: GH
+                      href: https://github.com/ChristopherScot/homelab
+            - Cluster:
+                - ArgoCD:
+                    - abbr: AR
+                      href: https://argo.home.chrisscotmartin.com
+                - Longhorn:
+                    - abbr: LH
+                      href: https://longhorn.home.chrisscotmartin.com
+                - Vault:
+                    - abbr: VA
+                      href: https://vault.home.chrisscotmartin.com
+                - Grafana:
+                    - abbr: GF
+                      href: https://grafana.home.chrisscotmartin.com
+
+          # Auto-discovered services from ingress annotations show up here.
+          # Static service entries (for things without ingresses) can be added.
+          services: []
+
+          widgets:
+            - search:
+                provider: duckduckgo
+                target: _blank
+            - kubernetes:
+                cluster:
+                  show: true
+                  cpu: true
+                  memory: true
+                  showLabel: true
+                  label: homelab
+                nodes:
+                  show: true
+                  cpu: true
+                  memory: true
+                  showLabel: true
+
+          kubernetes:
+            mode: cluster
+
+          settingsString: |
+            title: Homelab
+            headerStyle: boxed
+            layout:
+              System:
+                style: row
+                columns: 4
+              Media:
+                style: row
+                columns: 4
+              Cluster:
+                style: row
+                columns: 4
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: homepage
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
