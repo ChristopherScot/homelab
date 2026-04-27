@@ -17,10 +17,20 @@ spec:
     spec:
       enableServiceLinks: false
       # Migrated from fallenbagel/jellyseerr:2.x to seerr-team/seerr (the
-      # rebrand). Seerr runs as non-root user `node` (uid 1000); fsGroup
-      # ensures the existing config PVC is writable on first start. The
-      # /app/config mount path stays the same — Seerr reads the legacy
-      # location and migrates settings in-place on boot.
+      # rebrand). Seerr runs as non-root user `node` (uid 1000), but the
+      # existing config PVC was written by the old root-owned image. Our
+      # PVC backs onto Synology NFS which does NOT honor fsGroup, so we
+      # need an explicit chown step. The init container runs as root,
+      # fixes ownership in-place, then the main container starts as 1000.
+      initContainers:
+        - name: chown-config
+          image: alpine:3.20
+          command: ["sh", "-c", "chown -R 1000:1000 /app/config"]
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: config
+              mountPath: /app/config
       securityContext:
         runAsUser: 1000
         runAsGroup: 1000
