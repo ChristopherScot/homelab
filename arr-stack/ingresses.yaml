@@ -21,7 +21,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "sonarr"
+    gethomepage.dev/pod-selector: "app=sonarr"
     gethomepage.dev/name: "Sonarr"
     gethomepage.dev/description: "TV library manager"
     gethomepage.dev/group: "Media"
@@ -63,7 +63,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "radarr"
+    gethomepage.dev/pod-selector: "app=radarr"
     gethomepage.dev/name: "Radarr"
     gethomepage.dev/description: "Movie library manager"
     gethomepage.dev/group: "Media"
@@ -105,7 +105,6 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "gluetun-qbit-prowlarr"
     gethomepage.dev/pod-selector: "app=gluetun-qbit-prowlarr"
     gethomepage.dev/name: "Prowlarr"
     gethomepage.dev/description: "Indexer manager"
@@ -148,7 +147,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "readarr"
+    gethomepage.dev/pod-selector: "app=readarr"
     gethomepage.dev/name: "Readarr"
     gethomepage.dev/description: "Book / audiobook manager"
     gethomepage.dev/group: "Media"
@@ -187,7 +186,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "bazarr"
+    gethomepage.dev/pod-selector: "app=bazarr"
     gethomepage.dev/name: "Bazarr"
     gethomepage.dev/description: "Subtitle downloader"
     gethomepage.dev/group: "Media"
@@ -229,7 +228,6 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "gluetun-qbit-prowlarr"
     gethomepage.dev/pod-selector: "app=gluetun-qbit-prowlarr"
     gethomepage.dev/name: "qBittorrent"
     gethomepage.dev/description: "Torrent client (behind VPN)"
@@ -272,7 +270,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "jellyseerr"
+    gethomepage.dev/pod-selector: "app=jellyseerr"
     gethomepage.dev/name: "Jellyseerr"
     gethomepage.dev/description: "Media request frontend"
     gethomepage.dev/group: "Media"
@@ -319,7 +317,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "jellyfin"
+    gethomepage.dev/pod-selector: "app=jellyfin"
     gethomepage.dev/name: "Jellyfin"
     gethomepage.dev/description: "Media server"
     gethomepage.dev/group: "Media"

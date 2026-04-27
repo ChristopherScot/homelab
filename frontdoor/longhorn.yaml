@@ -6,7 +6,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "longhorn-ui"
+    gethomepage.dev/pod-selector: "app=longhorn-ui"
     gethomepage.dev/href: "https://longhorn.home.chrisscotmartin.com"
     gethomepage.dev/name: "Longhorn"
     gethomepage.dev/description: "Block storage UI"

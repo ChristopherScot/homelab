@@ -6,7 +6,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "argocd-server"
+    gethomepage.dev/pod-selector: "app.kubernetes.io/name=argocd-server"
     gethomepage.dev/href: "https://argo.home.chrisscotmartin.com"
     gethomepage.dev/name: "ArgoCD"
     gethomepage.dev/description: "GitOps controller"

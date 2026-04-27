@@ -6,7 +6,7 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/app: "authelia"
+    gethomepage.dev/pod-selector: "app=authelia"
     gethomepage.dev/name: "Authelia"
     gethomepage.dev/description: "SSO / forward auth"
     gethomepage.dev/group: "Cluster"
