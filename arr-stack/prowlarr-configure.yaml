@@ -89,9 +89,22 @@ spec:
                     fi
                   }
 
-                  add_app "Sonarr" "Sonarr" "http://sonarr.media.svc.cluster.local:8989" "$SONARR_API_KEY" "fullSync"
-                  add_app "Radarr" "Radarr" "http://radarr.media.svc.cluster.local:7878" "$RADARR_API_KEY" "fullSync"
-                  add_app "Readarr" "Readarr" "http://readarr.media.svc.cluster.local:8787" "$READARR_API_KEY" "fullSync"
+                  # Use cluster-internal Service IPs rather than DNS names.
+                  # Prowlarr runs inside gluetun's netns where the kube DNS
+                  # resolver isn't reachable (gluetun's firewall blocks egress
+                  # except via the VPN, and cluster.local isn't routable
+                  # through the VPN). FIREWALL_OUTBOUND_SUBNETS allows traffic
+                  # to 10.43.0.0/16 by IP. Service ClusterIPs are stable as
+                  # long as the Service exists; if a Service is recreated the
+                  # IP changes and this Job needs re-running.
+                  SONARR_IP=$(getent hosts sonarr.media.svc.cluster.local | awk '{print $1}')
+                  RADARR_IP=$(getent hosts radarr.media.svc.cluster.local | awk '{print $1}')
+                  READARR_IP=$(getent hosts readarr.media.svc.cluster.local | awk '{print $1}')
+                  echo "==> resolved: sonarr=$SONARR_IP radarr=$RADARR_IP readarr=$READARR_IP"
+
+                  add_app "Sonarr" "Sonarr" "http://$SONARR_IP:8989" "$SONARR_API_KEY" "fullSync"
+                  add_app "Radarr" "Radarr" "http://$RADARR_IP:7878" "$RADARR_API_KEY" "fullSync"
+                  add_app "Readarr" "Readarr" "http://$READARR_IP:8787" "$READARR_API_KEY" "fullSync"
 
                   echo "==> done"
               resources:
