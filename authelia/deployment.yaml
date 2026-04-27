@@ -17,6 +17,10 @@ spec:
       labels:
         app: authelia
     spec:
+      # k8s auto-injects AUTHELIA_PORT_* env vars for the authelia Service in
+      # this namespace. Authelia parses any AUTHELIA_* env as a config key, and
+      # AUTHELIA_PORT collides with our explicit server.address. Disable.
+      enableServiceLinks: false
       containers:
         - name: authelia
           image: authelia/authelia:4.38
