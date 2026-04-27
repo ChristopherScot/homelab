@@ -23,7 +23,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: flaresolverr
-          image: ghcr.io/flaresolverr/flaresolverr:v3.3.21
+          image: ghcr.io/flaresolverr/flaresolverr:v3.4.6
           env:
             - name: TZ
               value: America/New_York

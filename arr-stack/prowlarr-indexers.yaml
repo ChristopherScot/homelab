@@ -68,7 +68,7 @@ spec:
                       onHealthIssue: false,
                       fields: [
                         {name:"host",value:$url},
-                        {name:"requestTimeout",value:60}
+                        {name:"requestTimeout",value:120}
                       ]
                     }')
                     PROXY_ID=$(curl -sf $H "$PROWLARR/api/v1/indexerproxy" -d "$PAYLOAD" | jq -r '.id')
