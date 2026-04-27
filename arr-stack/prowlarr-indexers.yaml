@@ -62,6 +62,7 @@ spec:
                         protocol: "torrent",
                         privacy: "public",
                         priority: 25,
+                        appProfileId: 1,
                         name: $name,
                         implementationName: "Cardigann",
                         implementation: "Cardigann",
@@ -71,8 +72,12 @@ spec:
                           {name: "definitionFile", value: $def}
                         ]
                       }')
-                    if ! curl -sf $H "$PROWLARR/api/v1/indexer" -d "$payload" >/dev/null; then
-                      echo "    FAILED — likely Cloudflare-protected (would need FlareSolverr) or schema mismatch"
+                    local resp=$(curl -s -w "\n%{http_code}" $H "$PROWLARR/api/v1/indexer" -d "$payload")
+                    local code=$(echo "$resp" | tail -1)
+                    local body=$(echo "$resp" | sed '$d')
+                    if [ "$code" != "201" ] && [ "$code" != "200" ]; then
+                      echo "    FAILED (HTTP $code): $body" | head -c 500
+                      echo
                       return 1
                     fi
                   }
