@@ -27,7 +27,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: jellyseerr
-          image: ghcr.io/seerr-team/seerr:3.2.0
+          image: ghcr.io/seerr-team/seerr:latest
           env:
             - name: TZ
               value: America/New_York
