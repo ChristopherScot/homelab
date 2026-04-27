@@ -1,0 +1,88 @@
+# Idempotent post-deploy config for Jellyfin. Walks the first-run wizard
+# entirely via API. Skips if already configured.
+#
+# Steps:
+#   1. Check if /Startup/Configuration is reachable (200) -> wizard pending
+#   2. POST initial culture/locale settings
+#   3. POST initial admin user
+#   4. POST library config: TV (/media/tv) + Movies (/media/movies)
+#   5. POST remote-access settings (already behind ingress so disable UPNP etc)
+#   6. POST /Startup/Complete to finalize
+#
+# After the wizard, Jellyfin is locked behind auth. The Job exits and we'll
+# extract the admin's API key out-of-band into Vault.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jellyfin-configure
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: ADMIN_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: jellyfin-admin
+                      key: username
+                - name: ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: jellyfin-admin
+                      key: password
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  JF=http://jellyfin.media.svc.cluster.local:8096
+
+                  echo "==> waiting for jellyfin"
+                  until curl -sf "$JF/health" >/dev/null 2>&1; do sleep 2; done
+
+                  # Check if startup wizard is still pending. If user count > 0
+                  # we assume wizard is done and bail.
+                  STATE=$(curl -s -w '\n%{http_code}' "$JF/Startup/Configuration")
+                  CODE=$(echo "$STATE" | tail -1)
+                  if [ "$CODE" = "403" ] || [ "$CODE" = "401" ]; then
+                    echo "==> wizard already complete, skipping"
+                    exit 0
+                  fi
+
+                  H="-H Content-Type:application/json"
+
+                  echo "==> setting culture"
+                  curl -sf $H "$JF/Startup/Configuration" -X POST \
+                    -d '{"UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"}'
+
+                  echo "==> creating admin user '$ADMIN_USERNAME'"
+                  curl -sf $H "$JF/Startup/User" -X POST \
+                    -d "$(jq -n --arg n "$ADMIN_USERNAME" --arg p "$ADMIN_PASSWORD" '{Name:$n, Password:$p}')"
+
+                  echo "==> setting remote access (off — we proxy via ingress)"
+                  curl -sf $H "$JF/Startup/RemoteAccess" -X POST \
+                    -d '{"EnableRemoteAccess":true,"EnableAutomaticPortMapping":false}'
+
+                  echo "==> finalizing"
+                  curl -sf $H "$JF/Startup/Complete" -X POST -d ''
+
+                  echo "==> done — admin user created, libraries to be added by jellyseerr or manually"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi

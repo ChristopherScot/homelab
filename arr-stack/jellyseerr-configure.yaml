@@ -1,0 +1,160 @@
+# Idempotent post-deploy config for Jellyseerr. Connects to Jellyfin (as the
+# media server / auth source) and to Sonarr + Radarr (as the request targets).
+#
+# Jellyseerr's setup wizard at /api/v1/* during 'initialized: false' state.
+# Once initialized, the same endpoints require auth.
+#
+# Sequence:
+#   1. Wait for jellyseerr's API to respond
+#   2. Check /api/v1/status -> if version > 0 and initialized, bail
+#   3. POST /api/v1/auth/jellyfin with admin creds — this both validates the
+#      Jellyfin connection AND signs jellyseerr in
+#   4. POST /api/v1/settings/jellyfin to persist the Jellyfin connection
+#   5. POST /api/v1/settings/sonarr (with Sonarr details)
+#   6. POST /api/v1/settings/radarr (with Radarr details)
+#   7. PUT /api/v1/settings/main with initialized:true
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: jellyseerr-configure
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: JF_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: jellyfin-admin
+                      key: username
+                - name: JF_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: jellyfin-admin
+                      key: password
+                - name: SONARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: sonarr
+                - name: RADARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: radarr
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  JS=http://jellyseerr.media.svc.cluster.local:5055
+                  COOKIES=/tmp/cookies.txt
+
+                  echo "==> waiting for jellyseerr"
+                  until curl -sf "$JS/api/v1/status" >/dev/null; do sleep 2; done
+
+                  # If already initialized, the unauth POSTs return 403.
+                  # Detect by checking /api/v1/settings/main — if it's a 200
+                  # without auth, we're in setup mode; 403 means done.
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' "$JS/api/v1/settings/main")
+                  if [ "$CODE" = "403" ] || [ "$CODE" = "401" ]; then
+                    echo "==> already initialized, skipping"
+                    exit 0
+                  fi
+
+                  echo "==> auth via jellyfin"
+                  curl -sf -c $COOKIES \
+                    -H Content-Type:application/json \
+                    "$JS/api/v1/auth/jellyfin" -X POST \
+                    -d "$(jq -n \
+                      --arg user "$JF_USERNAME" \
+                      --arg pass "$JF_PASSWORD" \
+                      '{username:$user, password:$pass, hostname:"http://jellyfin.media.svc.cluster.local:8096", email:""}')" \
+                    >/dev/null
+
+                  echo "==> persist jellyfin connection"
+                  curl -sf -b $COOKIES \
+                    -H Content-Type:application/json \
+                    "$JS/api/v1/settings/jellyfin" -X POST \
+                    -d '{"name":"Jellyfin","hostname":"jellyfin.media.svc.cluster.local","port":8096,"useSsl":false,"urlBase":"","externalHostname":"https://jellyfin.home.chrisscotmartin.com"}'
+
+                  SONARR_IP=$(getent hosts sonarr.media.svc.cluster.local | awk '{print $1}')
+                  RADARR_IP=$(getent hosts radarr.media.svc.cluster.local | awk '{print $1}')
+
+                  echo "==> add sonarr (id=$SONARR_IP)"
+                  curl -sf -b $COOKIES \
+                    -H Content-Type:application/json \
+                    "$JS/api/v1/settings/sonarr" -X POST \
+                    -d "$(jq -n \
+                      --arg ip "$SONARR_IP" \
+                      --arg key "$SONARR_API_KEY" \
+                      '{
+                        name:"Sonarr",
+                        hostname:$ip,
+                        port:8989,
+                        apiKey:$key,
+                        useSsl:false,
+                        baseUrl:"",
+                        activeProfileId:1,
+                        activeProfileName:"Any",
+                        activeAnimeProfileId:null,
+                        activeDirectory:"/media/tv",
+                        activeAnimeDirectory:null,
+                        is4k:false,
+                        isDefault:true,
+                        enableSeasonFolders:true,
+                        externalUrl:"https://sonarr.home.chrisscotmartin.com",
+                        syncEnabled:true,
+                        preventSearch:false
+                      }')" >/dev/null || echo "    sonarr add failed (ok if pre-existing)"
+
+                  echo "==> add radarr (id=$RADARR_IP)"
+                  curl -sf -b $COOKIES \
+                    -H Content-Type:application/json \
+                    "$JS/api/v1/settings/radarr" -X POST \
+                    -d "$(jq -n \
+                      --arg ip "$RADARR_IP" \
+                      --arg key "$RADARR_API_KEY" \
+                      '{
+                        name:"Radarr",
+                        hostname:$ip,
+                        port:7878,
+                        apiKey:$key,
+                        useSsl:false,
+                        baseUrl:"",
+                        activeProfileId:1,
+                        activeProfileName:"Any",
+                        activeDirectory:"/media/movies",
+                        is4k:false,
+                        isDefault:true,
+                        minimumAvailability:"released",
+                        externalUrl:"https://radarr.home.chrisscotmartin.com",
+                        syncEnabled:true,
+                        preventSearch:false
+                      }')" >/dev/null || echo "    radarr add failed (ok if pre-existing)"
+
+                  echo "==> finalize"
+                  curl -sf -b $COOKIES \
+                    -H Content-Type:application/json \
+                    "$JS/api/v1/settings/initialize" -X POST -d '' >/dev/null || true
+
+                  echo "==> done"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi

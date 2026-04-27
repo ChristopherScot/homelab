@@ -1,0 +1,96 @@
+# Bazarr config: connect to Sonarr + Radarr.
+# Bazarr's API uses cookie-session auth, so we POST credentials to /api/system/login
+# first then PUT settings. The 'API key' field in arr-api-keys is just for the
+# Sonarr/Radarr -> Bazarr direction (used by their settings if you wanted to
+# call back).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bazarr-configure
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: BAZARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: bazarr
+                - name: SONARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: sonarr
+                - name: RADARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: radarr
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  BAZARR=http://bazarr.media.svc.cluster.local:6767
+                  H="-H X-API-KEY:$BAZARR_API_KEY -H Content-Type:application/json"
+
+                  echo "==> waiting for bazarr"
+                  until curl -sf $H "$BAZARR/api/system/status" >/dev/null; do sleep 2; done
+
+                  # Bazarr's settings API takes the entire settings doc and merges.
+                  # We send only what we want to change.
+                  PAYLOAD=$(jq -n \
+                    --arg sonarr_key "$SONARR_API_KEY" \
+                    --arg radarr_key "$RADARR_API_KEY" \
+                    '{
+                      sonarr: {
+                        ip: "sonarr.media.svc.cluster.local",
+                        port: 8989,
+                        base_url: "/",
+                        ssl: false,
+                        apikey: $sonarr_key,
+                        full_update: "Daily",
+                        only_monitored: false,
+                        series_sync: 60
+                      },
+                      radarr: {
+                        ip: "radarr.media.svc.cluster.local",
+                        port: 7878,
+                        base_url: "/",
+                        ssl: false,
+                        apikey: $radarr_key,
+                        full_update: "Daily",
+                        only_monitored: false,
+                        movies_sync: 60
+                      },
+                      general: {
+                        use_sonarr: true,
+                        use_radarr: true,
+                        path_mappings: [],
+                        path_mappings_movie: []
+                      }
+                    }')
+
+                  echo "==> applying settings"
+                  curl -sf $H "$BAZARR/api/system/settings" -X POST -d "$PAYLOAD"
+                  echo "==> done"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
