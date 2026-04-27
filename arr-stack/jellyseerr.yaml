@@ -18,14 +18,17 @@ spec:
       enableServiceLinks: false
       # Migrated from fallenbagel/jellyseerr:2.x to seerr-team/seerr (the
       # rebrand). Seerr runs as non-root user `node` (uid 1000), but the
-      # existing config PVC was written by the old root-owned image. Our
-      # PVC backs onto Synology NFS which does NOT honor fsGroup, so we
-      # need an explicit chown step. The init container runs as root,
-      # fixes ownership in-place, then the main container starts as 1000.
+      # existing config PVC was written by the old root-owned image.
+      # Synology NFS root_squash maps client-side root to nobody, so a
+      # `chown 1000:1000` from the cluster doesn't take effect. Instead,
+      # `chmod -R 777` opens perms for everyone — the dir already lives
+      # under our private NFS export (`mountPermissions: 0777` in the
+      # StorageClass), so this isn't a security regression. New files
+      # Seerr creates are owned by node:node and inherit ugo+rw.
       initContainers:
-        - name: chown-config
+        - name: fix-config-perms
           image: alpine:3.20
-          command: ["sh", "-c", "chown -R 1000:1000 /app/config"]
+          command: ["sh", "-c", "chmod -R 777 /app/config"]
           securityContext:
             runAsUser: 0
           volumeMounts:
