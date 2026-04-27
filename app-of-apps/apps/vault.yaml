@@ -14,19 +14,33 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: default
-  syncPolicy:
-    syncOptions:
-      - ServerSideApply=true
+  # Note: not using ServerSideApply here. SSA + ignoreDifferences with
+  # managedFieldsManagers has known bugs in argocd <= 2.13 (see argo-cd
+  # issues #20178, #11106, #9071). The jsonPointers form below works
+  # reliably without SSA.
   ignoreDifferences:
-    # Defer to the StatefulSet controller for fields it manages (controller
-    # injects defaults like restartPolicy, dnsPolicy, schedulerName,
-    # persistentVolumeClaimRetentionPolicy, revisionHistoryLimit, etc.).
-    # Without this, ArgoCD reports vault as OutOfSync forever.
+    # k8s controller defaults injected on the live StatefulSet that aren't
+    # in chart 0.29.1's rendered manifest.
     - group: apps
       kind: StatefulSet
       name: vault
       namespace: default
-      managedFieldsManagers:
-        # On k3s, the controller-manager identifies as "k3s" rather than the
-        # vanilla "kube-controller-manager".
-        - k3s
+      jsonPointers:
+        - /spec/persistentVolumeClaimRetentionPolicy
+        - /spec/revisionHistoryLimit
+        - /spec/template/spec/dnsPolicy
+        - /spec/template/spec/restartPolicy
+        - /spec/template/spec/schedulerName
+        - /spec/template/spec/serviceAccount
+    # Container-level defaults (terminationMessagePath/Policy, empty
+    # resources{}, ordering differences in env/ports) and volume-mount
+    # ordering differences. These are entirely live-state noise.
+    - group: apps
+      kind: StatefulSet
+      name: vault
+      namespace: default
+      jqPathExpressions:
+        - .spec.template.spec.containers[].terminationMessagePath
+        - .spec.template.spec.containers[].terminationMessagePolicy
+        - .spec.template.spec.containers[].resources
+        - .spec.volumeClaimTemplates
