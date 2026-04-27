@@ -16,6 +16,13 @@ spec:
       valuesObject:
         preUpgradeChecker:
           jobEnabled: false
+        # The csi-snapshotter sidecar spams ~200 forbidden-CRD errors per
+        # cycle because external-snapshotter CRDs aren't installed on this
+        # cluster (we don't use VolumeSnapshot). Setting replicas to 0 stops
+        # the sidecar Deployment entirely.
+        # https://github.com/longhorn/longhorn/issues/2459
+        csi:
+          snapshotterReplicaCount: 0
   destination:
     server: https://kubernetes.default.svc
     namespace: longhorn-system
