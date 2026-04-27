@@ -128,6 +128,7 @@ spec:
                   add_indexer "YTS" "yts" false || true
                   add_indexer "LimeTorrents" "limetorrents" false || true
                   add_indexer "Nyaa.si" "nyaasi" false || true
+                  add_indexer "EBookBay" "ebookbay" false || true
 
                   echo "==> done"
               resources:
