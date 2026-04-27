@@ -3,9 +3,12 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-# Install k3s with Traefik and Service Load Balancer disabled, and use etcd as the datastore
-echo "Installing k3s with Traefik and Service Load Balancer disabled, using etcd as the datastore..."
-curl -sfL https://get.k3s.io | sh -s - server --disable traefik --disable servicelb --cluster-init
+# Install k3s with Traefik, Service Load Balancer, and metrics-server disabled,
+# and use etcd as the datastore. metrics-server is replaced by an ArgoCD-managed
+# Helm install (see app-of-apps/apps/metrics-server.yaml) which adds the
+# --kubelet-insecure-tls flag k3s's bundled version is missing.
+echo "Installing k3s with Traefik, Service Load Balancer, and metrics-server disabled, using etcd as the datastore..."
+curl -sfL https://get.k3s.io | sh -s - server --disable traefik --disable servicelb --disable metrics-server --cluster-init
 
 # Wait for k3s to be up and running
 echo "Waiting for k3s to be up and running..."
