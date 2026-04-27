@@ -54,31 +54,31 @@ spec:
                   echo "==> waiting for jellyfin"
                   until curl -sf "$JF/health" >/dev/null 2>&1; do sleep 2; done
 
-                  # Check if startup wizard is still pending. If user count > 0
-                  # we assume wizard is done and bail.
-                  STATE=$(curl -s -w '\n%{http_code}' "$JF/Startup/Configuration")
-                  CODE=$(echo "$STATE" | tail -1)
-                  if [ "$CODE" = "403" ] || [ "$CODE" = "401" ]; then
-                    echo "==> wizard already complete, skipping"
-                    exit 0
-                  fi
-
                   H="-H Content-Type:application/json"
 
-                  echo "==> setting culture"
-                  curl -sf $H "$JF/Startup/Configuration" -X POST \
-                    -d '{"UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"}'
+                  # Detect wizard state: /Startup/Configuration is unauth in
+                  # wizard mode, 401 once wizard is complete.
+                  CODE=$(curl -s -o /dev/null -w '%{http_code}' "$JF/Startup/Configuration")
+                  if [ "$CODE" = "200" ]; then
+                    echo "==> running first-run wizard"
 
-                  echo "==> creating admin user '$ADMIN_USERNAME'"
-                  curl -sf $H "$JF/Startup/User" -X POST \
-                    -d "$(jq -n --arg n "$ADMIN_USERNAME" --arg p "$ADMIN_PASSWORD" '{Name:$n, Password:$p}')"
+                    echo "==> setting culture"
+                    curl -sf $H "$JF/Startup/Configuration" -X POST \
+                      -d '{"UICulture":"en-US","MetadataCountryCode":"US","PreferredMetadataLanguage":"en"}'
 
-                  echo "==> setting remote access (off — we proxy via ingress)"
-                  curl -sf $H "$JF/Startup/RemoteAccess" -X POST \
-                    -d '{"EnableRemoteAccess":true,"EnableAutomaticPortMapping":false}'
+                    echo "==> creating admin user '$ADMIN_USERNAME'"
+                    curl -sf $H "$JF/Startup/User" -X POST \
+                      -d "$(jq -n --arg n "$ADMIN_USERNAME" --arg p "$ADMIN_PASSWORD" '{Name:$n, Password:$p}')"
 
-                  echo "==> finalizing"
-                  curl -sf $H "$JF/Startup/Complete" -X POST -d ''
+                    echo "==> setting remote access (no UPnP — ingress proxies us)"
+                    curl -sf $H "$JF/Startup/RemoteAccess" -X POST \
+                      -d '{"EnableRemoteAccess":true,"EnableAutomaticPortMapping":false}'
+
+                    echo "==> finalizing"
+                    curl -sf $H "$JF/Startup/Complete" -X POST -d ''
+                  else
+                    echo "==> wizard already complete (code=$CODE), proceeding to libraries"
+                  fi
 
                   # ---- Libraries ----
                   # Wizard locked the API. Log in as the new admin and add
