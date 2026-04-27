@@ -83,7 +83,7 @@ spec:
             failureThreshold: 3
 
         - name: qbittorrent
-          image: lscr.io/linuxserver/qbittorrent:5.0.3
+          image: lscr.io/linuxserver/qbittorrent:5.1.4
           env:
             # PUID/PGID 0 — Synology NFS squashes server-side writes to admin;
             # running as root in the container avoids the squash-vs-PUID
@@ -109,7 +109,7 @@ spec:
               memory: 2Gi
 
         - name: prowlarr
-          image: lscr.io/linuxserver/prowlarr:1.30.2
+          image: lscr.io/linuxserver/prowlarr:2.3.5
           env:
             - name: PUID
               value: "0"

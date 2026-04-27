@@ -16,9 +16,18 @@ spec:
         app: jellyseerr
     spec:
       enableServiceLinks: false
+      # Migrated from fallenbagel/jellyseerr:2.x to seerr-team/seerr (the
+      # rebrand). Seerr runs as non-root user `node` (uid 1000); fsGroup
+      # ensures the existing config PVC is writable on first start. The
+      # /app/config mount path stays the same — Seerr reads the legacy
+      # location and migrates settings in-place on boot.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
       containers:
         - name: jellyseerr
-          image: fallenbagel/jellyseerr:2.2.3
+          image: ghcr.io/seerr-team/seerr:3.2.0
           env:
             - name: TZ
               value: America/New_York

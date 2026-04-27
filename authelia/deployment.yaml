@@ -23,7 +23,7 @@ spec:
       enableServiceLinks: false
       containers:
         - name: authelia
-          image: authelia/authelia:4.38
+          image: authelia/authelia:4.39.19
           args:
             - --config
             - /config/configuration.yml
