@@ -90,11 +90,23 @@ spec:
                       }')" \
                     >/dev/null
 
+                  # Persist jellyfin connection. Seerr resolves `hostname`
+                  # once and stores it, so we hand it the IP — matches the
+                  # sonarr/radarr settings below. `name` is read-only on
+                  # Seerr v3 (auto-derived from Jellyfin's ServerName), so
+                  # we don't send it. externalHostname is what the
+                  # "Play on Jellyfin" deep-link is built from.
                   echo "==> persist jellyfin connection"
                   curl -sf -b $COOKIES \
                     -H Content-Type:application/json \
                     "$JS/api/v1/settings/jellyfin" -X POST \
-                    -d '{"name":"Jellyfin","hostname":"jellyfin.media.svc.cluster.local","port":8096,"useSsl":false,"urlBase":"","externalHostname":"https://jellyfin.home.chrisscotmartin.com"}'
+                    -d "$(jq -n --arg ip "$JF_IP" '{
+                      hostname:$ip,
+                      port:8096,
+                      useSsl:false,
+                      urlBase:"",
+                      externalHostname:"https://jellyfin.home.chrisscotmartin.com"
+                    }')"
 
                   SONARR_IP=$(getent hosts sonarr.media.svc.cluster.local | awk '{print $1}')
                   RADARR_IP=$(getent hosts radarr.media.svc.cluster.local | awk '{print $1}')
