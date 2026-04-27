@@ -34,11 +34,13 @@ data:
     access_control:
       default_policy: deny
       rules:
-        # Jellyseerr + Jellyfin + Readarr: anyone in users group
-        # (admins are also in users).
+        # Jellyseerr + Readarr: anyone in users group (admins are also
+        # in users). Note: Jellyfin's ingress intentionally bypasses
+        # Authelia entirely — TVs/Roku/AppleTV/mobile clients can't
+        # follow the redirect-and-cookie flow. Jellyfin's own auth gates
+        # access there.
         - domain:
             - seerr.home.chrisscotmartin.com
-            - jellyfin.home.chrisscotmartin.com
             - readarr.home.chrisscotmartin.com
           policy: one_factor
           subject:
