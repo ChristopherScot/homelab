@@ -14,7 +14,7 @@ TOKEN=$2
 
 # Install k3s and join the existing cluster as a controller/master using internal etcd
 echo "Joining the existing k3s cluster as a controller/master using internal etcd..."
-curl -sfL https://get.k3s.io | K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=$TOKEN sh -s - server --disable traefik --disable servicelb
+curl -sfL https://get.k3s.io | K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=$TOKEN sh -s - server --disable traefik --disable servicelb --disable metrics-server
 
 # Wait for k3s to be up and running
 echo "Waiting for k3s to be up and running..."

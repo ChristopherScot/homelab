@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metrics-server
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://kubernetes-sigs.github.io/metrics-server/
+    chart: metrics-server
+    targetRevision: 3.13.0
+    helm:
+      releaseName: metrics-server
+      values: |
+        # k3s ships kubelet with a self-signed cert. Without --kubelet-insecure-tls
+        # metrics-server's TLS handshake against kubelet fails and `kubectl top`
+        # never works.
+        args:
+          - --kubelet-insecure-tls
+
+        # k3s's bundled metrics-server addon must be disabled
+        # (--disable=metrics-server in primary.sh / node.sh) — otherwise the
+        # built-in install fights this one for the same Service name.
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
