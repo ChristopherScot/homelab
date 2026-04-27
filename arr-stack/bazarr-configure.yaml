@@ -88,6 +88,53 @@ spec:
 
                   echo "==> applying settings"
                   curl -sf $H "$BAZARR/api/system/settings" -X POST -d "$PAYLOAD"
+
+                  # Enable English as a wanted subtitle language. Idempotent:
+                  # we POST the full languages list with `en` flipped to
+                  # enabled=true, leaving everything else as-is.
+                  echo "==> enabling English language"
+                  curl -sf $H "$BAZARR/api/system/languages" \
+                    | jq 'map(if .code2=="en" then .enabled=true else . end)
+                          | map({code2, enabled})' \
+                    | curl -sf $H "$BAZARR/api/system/languages" -X POST -d @-
+
+                  # Create the "English" language profile (the thing series
+                  # and movies get tagged with). Skip if a profile by that
+                  # name already exists — Bazarr has no PUT-by-name, only
+                  # POST-create / PATCH-by-id, so name-based dedup is the
+                  # idempotent path.
+                  if curl -sf $H "$BAZARR/api/system/languages/profiles" \
+                       | jq -e '.[] | select(.name=="English")' >/dev/null; then
+                    echo "==> language profile 'English' already exists"
+                  else
+                    echo "==> creating English language profile"
+                    curl -sf $H "$BAZARR/api/system/languages/profiles" -X POST -d '{
+                      "name": "English",
+                      "cutoff": null,
+                      "items": [{"language":"en","forced":"False","hi":"False","audio_exclude":"False"}],
+                      "mustContain": [],
+                      "mustNotContain": [],
+                      "originalFormat": false
+                    }'
+                  fi
+
+                  # Set the English profile as default for new series + movies
+                  # and turn on subtitle upgrades (re-checks weekly for 7 days
+                  # to grab a better sub when one appears). Profile id=1 is
+                  # safe because this is the first profile we ever create.
+                  echo "==> setting default profile + auto-download"
+                  curl -sf $H "$BAZARR/api/system/settings" -X POST -d '{
+                    "general": {
+                      "serie_default_enabled": true,
+                      "serie_default_profile": 1,
+                      "movie_default_enabled": true,
+                      "movie_default_profile": 1,
+                      "upgrade_subs": true,
+                      "upgrade_frequency": 12,
+                      "days_to_upgrade_subs": 7
+                    }
+                  }'
+
                   echo "==> done"
               resources:
                 requests:
