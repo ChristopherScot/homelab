@@ -18,12 +18,13 @@ spec:
     syncOptions:
       - ServerSideApply=true
   ignoreDifferences:
-    # Fields the StatefulSet controller injects as defaults that aren't in the
-    # rendered chart. Without these, ArgoCD reports vault as OutOfSync forever.
+    # Defer to the StatefulSet controller for fields it manages (controller
+    # injects defaults like restartPolicy, dnsPolicy, schedulerName,
+    # persistentVolumeClaimRetentionPolicy, revisionHistoryLimit, etc.).
+    # Without this, ArgoCD reports vault as OutOfSync forever.
     - group: apps
       kind: StatefulSet
       name: vault
       namespace: default
-      jsonPointers:
-        - /spec/persistentVolumeClaimRetentionPolicy
-        - /spec/revisionHistoryLimit
+      managedFieldsManagers:
+        - kube-controller-manager

@@ -16,3 +16,11 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
+  ignoreDifferences:
+    # cert-manager controller injects empty preferredChain default after creation
+    - group: cert-manager.io
+      kind: ClusterIssuer
+      jsonPointers:
+        - /spec/acme/preferredChain
