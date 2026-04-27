@@ -151,10 +151,19 @@ spec:
                         preventSearch:false
                       }')" >/dev/null || echo "    radarr add failed (ok if pre-existing)"
 
-                  echo "==> finalize"
-                  curl -sf -b $COOKIES \
-                    -H Content-Type:application/json \
-                    "$JS/api/v1/settings/initialize" -X POST -d '' >/dev/null || true
+                  # Sync libraries from Jellyfin (discovers them) then enable
+                  # all of them. ?sync returns the list; ?enable=ID,ID,... toggles.
+                  echo "==> sync libraries from jellyfin"
+                  LIBS=$(curl -sf -b $COOKIES "$JS/api/v1/settings/jellyfin/library?sync=true")
+                  IDS=$(echo "$LIBS" | jq -r '[.[].id] | join(",")')
+                  echo "    found: $(echo "$LIBS" | jq -r '[.[].name] | join(", ")')"
+                  if [ -n "$IDS" ]; then
+                    curl -sf -b $COOKIES "$JS/api/v1/settings/jellyfin/library?enable=$IDS" >/dev/null
+                    echo "==> trigger full library scan"
+                    curl -sf -b $COOKIES -H Content-Type:application/json \
+                      "$JS/api/v1/settings/jellyfin/sync" -X POST \
+                      -d '{"start":true}' >/dev/null || true
+                  fi
 
                   echo "==> done"
               resources:
