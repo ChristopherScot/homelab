@@ -44,3 +44,10 @@ spec:
         - .spec.template.spec.containers[].terminationMessagePolicy
         - .spec.template.spec.containers[].resources
         - .spec.volumeClaimTemplates
+    # vault-agent-injector self-rotates its webhook CA bundle. The chart
+    # ships caBundle: "" and vault-k8s writes the real cert at startup.
+    - group: admissionregistration.k8s.io
+      kind: MutatingWebhookConfiguration
+      name: vault-agent-injector-cfg
+      jqPathExpressions:
+        - .webhooks[].clientConfig.caBundle
