@@ -12,7 +12,7 @@ spec:
   storageClassName: synology-nfs
   resources:
     requests:
-      storage: 100Gi
+      storage: 2Ti
 ---
 # qBittorrent config — kept on iSCSI because it's the only app with
 # meaningful I/O (download piece state, fastresume files). SQLite-on-iSCSI
