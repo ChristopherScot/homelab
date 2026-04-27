@@ -4,17 +4,32 @@ metadata:
   name: grafana-ingress
   namespace: monitoring
   annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
     nginx.ingress.kubernetes.io/rewrite-target: /
 spec:
   ingressClassName: external
+  tls:
+    - hosts:
+        - grafana.home.chrisscotmartin.com
+      secretName: grafana-tls
   rules:
-  - host: grafana.lab
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: observability-grafana
-            port:
-              number: 80
+    - host: grafana.lab
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: observability-grafana
+                port:
+                  number: 80
+    - host: grafana.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: observability-grafana
+                port:
+                  number: 80
