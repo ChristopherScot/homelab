@@ -1,0 +1,107 @@
+# Idempotent post-deploy config for Radarr. Mirror of sonarr-configure.
+# Adds: /media/movies root folder + qBittorrent download client.
+# Quality profiles + custom formats handled by Configarr (separate).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: radarr-configure
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: RADARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: radarr
+                - name: QBT_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: username
+                - name: QBT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: password
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  RADARR=http://radarr.media.svc.cluster.local:7878
+                  H="-H X-Api-Key:$RADARR_API_KEY -H Content-Type:application/json"
+
+                  echo "==> waiting for radarr"
+                  until curl -sf $H "$RADARR/api/v3/system/status" >/dev/null; do sleep 2; done
+
+                  EXISTING=$(curl -sf $H "$RADARR/api/v3/rootfolder" | jq -r '.[] | select(.path=="/media/movies") | .id')
+                  if [ -z "$EXISTING" ]; then
+                    echo "==> adding root folder /media/movies"
+                    curl -sf $H "$RADARR/api/v3/rootfolder" -d '{"path":"/media/movies"}' >/dev/null
+                  else
+                    echo "==> root folder /media/movies already exists (id=$EXISTING)"
+                  fi
+
+                  EXISTING=$(curl -sf $H "$RADARR/api/v3/downloadclient" | jq -r '.[] | select(.name=="qBittorrent") | .id')
+                  PAYLOAD=$(jq -n \
+                    --arg user "$QBT_USERNAME" \
+                    --arg pass "$QBT_PASSWORD" \
+                    '{
+                      enable: true,
+                      protocol: "torrent",
+                      priority: 1,
+                      removeCompletedDownloads: true,
+                      removeFailedDownloads: true,
+                      name: "qBittorrent",
+                      fields: [
+                        {name:"host",value:"qbittorrent.media.svc.cluster.local"},
+                        {name:"port",value:8080},
+                        {name:"useSsl",value:false},
+                        {name:"urlBase",value:""},
+                        {name:"username",value:$user},
+                        {name:"password",value:$pass},
+                        {name:"movieCategory",value:"movies-radarr"},
+                        {name:"movieImportedCategory",value:""},
+                        {name:"recentMoviePriority",value:0},
+                        {name:"olderMoviePriority",value:0},
+                        {name:"initialState",value:0},
+                        {name:"sequentialOrder",value:false},
+                        {name:"firstAndLast",value:false},
+                        {name:"contentLayout",value:"Original"}
+                      ],
+                      implementationName: "qBittorrent",
+                      implementation: "QBittorrent",
+                      configContract: "QBittorrentSettings",
+                      tags: []
+                    }')
+                  if [ -z "$EXISTING" ]; then
+                    echo "==> adding qBittorrent download client"
+                    curl -sf $H "$RADARR/api/v3/downloadclient" -d "$PAYLOAD" >/dev/null
+                  else
+                    echo "==> updating qBittorrent download client (id=$EXISTING)"
+                    UPDATED=$(echo "$PAYLOAD" | jq --argjson id "$EXISTING" '. + {id:$id}')
+                    curl -sf $H "$RADARR/api/v3/downloadclient/$EXISTING" -X PUT -d "$UPDATED" >/dev/null
+                  fi
+
+                  echo "==> done"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi

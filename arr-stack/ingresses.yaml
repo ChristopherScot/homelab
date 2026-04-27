@@ -124,6 +124,39 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
+  name: readarr
+  namespace: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Forwarded-Method $request_method;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Uri $request_uri;
+      proxy_set_header X-Forwarded-For $remote_addr;
+    nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [readarr.home.chrisscotmartin.com]
+      secretName: readarr-tls
+  rules:
+    - host: readarr.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: readarr
+                port:
+                  number: 8787
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
   name: bazarr
   namespace: media
   annotations:

@@ -1,0 +1,109 @@
+# Idempotent post-deploy config for Readarr. Adds /media/books root folder +
+# qBittorrent download client. Note Readarr uses /api/v1 (not v3 like sonarr/
+# radarr) and bookCategory instead of tvCategory/movieCategory.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: readarr-configure
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: READARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: readarr
+                - name: QBT_USERNAME
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: username
+                - name: QBT_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: password
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  READARR=http://readarr.media.svc.cluster.local:8787
+                  H="-H X-Api-Key:$READARR_API_KEY -H Content-Type:application/json"
+
+                  echo "==> waiting for readarr"
+                  until curl -sf $H "$READARR/api/v1/system/status" >/dev/null; do sleep 2; done
+
+                  EXISTING=$(curl -sf $H "$READARR/api/v1/rootfolder" | jq -r '.[] | select(.path=="/media/books") | .id')
+                  if [ -z "$EXISTING" ]; then
+                    echo "==> adding root folder /media/books"
+                    # Readarr requires defaultMetadataProfileId, defaultQualityProfileId
+                    # — we use ID 1 which is the default profile created on first launch.
+                    curl -sf $H "$READARR/api/v1/rootfolder" \
+                      -d '{"path":"/media/books","name":"Books","defaultMetadataProfileId":1,"defaultQualityProfileId":1,"defaultMonitorOption":"all","defaultNewItemMonitorOption":"all","isCalibreLibrary":false}' >/dev/null
+                  else
+                    echo "==> root folder /media/books already exists (id=$EXISTING)"
+                  fi
+
+                  EXISTING=$(curl -sf $H "$READARR/api/v1/downloadclient" | jq -r '.[] | select(.name=="qBittorrent") | .id')
+                  PAYLOAD=$(jq -n \
+                    --arg user "$QBT_USERNAME" \
+                    --arg pass "$QBT_PASSWORD" \
+                    '{
+                      enable: true,
+                      protocol: "torrent",
+                      priority: 1,
+                      removeCompletedDownloads: true,
+                      removeFailedDownloads: true,
+                      name: "qBittorrent",
+                      fields: [
+                        {name:"host",value:"qbittorrent.media.svc.cluster.local"},
+                        {name:"port",value:8080},
+                        {name:"useSsl",value:false},
+                        {name:"urlBase",value:""},
+                        {name:"username",value:$user},
+                        {name:"password",value:$pass},
+                        {name:"musicCategory",value:"books-readarr"},
+                        {name:"musicImportedCategory",value:""},
+                        {name:"recentTvPriority",value:0},
+                        {name:"olderTvPriority",value:0},
+                        {name:"initialState",value:0},
+                        {name:"sequentialOrder",value:false},
+                        {name:"firstAndLast",value:false}
+                      ],
+                      implementationName: "qBittorrent",
+                      implementation: "QBittorrent",
+                      configContract: "QBittorrentSettings",
+                      tags: []
+                    }')
+                  if [ -z "$EXISTING" ]; then
+                    echo "==> adding qBittorrent download client"
+                    curl -sf $H "$READARR/api/v1/downloadclient" -d "$PAYLOAD" >/dev/null
+                  else
+                    echo "==> updating qBittorrent download client (id=$EXISTING)"
+                    UPDATED=$(echo "$PAYLOAD" | jq --argjson id "$EXISTING" '. + {id:$id}')
+                    curl -sf $H "$READARR/api/v1/downloadclient/$EXISTING" -X PUT -d "$UPDATED" >/dev/null
+                  fi
+
+                  echo "==> done"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi

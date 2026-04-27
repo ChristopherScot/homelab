@@ -1,0 +1,102 @@
+# Idempotent post-deploy config for Prowlarr. Adds Sonarr + Radarr as
+# "applications" so indexers added in Prowlarr auto-sync to both.
+# Indexers themselves are added separately (see prowlarr-indexers section).
+#
+# Why apps not Apps? Prowlarr's API uses /api/v1/applications.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: prowlarr-configure
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: PROWLARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: prowlarr
+                - name: SONARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: sonarr
+                - name: RADARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: radarr
+                - name: READARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: readarr
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  PROWLARR=http://prowlarr.media.svc.cluster.local:9696
+                  H="-H X-Api-Key:$PROWLARR_API_KEY -H Content-Type:application/json"
+
+                  echo "==> waiting for prowlarr"
+                  until curl -sf $H "$PROWLARR/api/v1/system/status" >/dev/null; do sleep 2; done
+
+                  add_app() {
+                    local NAME=$1 IMPLEMENTATION=$2 BASE_URL=$3 API_KEY=$4 SYNC_LEVEL=$5
+                    local EXISTING=$(curl -sf $H "$PROWLARR/api/v1/applications" | jq -r ".[] | select(.name==\"$NAME\") | .id")
+                    local PAYLOAD=$(jq -n \
+                      --arg name "$NAME" \
+                      --arg impl "$IMPLEMENTATION" \
+                      --arg url "$BASE_URL" \
+                      --arg key "$API_KEY" \
+                      --arg sync "$SYNC_LEVEL" \
+                      '{
+                        name: $name,
+                        syncLevel: $sync,
+                        implementationName: $impl,
+                        implementation: $impl,
+                        configContract: ($impl + "Settings"),
+                        tags: [],
+                        fields: [
+                          {name:"prowlarrUrl",value:"http://prowlarr.media.svc.cluster.local:9696"},
+                          {name:"baseUrl",value:$url},
+                          {name:"apiKey",value:$key},
+                          {name:"syncCategories",value:[2000,2010,2020,2030,2035,2040,2045,2050,2060,2070,2080,2090,5000,5010,5020,5030,5040,5045,5050,5060,5070,5080,5090]}
+                        ]
+                      }')
+                    if [ -z "$EXISTING" ]; then
+                      echo "==> adding $NAME"
+                      curl -sf $H "$PROWLARR/api/v1/applications" -d "$PAYLOAD" >/dev/null
+                    else
+                      echo "==> updating $NAME (id=$EXISTING)"
+                      local UPDATED=$(echo "$PAYLOAD" | jq --argjson id "$EXISTING" '. + {id:$id}')
+                      curl -sf $H "$PROWLARR/api/v1/applications/$EXISTING" -X PUT -d "$UPDATED" >/dev/null
+                    fi
+                  }
+
+                  add_app "Sonarr" "Sonarr" "http://sonarr.media.svc.cluster.local:8989" "$SONARR_API_KEY" "fullSync"
+                  add_app "Radarr" "Radarr" "http://radarr.media.svc.cluster.local:7878" "$RADARR_API_KEY" "fullSync"
+                  add_app "Readarr" "Readarr" "http://readarr.media.svc.cluster.local:8787" "$READARR_API_KEY" "fullSync"
+
+                  echo "==> done"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi

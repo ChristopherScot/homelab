@@ -1,0 +1,76 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: readarr-config
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: synology-iscsi
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: readarr
+  namespace: media
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: readarr
+  template:
+    metadata:
+      labels:
+        app: readarr
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: readarr
+          # No 'latest'/stable tag exists — upstream stable branch has been
+          # frozen for years. Develop branch is the de-facto stable.
+          image: lscr.io/linuxserver/readarr:0.4.18-develop
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: America/New_York
+          ports:
+            - containerPort: 8787
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: media
+              mountPath: /media
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: readarr-config
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: readarr
+  namespace: media
+spec:
+  selector:
+    app: readarr
+  ports:
+    - name: http
+      port: 8787
+      targetPort: 8787

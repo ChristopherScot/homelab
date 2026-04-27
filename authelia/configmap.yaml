@@ -46,6 +46,7 @@ data:
         - domain:
             - sonarr.home.chrisscotmartin.com
             - radarr.home.chrisscotmartin.com
+            - readarr.home.chrisscotmartin.com
             - prowlarr.home.chrisscotmartin.com
             - bazarr.home.chrisscotmartin.com
             - qbit.home.chrisscotmartin.com
