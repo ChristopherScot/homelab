@@ -22,51 +22,67 @@ metadata:
 data:
   recyclarr.yml: |
     # TRaSH guides — HD Bluray + WEB (1080p). Most-recommended homelab default.
+    #
+    # v8 syntax: profiles are guide-backed via `trash_id` directly on the
+    # quality_profiles entry (no more `include: [template: ...]`). Custom
+    # formats list their own trash_ids and use `assign_scores_to` (formerly
+    # `quality_profiles`).
     sonarr:
       home-tv:
         base_url: http://sonarr.media.svc.cluster.local:8989
         api_key: !env_var SONARR_API_KEY
         delete_old_custom_formats: true
-        replace_existing_custom_formats: true
 
-        include:
-          - template: sonarr-quality-definition-series
-          - template: sonarr-v4-quality-profile-web-1080p
-          - template: sonarr-v4-custom-formats-web-1080p
+        quality_definition:
+          type: series
 
-        # Optional: keep your own tweaks here. Leaving empty for now.
-        # (No good "multi-audio" CF for non-anime TV in TRaSH; foreign shows
-        # rarely ship dual-audio releases anyway. Bazarr provides English
-        # subs as the fallback for foreign-language originals.)
-        custom_formats: []
+        quality_profiles:
+          - trash_id: 72dae194fc92bf828f32cde7744e51a1  # WEB-1080p
+            reset_unmatched_scores:
+              enabled: true
+
+        # Prefer dual-language releases for foreign shows like Kleo so the
+        # original stays available when the dub is bad. MULTi matches
+        # release titles tagged \bMulti\b (German DL, etc.) — these bundle
+        # original + English. Originals still get grabbed as fallback.
+        custom_formats:
+          - trash_ids:
+              - 7ba05c6e0e14e793538174c679126996  # MULTi
+            assign_scores_to:
+              - name: WEB-1080p
+                score: 500
 
     radarr:
       home-movies:
         base_url: http://radarr.media.svc.cluster.local:7878
         api_key: !env_var RADARR_API_KEY
         delete_old_custom_formats: true
-        replace_existing_custom_formats: true
 
-        include:
-          - template: radarr-quality-definition-movie
-          - template: radarr-quality-profile-hd-bluray-web
-          - template: radarr-custom-formats-hd-bluray-web
+        quality_definition:
+          type: movie
 
-        # Prefer multi-audio releases (original + English dub) so foreign
-        # films like Kleo land with an English track available without
-        # excluding the original. Released-only-with-a-dub ("Dubs Only")
-        # still gets a smaller boost as a fallback when no MULTi exists.
+        quality_profiles:
+          - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
+            reset_unmatched_scores:
+              enabled: true
+
+        # Prefer dual-language releases (original + English dub) so foreign
+        # films land with both tracks — Jellyfin's audio-language pref picks
+        # English by default, but the original is one click away if the dub
+        # is bad. "Dubs Only" gets a *negative* score: those releases strip
+        # the original entirely, which we don't want. Original-only releases
+        # still get grabbed when neither dual nor dub exists.
         custom_formats:
           - trash_ids:
               - 4b900e171accbfb172729b63323ea8ca  # MULTi
-            quality_profiles:
+            assign_scores_to:
               - name: HD Bluray + WEB
                 score: 500
           - trash_ids:
               - b23eae459cc960816f2d6ba84af45055  # Dubs Only
-            quality_profiles:
+            assign_scores_to:
               - name: HD Bluray + WEB
-                score: 200
+                score: -200
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -87,7 +103,7 @@ spec:
           enableServiceLinks: false
           containers:
             - name: recyclarr
-              image: ghcr.io/recyclarr/recyclarr:7.4.1
+              image: ghcr.io/recyclarr/recyclarr:8.6.0
               args: ["sync"]
               env:
                 - name: SONARR_API_KEY

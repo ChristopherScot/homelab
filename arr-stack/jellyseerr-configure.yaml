@@ -99,57 +99,85 @@ spec:
                   SONARR_IP=$(getent hosts sonarr.media.svc.cluster.local | awk '{print $1}')
                   RADARR_IP=$(getent hosts radarr.media.svc.cluster.local | awk '{print $1}')
 
-                  echo "==> add sonarr (id=$SONARR_IP)"
-                  curl -sf -b $COOKIES \
-                    -H Content-Type:application/json \
-                    "$JS/api/v1/settings/sonarr" -X POST \
-                    -d "$(jq -n \
-                      --arg ip "$SONARR_IP" \
-                      --arg key "$SONARR_API_KEY" \
-                      '{
-                        name:"Sonarr",
-                        hostname:$ip,
-                        port:8989,
-                        apiKey:$key,
-                        useSsl:false,
-                        baseUrl:"",
-                        activeProfileId:1,
-                        activeProfileName:"Any",
-                        activeAnimeProfileId:null,
-                        activeDirectory:"/media/tv",
-                        activeAnimeDirectory:null,
-                        is4k:false,
-                        isDefault:true,
-                        enableSeasonFolders:true,
-                        externalUrl:"https://sonarr.home.chrisscotmartin.com",
-                        syncEnabled:true,
-                        preventSearch:false
-                      }')" >/dev/null || echo "    sonarr add failed (ok if pre-existing)"
+                  # Look up the TRaSH-managed profile IDs by name. Recyclarr
+                  # creates these on its first sync; if it hasn't run yet
+                  # (fresh cluster) we fall back to "Any" (id 1) and the next
+                  # rerun of jellyseerr-configure will pick up the right ID.
+                  SONARR_PROFILE_ID=$(curl -sf -H "X-Api-Key:$SONARR_API_KEY" \
+                    "http://sonarr.media.svc.cluster.local:8989/api/v3/qualityprofile" \
+                    | jq '[.[] | select(.name=="WEB-1080p")][0].id // 1')
+                  RADARR_PROFILE_ID=$(curl -sf -H "X-Api-Key:$RADARR_API_KEY" \
+                    "http://radarr.media.svc.cluster.local:7878/api/v3/qualityprofile" \
+                    | jq '[.[] | select(.name=="HD Bluray + WEB")][0].id // 1')
+                  echo "==> sonarr profile id=$SONARR_PROFILE_ID, radarr profile id=$RADARR_PROFILE_ID"
 
-                  echo "==> add radarr (id=$RADARR_IP)"
-                  curl -sf -b $COOKIES \
-                    -H Content-Type:application/json \
-                    "$JS/api/v1/settings/radarr" -X POST \
-                    -d "$(jq -n \
-                      --arg ip "$RADARR_IP" \
-                      --arg key "$RADARR_API_KEY" \
-                      '{
-                        name:"Radarr",
-                        hostname:$ip,
-                        port:7878,
-                        apiKey:$key,
-                        useSsl:false,
-                        baseUrl:"",
-                        activeProfileId:1,
-                        activeProfileName:"Any",
-                        activeDirectory:"/media/movies",
-                        is4k:false,
-                        isDefault:true,
-                        minimumAvailability:"released",
-                        externalUrl:"https://radarr.home.chrisscotmartin.com",
-                        syncEnabled:true,
-                        preventSearch:false
-                      }')" >/dev/null || echo "    radarr add failed (ok if pre-existing)"
+                  # upsert_arr <kind> <payload-jq> applies a settings entry to
+                  # /settings/<kind>. POST creates on a fresh wizard; PUT
+                  # updates an existing one (Jellyseerr makes `id` read-only
+                  # on PUT, so we strip it). The list endpoint returns an
+                  # array; we always touch the first/default entry.
+                  upsert_arr() {
+                    local kind="$1" payload="$2"
+                    local existing
+                    existing=$(curl -sf -b $COOKIES "$JS/api/v1/settings/$kind" | jq -r '.[0].id // empty')
+                    if [ -z "$existing" ]; then
+                      echo "==> add $kind"
+                      echo "$payload" | curl -sf -b $COOKIES \
+                        -H Content-Type:application/json \
+                        "$JS/api/v1/settings/$kind" -X POST -d @- >/dev/null
+                    else
+                      echo "==> update $kind (id=$existing)"
+                      echo "$payload" | curl -sf -b $COOKIES \
+                        -H Content-Type:application/json \
+                        "$JS/api/v1/settings/$kind/$existing" -X PUT -d @- >/dev/null
+                    fi
+                  }
+
+                  upsert_arr sonarr "$(jq -n \
+                    --arg ip "$SONARR_IP" \
+                    --arg key "$SONARR_API_KEY" \
+                    --argjson pid "$SONARR_PROFILE_ID" \
+                    '{
+                      name:"Sonarr",
+                      hostname:$ip,
+                      port:8989,
+                      apiKey:$key,
+                      useSsl:false,
+                      baseUrl:"",
+                      activeProfileId:$pid,
+                      activeProfileName:"WEB-1080p",
+                      activeAnimeProfileId:null,
+                      activeDirectory:"/media/tv",
+                      activeAnimeDirectory:null,
+                      is4k:false,
+                      isDefault:true,
+                      enableSeasonFolders:true,
+                      externalUrl:"https://sonarr.home.chrisscotmartin.com",
+                      syncEnabled:true,
+                      preventSearch:false
+                    }')"
+
+                  upsert_arr radarr "$(jq -n \
+                    --arg ip "$RADARR_IP" \
+                    --arg key "$RADARR_API_KEY" \
+                    --argjson pid "$RADARR_PROFILE_ID" \
+                    '{
+                      name:"Radarr",
+                      hostname:$ip,
+                      port:7878,
+                      apiKey:$key,
+                      useSsl:false,
+                      baseUrl:"",
+                      activeProfileId:$pid,
+                      activeProfileName:"HD Bluray + WEB",
+                      activeDirectory:"/media/movies",
+                      is4k:false,
+                      isDefault:true,
+                      minimumAvailability:"released",
+                      externalUrl:"https://radarr.home.chrisscotmartin.com",
+                      syncEnabled:true,
+                      preventSearch:false
+                    }')"
 
                   # Sync libraries from Jellyfin (discovers them) then enable
                   # all of them. ?sync returns the list; ?enable=ID,ID,... toggles.
