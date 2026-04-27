@@ -18,10 +18,28 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 echo "Setting permissions for kubeconfig file..."
 sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-# MetalLB and ingress-nginx are installed and configured by ArgoCD via
-# app-of-apps/apps/{metallb,ingress-nginx}.yaml. They become available after
-# ArgoCD finishes its first sync (which the app-of-apps bootstrap below
-# kicks off).
+# MetalLB is installed and configured by ArgoCD via app-of-apps/apps/metallb.yaml.
+# It will not be available until ArgoCD finishes syncing.
+
+# Install NGINX Ingress Controller. Pinning a release tag (vs main) so future
+# bootstraps don't drift on what they install.
+echo "Installing NGINX Ingress Controller..."
+kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/cloud/deploy.yaml
+
+# Wait for NGINX Ingress Controller to be up and running
+echo "Waiting for NGINX Ingress Controller to be up and running..."
+kubectl wait --namespace ingress-nginx \
+  --for=condition=ready pod \
+  --selector=app.kubernetes.io/component=controller \
+  --timeout=90s
+
+# Enable risky annotations so arr-stack ingresses' auth-snippet annotation
+# (forward-auth headers to Authelia) gets honored. Without these the snippets
+# are silently dropped.
+echo "Enabling allow-snippet-annotations on ingress-nginx..."
+kubectl patch cm -n ingress-nginx ingress-nginx-controller --type=merge \
+  -p '{"data":{"allow-snippet-annotations":"true","annotations-risk-level":"Critical"}}'
+kubectl rollout restart -n ingress-nginx deploy/ingress-nginx-controller
 
 # Install ArgoCD
 echo "Installing ArgoCD..."
@@ -59,8 +77,8 @@ ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o js
 echo "ArgoCD Username: admin"
 echo "ArgoCD Password: $ARGOCD_PASSWORD"
 
-echo "k3s + ArgoCD bootstrap complete. ArgoCD will install MetalLB,"
-echo "ingress-nginx, and the rest of the cluster from the repo on first sync."
+echo "k3s, ingress-nginx, and ArgoCD are up. ArgoCD will install MetalLB"
+echo "and the rest of the cluster from the repo on first sync."
 
 
 # Output instructions to get the token for joining nodes
