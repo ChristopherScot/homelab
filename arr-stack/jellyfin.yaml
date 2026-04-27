@@ -45,6 +45,9 @@ spec:
             - name: media
               mountPath: /media
               readOnly: false
+            - name: extras
+              mountPath: /media/extras
+              readOnly: false
             - name: dri
               mountPath: /dev/dri
           resources:
@@ -77,6 +80,9 @@ spec:
         - name: media
           persistentVolumeClaim:
             claimName: media-data
+        - name: extras
+          persistentVolumeClaim:
+            claimName: extras-data
         - name: dri
           hostPath:
             path: /dev/dri

@@ -1,0 +1,43 @@
+# Static PV+PVC in the media namespace pointing at the same NFS share that
+# the extras/extras-data PVC backs. Allows the cluster Jellyfin (in media ns)
+# to mount the same NFS storage that q-manager-on-the-node writes to via
+# /mnt/extras.
+#
+# Why static and not just a second dynamic PVC? Each dynamic PVC against the
+# synology-nfs StorageClass creates a NEW share on the NAS. We need ONE share
+# accessible to both jellyfin (cluster) and q-manager (node) so they see the
+# same files.
+#
+# baseDir = the auto-created share from the extras/extras-data PVC's PV.
+# If that PVC is ever recreated the path will change and this file needs to
+# be updated to match the new baseDir.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: extras-in-media
+spec:
+  capacity:
+    storage: 500Gi
+  accessModes: [ReadWriteMany]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - nfsvers=4.1
+    - hard
+    - timeo=600
+  nfs:
+    server: 192.168.50.220
+    path: /volume1/k8s-csi-pvc-1f8d7069-868a-4303-a
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: extras-data
+  namespace: media
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: ""
+  volumeName: extras-in-media
+  resources:
+    requests:
+      storage: 500Gi
