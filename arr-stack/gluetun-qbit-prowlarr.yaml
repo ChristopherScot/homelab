@@ -85,10 +85,13 @@ spec:
         - name: qbittorrent
           image: lscr.io/linuxserver/qbittorrent:5.0.3
           env:
+            # PUID/PGID 0 — Synology NFS squashes server-side writes to admin;
+            # running as root in the container avoids the squash-vs-PUID
+            # ownership mismatch. See sonarr.yaml for full explanation.
             - name: PUID
-              value: "1000"
+              value: "0"
             - name: PGID
-              value: "1000"
+              value: "0"
             - name: TZ
               value: America/New_York
             - name: WEBUI_PORT
@@ -109,9 +112,9 @@ spec:
           image: lscr.io/linuxserver/prowlarr:1.30.2
           env:
             - name: PUID
-              value: "1000"
+              value: "0"
             - name: PGID
-              value: "1000"
+              value: "0"
             - name: TZ
               value: America/New_York
           volumeMounts:
