@@ -22,6 +22,13 @@ spec:
           - name: HOMEPAGE_ALLOWED_HOSTS
             value: home.chrisscotmartin.com
 
+        # HOMEPAGE_VAR_* keys for {{HOMEPAGE_VAR_*}} substitution in widget
+        # annotations on each ingress. Secret comes from External Secrets
+        # via homepage-config (see homepage-config/externalsecret.yaml).
+        envFrom:
+          - secretRef:
+              name: homepage-vars
+
         # Read access cluster-wide so Homepage can auto-discover Ingresses,
         # Services, and Pods. The chart's built-in role only covers a subset.
         extraClusterRoles:
@@ -128,3 +135,24 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: homepage-config
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: homepage-config
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: homepage
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
