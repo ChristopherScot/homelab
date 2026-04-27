@@ -1,0 +1,31 @@
+# Auth-bypassed Prowlarr API endpoint for non-cluster clients (e.g. q-manager
+# Radarr running on the node that needs to register itself with Prowlarr).
+#
+# Same backend as the main prowlarr ingress; just a different hostname with
+# no Authelia annotations. Prowlarr's /api/* endpoints already require an
+# X-Api-Key header so this isn't more permissive than the auth'd path —
+# anyone who can reach this hostname could already authenticate through
+# Authelia and hit the same API anyway.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prowlarr-api
+  namespace: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [prowlarr-api.home.chrisscotmartin.com]
+      secretName: prowlarr-api-tls
+  rules:
+    - host: prowlarr-api.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prowlarr
+                port:
+                  number: 9696
