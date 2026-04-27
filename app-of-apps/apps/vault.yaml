@@ -27,4 +27,6 @@ spec:
       name: vault
       namespace: default
       managedFieldsManagers:
-        - kube-controller-manager
+        # On k3s, the controller-manager identifies as "k3s" rather than the
+        # vanilla "kube-controller-manager".
+        - k3s
