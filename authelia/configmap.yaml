@@ -34,10 +34,12 @@ data:
     access_control:
       default_policy: deny
       rules:
-        # Jellyseerr + Jellyfin: anyone in users group (admins are also in users).
+        # Jellyseerr + Jellyfin + Readarr: anyone in users group
+        # (admins are also in users).
         - domain:
             - seerr.home.chrisscotmartin.com
             - jellyfin.home.chrisscotmartin.com
+            - readarr.home.chrisscotmartin.com
           policy: one_factor
           subject:
             - "group:users"
@@ -46,7 +48,6 @@ data:
         - domain:
             - sonarr.home.chrisscotmartin.com
             - radarr.home.chrisscotmartin.com
-            - readarr.home.chrisscotmartin.com
             - prowlarr.home.chrisscotmartin.com
             - bazarr.home.chrisscotmartin.com
             - qbit.home.chrisscotmartin.com
