@@ -35,6 +35,9 @@ data:
           - template: sonarr-v4-custom-formats-web-1080p
 
         # Optional: keep your own tweaks here. Leaving empty for now.
+        # (No good "multi-audio" CF for non-anime TV in TRaSH; foreign shows
+        # rarely ship dual-audio releases anyway. Bazarr provides English
+        # subs as the fallback for foreign-language originals.)
         custom_formats: []
 
     radarr:
@@ -49,7 +52,21 @@ data:
           - template: radarr-quality-profile-hd-bluray-web
           - template: radarr-custom-formats-hd-bluray-web
 
-        custom_formats: []
+        # Prefer multi-audio releases (original + English dub) so foreign
+        # films like Kleo land with an English track available without
+        # excluding the original. Released-only-with-a-dub ("Dubs Only")
+        # still gets a smaller boost as a fallback when no MULTi exists.
+        custom_formats:
+          - trash_ids:
+              - 4b900e171accbfb172729b63323ea8ca  # MULTi
+            quality_profiles:
+              - name: HD Bluray + WEB
+                score: 500
+          - trash_ids:
+              - b23eae459cc960816f2d6ba84af45055  # Dubs Only
+            quality_profiles:
+              - name: HD Bluray + WEB
+                score: 200
 ---
 apiVersion: batch/v1
 kind: CronJob
