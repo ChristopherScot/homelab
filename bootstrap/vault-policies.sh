@@ -27,6 +27,8 @@ vault auth list 2>/dev/null | grep -q '^kubernetes/' || \
 # Each entry: <app-name>|<kv-path-glob>|<bound-namespace>|<bound-sa>
 APPS=(
   "synology-csi|kv/data/synology/*|synology-csi|external-secrets-sa"
+  "authelia|kv/data/authelia/*|authelia|external-secrets-sa"
+  "cert-manager|kv/data/cert-manager/*|cert-manager|external-secrets-sa"
   "gluetun|kv/data/nordvpn/*|media|external-secrets-sa"
 )
 
