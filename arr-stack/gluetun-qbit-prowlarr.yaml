@@ -34,7 +34,7 @@ spec:
         # startup; we rely on Gluetun's healthcheck + its own kill-switch
         # firewall blocking egress until the tunnel is up.
         - name: gluetun
-          image: qmcgaw/gluetun:v3.39
+          image: qmcgaw/gluetun:v3.41.1
           securityContext:
             capabilities:
               add: ["NET_ADMIN"]
