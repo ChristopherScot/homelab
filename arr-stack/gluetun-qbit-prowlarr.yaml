@@ -1,0 +1,169 @@
+# Single pod containing Gluetun + qBittorrent + Prowlarr.
+# qBit and Prowlarr share Gluetun's network namespace by virtue of being in
+# the same pod, so all their egress goes through the VPN tunnel. If gluetun
+# crashes / reconnects, qBit and Prowlarr cannot reach the internet — that's
+# the kill-switch behavior we want.
+#
+# Service exposes the apps' webUIs via gluetun's localhost:
+#   - qBit:     8080
+#   - Prowlarr: 9696
+# Other pods reach them as gluetun-qbit-prowlarr.media.svc.cluster.local.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gluetun-qbit-prowlarr
+  namespace: media
+  labels:
+    app: gluetun-qbit-prowlarr
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: gluetun-qbit-prowlarr
+  template:
+    metadata:
+      labels:
+        app: gluetun-qbit-prowlarr
+    spec:
+      enableServiceLinks: false
+      containers:
+        # Gluetun MUST start before the others so the netns has the tunnel
+        # before qBit/Prowlarr try to use it. k8s does not order container
+        # startup; we rely on Gluetun's healthcheck + its own kill-switch
+        # firewall blocking egress until the tunnel is up.
+        - name: gluetun
+          image: qmcgaw/gluetun:v3.39
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
+          env:
+            - name: VPN_SERVICE_PROVIDER
+              value: nordvpn
+            - name: VPN_TYPE
+              value: openvpn
+            - name: SERVER_COUNTRIES
+              value: United States
+            - name: TZ
+              value: America/New_York
+            - name: FIREWALL_OUTBOUND_SUBNETS
+              # Allow LAN access from inside the netns so qBit and Prowlarr
+              # can reach in-cluster services (Sonarr/Radarr at 10.43.x.x and
+              # the NAS at 192.168.50.220) without going through the VPN.
+              value: 10.42.0.0/16,10.43.0.0/16,192.168.50.0/24
+          envFrom:
+            - secretRef:
+                name: nordvpn-credentials
+          volumeMounts:
+            - name: gluetun-config
+              mountPath: /gluetun
+            - name: dev-tun
+              mountPath: /dev/net/tun
+          ports:
+            # All ports for sibling containers must be declared on the gluetun
+            # container — sibling containers in a shared netns cannot also
+            # declare overlapping ports.
+            - containerPort: 8080
+              name: qbit
+            - containerPort: 9696
+              name: prowlarr
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          livenessProbe:
+            exec:
+              # If gluetun's healthcheck server isn't responding the tunnel is
+              # likely dead. Pod gets restarted and qBit/Prowlarr ride along.
+              command: ["/gluetun-entrypoint", "healthcheck"]
+            periodSeconds: 30
+            failureThreshold: 3
+
+        - name: qbittorrent
+          image: lscr.io/linuxserver/qbittorrent:5.0.3
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: America/New_York
+            - name: WEBUI_PORT
+              value: "8080"
+          volumeMounts:
+            - name: qbittorrent-config
+              mountPath: /config
+            - name: media
+              mountPath: /media
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 2Gi
+
+        - name: prowlarr
+          image: lscr.io/linuxserver/prowlarr:1.30.2
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: America/New_York
+          volumeMounts:
+            - name: prowlarr-config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+
+      volumes:
+        - name: gluetun-config
+          persistentVolumeClaim:
+            claimName: gluetun-config
+        - name: qbittorrent-config
+          persistentVolumeClaim:
+            claimName: qbittorrent-config
+        - name: prowlarr-config
+          persistentVolumeClaim:
+            claimName: prowlarr-config
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
+        - name: dev-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qbittorrent
+  namespace: media
+spec:
+  selector:
+    app: gluetun-qbit-prowlarr
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prowlarr
+  namespace: media
+spec:
+  selector:
+    app: gluetun-qbit-prowlarr
+  ports:
+    - name: http
+      port: 9696
+      targetPort: 9696
