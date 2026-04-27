@@ -121,6 +121,22 @@ spec:
                     | curl -sf $AH -H Content-Type:application/json \
                       "$JF/System/Configuration" -X POST -d @-
 
+                  # Hardware acceleration. /dev/dri is mounted, supplementalGroups
+                  # 44+110 cover the host's video+render groups. Intel QSV decode
+                  # for h264/hevc/vp9/av1; tonemapping enabled for HDR->SDR.
+                  echo "==> setting encoding config (Intel QSV)"
+                  curl -sf $AH "$JF/System/Configuration/encoding" \
+                    | jq '.HardwareAccelerationType = "qsv"
+                          | .VaapiDevice = "/dev/dri/renderD128"
+                          | .EnableHardwareEncoding = true
+                          | .EnableTonemapping = true
+                          | .EnableVppTonemapping = true
+                          | .HardwareDecodingCodecs = ["h264","hevc","vp9","av1"]
+                          | .EnableIntelLowPowerH264HwEncoder = true
+                          | .EnableIntelLowPowerHevcHwEncoder = true' \
+                    | curl -sf $AH -H Content-Type:application/json \
+                      "$JF/System/Configuration/encoding" -X POST -d @-
+
                   echo "==> triggering library scan"
                   curl -sf $AH "$JF/Library/Refresh" -X POST -d '' || true
 
