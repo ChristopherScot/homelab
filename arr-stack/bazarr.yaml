@@ -43,7 +43,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: bazarr-config
+            claimName: bazarr-config-nfs
         - name: media
           persistentVolumeClaim:
             claimName: media-data

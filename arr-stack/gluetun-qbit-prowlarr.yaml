@@ -133,7 +133,7 @@ spec:
             claimName: qbittorrent-config
         - name: prowlarr-config
           persistentVolumeClaim:
-            claimName: prowlarr-config
+            claimName: prowlarr-config-nfs
         - name: media
           persistentVolumeClaim:
             claimName: media-data

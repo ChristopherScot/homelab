@@ -1,7 +1,7 @@
-# Shared media volume — RWX NFS share on the NAS at /volume1/media-stack-...
-# Mounted as /media in qBittorrent, every *arr, and Jellyfin. Single mount =
-# hardlinks work (qBit can hardlink the downloaded file into /media/movies/
-# without doubling disk usage on the NAS).
+# Shared media volume — RWX NFS share on the NAS. Mounted as /media in
+# qBittorrent, every *arr, and Jellyfin. Single mount = hardlinks work
+# (qBit can hardlink the downloaded file into /media/movies/ without
+# doubling disk usage on the NAS).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -12,22 +12,11 @@ spec:
   storageClassName: synology-nfs
   resources:
     requests:
-      storage: 100Gi   # NFS share size on Synology is dynamic; this is a
-                       # k8s-tracked quota. Bump as the library grows.
+      storage: 100Gi
 ---
-# Per-app config volumes — RWO iSCSI, btrfs, snapshot-friendly.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: gluetun-config
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-iscsi
-  resources:
-    requests:
-      storage: 1Gi
----
+# qBittorrent config — kept on iSCSI because it's the only app with
+# meaningful I/O (download piece state, fastresume files). SQLite-on-iSCSI
+# is also unambiguously fine for single-writer.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -40,14 +29,35 @@ spec:
     requests:
       storage: 5Gi
 ---
+# Gluetun config — kept on iSCSI for the same reason as qbit (sibling in
+# the same pod; pulling its config off iSCSI would mean the pod still has
+# both NFS + iSCSI mounts, no real win).
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: prowlarr-config
+  name: gluetun-config
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: synology-iscsi
+  resources:
+    requests:
+      storage: 1Gi
+---
+# *arr configs — moved to NFS. Names suffixed -nfs so the iSCSI versions
+# (Retain) survive the cutover; we manually delete the LUNs in DSM after
+# verifying the migration. Synology DSM has a hard cap on simultaneous
+# iSCSI LUNs (~16-64 depending on model), and 8 small *arr LUNs eats most
+# of the budget for nothing — the apps are single-writer SQLite and run
+# fine on NFSv4.1 with proper byte-range locking.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prowlarr-config-nfs
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: synology-nfs
   resources:
     requests:
       storage: 2Gi
@@ -55,11 +65,11 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: sonarr-config
+  name: sonarr-config-nfs
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: synology-iscsi
+  storageClassName: synology-nfs
   resources:
     requests:
       storage: 5Gi
@@ -67,11 +77,11 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: radarr-config
+  name: radarr-config-nfs
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: synology-iscsi
+  storageClassName: synology-nfs
   resources:
     requests:
       storage: 5Gi
@@ -79,11 +89,11 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: bazarr-config
+  name: bazarr-config-nfs
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: synology-iscsi
+  storageClassName: synology-nfs
   resources:
     requests:
       storage: 2Gi
@@ -91,11 +101,11 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: jellyseerr-config
+  name: jellyseerr-config-nfs
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: synology-iscsi
+  storageClassName: synology-nfs
   resources:
     requests:
       storage: 2Gi
@@ -103,19 +113,29 @@ spec:
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: jellyfin-config
+  name: jellyfin-config-nfs
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: synology-iscsi
+  storageClassName: synology-nfs
   resources:
     requests:
       storage: 10Gi
 ---
-# Jellyfin's transcoding cache — local-fast, ephemeral. Using Longhorn so it
-# can move across nodes if Jellyfin re-schedules, but realistically it's
-# pinned to pop-os for HW transcode and emptyDir would suffice. Keeping a
-# proper PVC so cache survives pod restarts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: readarr-config-nfs
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: synology-nfs
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Jellyfin's transcoding cache — local-fast, ephemeral. Longhorn so it can
+# follow Jellyfin if it reschedules; pinned to pop-os today.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

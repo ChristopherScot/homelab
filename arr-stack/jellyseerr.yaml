@@ -39,7 +39,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: jellyseerr-config
+            claimName: jellyseerr-config-nfs
 ---
 apiVersion: v1
 kind: Service
