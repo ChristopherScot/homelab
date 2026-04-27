@@ -6,6 +6,8 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/kubernetes-status: "false"
+    gethomepage.dev/href: "https://grafana.home.chrisscotmartin.com"
     gethomepage.dev/name: "Grafana"
     gethomepage.dev/description: "Metrics dashboards"
     gethomepage.dev/group: "Cluster"

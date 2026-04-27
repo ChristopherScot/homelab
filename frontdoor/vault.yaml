@@ -6,6 +6,8 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
+    gethomepage.dev/pod-selector: "app.kubernetes.io/name=vault,component=server"
+    gethomepage.dev/href: "https://vault.home.chrisscotmartin.com"
     gethomepage.dev/name: "Vault"
     gethomepage.dev/description: "Secrets store"
     gethomepage.dev/group: "Cluster"
