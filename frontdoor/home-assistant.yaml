@@ -1,0 +1,73 @@
+# Reverse-proxy entry for Home Assistant running on the k3s node directly via
+# Docker (port 8123 published on host). HA isn't in-cluster, so a Service with
+# no selector + EndpointSlice pointing at the node's LAN IP. ingress-nginx
+# proxies https://hass.home.chrisscotmartin.com -> http://192.168.50.179:8123.
+#
+# NB: HA strictly validates the Host header. Without `trusted_proxies` set in
+# its configuration.yaml, requests through this ingress get rejected with a
+# 400. See homepage/README.md for the exact configuration.yaml block.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: home-assistant
+  namespace: default
+spec:
+  ports:
+    - name: http
+      port: 8123
+      protocol: TCP
+      targetPort: 8123
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: home-assistant
+  namespace: default
+  labels:
+    kubernetes.io/service-name: home-assistant
+addressType: IPv4
+ports:
+  - name: http
+    port: 8123
+    protocol: TCP
+endpoints:
+  - addresses:
+      - 192.168.50.179
+    # See frontdoor/nas.yaml — declaring conditions explicitly keeps ArgoCD
+    # from reporting the EndpointSlice as OutOfSync forever.
+    conditions: {}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: home-assistant
+  namespace: default
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/kubernetes-status: "false"
+    gethomepage.dev/name: "Home Assistant"
+    gethomepage.dev/description: "Home automation"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/icon: "home-assistant.png"
+    # HA uses WebSockets for the dashboard's real-time state updates.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: external
+  tls:
+    - hosts:
+        - hass.home.chrisscotmartin.com
+      secretName: home-assistant-tls
+  rules:
+    - host: hass.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: home-assistant
+                port:
+                  number: 8123
