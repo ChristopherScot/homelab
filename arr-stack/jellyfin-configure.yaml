@@ -23,10 +23,11 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      backoffLimit: 1
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 3600  # keep failed pods for an hour for inspection
       template:
         spec:
-          restartPolicy: OnFailure
+          restartPolicy: Never
           enableServiceLinks: false
           containers:
             - name: configure
