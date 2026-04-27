@@ -80,7 +80,43 @@ spec:
                   echo "==> finalizing"
                   curl -sf $H "$JF/Startup/Complete" -X POST -d ''
 
-                  echo "==> done — admin user created, libraries to be added by jellyseerr or manually"
+                  # ---- Libraries ----
+                  # Wizard locked the API. Log in as the new admin and add
+                  # /media/tv (TV shows) + /media/movies (Movies) libraries.
+                  # Idempotent: skip if a library with that name already exists.
+                  echo "==> logging in as $ADMIN_USERNAME"
+                  TOKEN=$(curl -sf $H \
+                    -H 'Authorization: MediaBrowser Client="setup", Device="setup", DeviceId="setup", Version="1.0"' \
+                    "$JF/Users/AuthenticateByName" -X POST \
+                    -d "$(jq -n --arg n "$ADMIN_USERNAME" --arg p "$ADMIN_PASSWORD" '{Username:$n, Pw:$p}')" \
+                    | jq -r .AccessToken)
+                  if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+                    echo "    failed to log in" >&2
+                    exit 1
+                  fi
+                  AH="-H X-Emby-Token:$TOKEN"
+
+                  add_lib() {
+                    local name="$1" type="$2" path="$3"
+                    if curl -sf $AH "$JF/Library/VirtualFolders" | jq -e ".[] | select(.Name==\"$name\")" >/dev/null 2>&1; then
+                      echo "==> library '$name' already exists, skipping"
+                      return 0
+                    fi
+                    echo "==> adding library '$name' (type=$type path=$path)"
+                    # collectionType is the URL param (tvshows / movies); path is in body.
+                    # refreshLibrary=false because we'll trigger scan once at end.
+                    curl -sf $AH -H Content-Type:application/json \
+                      "$JF/Library/VirtualFolders?name=$name&collectionType=$type&refreshLibrary=false" \
+                      -X POST -d "$(jq -n --arg p "$path" '{LibraryOptions: {PathInfos: [{Path: $p}], EnableRealtimeMonitor: true, EnableChapterImageExtraction: false, ExtractChapterImagesDuringLibraryScan: false}}')"
+                  }
+
+                  add_lib "TV Shows" "tvshows" "/media/tv"
+                  add_lib "Movies" "movies" "/media/movies"
+
+                  echo "==> triggering library scan"
+                  curl -sf $AH "$JF/Library/Refresh" -X POST -d '' || true
+
+                  echo "==> done"
               resources:
                 requests:
                   cpu: 10m
