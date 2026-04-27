@@ -18,20 +18,10 @@ export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 echo "Setting permissions for kubeconfig file..."
 sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
-# MetalLB is installed and configured by ArgoCD via app-of-apps/apps/metallb.yaml.
-# It will not be available until ArgoCD finishes syncing, but ingress-nginx
-# below doesn't need it during install.
-
-# Install NGINX Ingress Controller
-echo "Installing NGINX Ingress Controller..."
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
-
-# Wait for NGINX Ingress Controller to be up and running
-echo "Waiting for NGINX Ingress Controller to be up and running..."
-kubectl wait --namespace ingress-nginx \
-  --for=condition=ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=90s
+# MetalLB and ingress-nginx are installed and configured by ArgoCD via
+# app-of-apps/apps/{metallb,ingress-nginx}.yaml. They become available after
+# ArgoCD finishes its first sync (which the app-of-apps bootstrap below
+# kicks off).
 
 # Install ArgoCD
 echo "Installing ArgoCD..."
@@ -69,7 +59,8 @@ ARGOCD_PASSWORD=$(kubectl -n argocd get secret argocd-initial-admin-secret -o js
 echo "ArgoCD Username: admin"
 echo "ArgoCD Password: $ARGOCD_PASSWORD"
 
-echo "k3s cluster with NGINX Ingress, MetalLB, and ArgoCD is up and running!"
+echo "k3s + ArgoCD bootstrap complete. ArgoCD will install MetalLB,"
+echo "ingress-nginx, and the rest of the cluster from the repo on first sync."
 
 
 # Output instructions to get the token for joining nodes
