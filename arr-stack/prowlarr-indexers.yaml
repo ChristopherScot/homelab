@@ -1,0 +1,94 @@
+# Adds public indexers to Prowlarr. Idempotent — re-runnable to add new
+# indexers, will skip ones already present (matched by name).
+#
+# Trigger: kubectl create job -n media --from=cronjob/prowlarr-indexers \
+#            prowlarr-indexers-$(date +%s)
+#
+# Removing an indexer: do it in the Prowlarr UI. This job only adds.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: prowlarr-indexers
+  namespace: media
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: configure
+              image: alpine:3.20
+              env:
+                - name: PROWLARR_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: arr-api-keys
+                      key: prowlarr
+              command:
+                - sh
+                - -c
+                - |
+                  set -e
+                  apk add --no-cache curl jq >/dev/null
+                  PROWLARR=http://prowlarr.media.svc.cluster.local:9696
+                  H="-H X-Api-Key:$PROWLARR_API_KEY -H Content-Type:application/json"
+
+                  echo "==> waiting for prowlarr"
+                  until curl -sf $H "$PROWLARR/api/v1/system/status" >/dev/null; do sleep 2; done
+
+                  add_indexer() {
+                    local name="$1" definition="$2"
+                    local existing=$(curl -sf $H "$PROWLARR/api/v1/indexer" | jq -r ".[] | select(.name==\"$name\") | .id")
+                    if [ -n "$existing" ]; then
+                      echo "==> $name already exists (id=$existing), skipping"
+                      return 0
+                    fi
+                    echo "==> adding $name"
+                    local payload=$(jq -n \
+                      --arg name "$name" \
+                      --arg def "$definition" \
+                      '{
+                        enable: true,
+                        redirect: false,
+                        supportsRss: true,
+                        supportsSearch: true,
+                        protocol: "torrent",
+                        privacy: "public",
+                        priority: 25,
+                        name: $name,
+                        implementationName: "Cardigann",
+                        implementation: "Cardigann",
+                        configContract: "CardigannSettings",
+                        tags: [],
+                        fields: [
+                          {name: "definitionFile", value: $def}
+                        ]
+                      }')
+                    if ! curl -sf $H "$PROWLARR/api/v1/indexer" -d "$payload" >/dev/null; then
+                      echo "    FAILED — likely Cloudflare-protected (would need FlareSolverr) or schema mismatch"
+                      return 1
+                    fi
+                  }
+
+                  # name (display) | definitionName (the YAML in Cardigann's defs)
+                  add_indexer "1337x" "1337x" || true
+                  add_indexer "The Pirate Bay" "thepiratebay" || true
+                  add_indexer "EZTV" "eztv" || true
+                  add_indexer "YTS" "yts" || true
+                  add_indexer "LimeTorrents" "limetorrents" || true
+                  add_indexer "Nyaa.si" "nyaasi" || true
+
+                  echo "==> done"
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
