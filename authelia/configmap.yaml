@@ -1,0 +1,89 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: authelia-config
+  namespace: authelia
+data:
+  configuration.yml: |
+    # Authelia configuration. Secret keys come from env (authelia-keys Secret).
+    # Users + password hashes come from a mounted file (authelia-users Secret).
+
+    server:
+      address: tcp://0.0.0.0:9091
+      buffers:
+        read: 4096
+        write: 4096
+
+    log:
+      level: info
+      format: json
+
+    theme: dark
+
+    totp:
+      issuer: home.chrisscotmartin.com
+      period: 30
+      skew: 1
+
+    authentication_backend:
+      file:
+        path: /config/users/users_database.yml
+        password:
+          algorithm: argon2id
+
+    access_control:
+      default_policy: deny
+      rules:
+        # Jellyseerr + Jellyfin: anyone in users group (admins are also in users).
+        - domain:
+            - seerr.home.chrisscotmartin.com
+            - jellyfin.home.chrisscotmartin.com
+          policy: one_factor
+          subject:
+            - "group:users"
+
+        # Admin tools: admins only, with 2FA.
+        - domain:
+            - sonarr.home.chrisscotmartin.com
+            - radarr.home.chrisscotmartin.com
+            - prowlarr.home.chrisscotmartin.com
+            - bazarr.home.chrisscotmartin.com
+            - qbit.home.chrisscotmartin.com
+          policy: two_factor
+          subject:
+            - "group:admins"
+
+    session:
+      # session.secret comes from AUTHELIA_SESSION_SECRET env (Authelia maps
+      # underscored env vars to nested config keys at startup).
+      cookies:
+        - domain: home.chrisscotmartin.com
+          authelia_url: https://auth.home.chrisscotmartin.com
+          default_redirection_url: https://seerr.home.chrisscotmartin.com
+      inactivity: 1h
+      expiration: 12h
+      remember_me: 1M
+      redis:
+        host: redis.authelia.svc.cluster.local
+        port: 6379
+
+    regulation:
+      max_retries: 3
+      find_time: 2m
+      ban_time: 5m
+
+    storage:
+      # storage.encryption_key comes from AUTHELIA_STORAGE_ENCRYPTION_KEY env.
+      local:
+        path: /config/db/db.sqlite3
+
+    identity_validation:
+      reset_password:
+        # jwt_secret comes from AUTHELIA_IDENTITY_VALIDATION_RESET_PASSWORD_JWT_SECRET
+        # env (set in deployment.yaml).
+
+    notifier:
+      # No SMTP. 2FA enrollment URLs land in /config/notification.txt — recover
+      # via `kubectl exec -n authelia deploy/authelia -- cat /config/notification.txt`.
+      filesystem:
+        filename: /config/notification.txt

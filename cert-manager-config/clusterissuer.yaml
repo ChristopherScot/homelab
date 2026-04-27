@@ -1,0 +1,49 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-prod
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    email: chrisscotmartin@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-prod-account
+    solvers:
+      - selector:
+          dnsZones:
+            - chrisscotmartin.com
+        dns01:
+          route53:
+            region: us-east-1
+            hostedZoneID: Z0475915FBCYEAWH0Y68
+            accessKeyID: AKIAVHGOHCE454LOGZHM
+            secretAccessKeySecretRef:
+              name: route53-credentials
+              namespace: cert-manager
+              key: secret-access-key
+---
+# Staging issuer for testing — LE prod has 50 certs/week rate limit. Use this
+# until issuance flow is verified, then switch ingresses to letsencrypt-prod.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-staging
+spec:
+  acme:
+    server: https://acme-staging-v02.api.letsencrypt.org/directory
+    email: chrisscotmartin@gmail.com
+    privateKeySecretRef:
+      name: letsencrypt-staging-account
+    solvers:
+      - selector:
+          dnsZones:
+            - chrisscotmartin.com
+        dns01:
+          route53:
+            region: us-east-1
+            hostedZoneID: Z0475915FBCYEAWH0Y68
+            accessKeyID: AKIAVHGOHCE454LOGZHM
+            secretAccessKeySecretRef:
+              name: route53-credentials
+              namespace: cert-manager
+              key: secret-access-key

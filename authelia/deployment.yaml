@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: authelia
+  namespace: authelia
+  labels:
+    app: authelia
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: authelia
+  template:
+    metadata:
+      labels:
+        app: authelia
+    spec:
+      containers:
+        - name: authelia
+          image: authelia/authelia:4.38
+          args:
+            - --config
+            - /config/configuration.yml
+          ports:
+            - containerPort: 9091
+              name: http
+          envFrom:
+            - secretRef:
+                name: authelia-keys
+          volumeMounts:
+            - name: config
+              mountPath: /config/configuration.yml
+              subPath: configuration.yml
+            - name: users
+              mountPath: /config/users
+              readOnly: true
+            - name: db
+              mountPath: /config/db
+            - name: notifications
+              mountPath: /config/notification.txt
+              subPath: notification.txt
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 9091
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 9091
+            initialDelaySeconds: 30
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap:
+            name: authelia-config
+        - name: users
+          secret:
+            secretName: authelia-users
+        - name: db
+          persistentVolumeClaim:
+            claimName: authelia-db
+        # Authelia writes notifications (e.g. 2FA QR codes when SMTP isn't
+        # configured) to a file. emptyDir is fine — kubectl logs/exec recovers.
+        - name: notifications
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: authelia
+  namespace: authelia
+spec:
+  selector:
+    app: authelia
+  ports:
+    - name: http
+      port: 80
+      targetPort: 9091
