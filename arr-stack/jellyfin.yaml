@@ -40,7 +40,10 @@ spec:
             - name: TZ
               value: America/New_York
             - name: JELLYFIN_PublishedServerUrl
-              value: https://jellyfin.home.chrisscotmartin.com
+              # LAN URL so auto-discovered clients (TV) connect directly without
+              # going through ingress DNS+TLS. Browsers/external clients still
+              # use https://jellyfin.home.chrisscotmartin.com via the Ingress.
+              value: http://192.168.50.179:8096
           ports:
             - containerPort: 8096
               name: http
