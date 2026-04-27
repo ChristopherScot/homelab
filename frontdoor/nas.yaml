@@ -32,6 +32,10 @@ ports:
 endpoints:
   - addresses:
       - 192.168.50.220
+    # Endpoint controller writes empty {} after creation; declaring it
+    # explicitly here keeps ArgoCD from reporting the EndpointSlice as
+    # OutOfSync forever.
+    conditions: {}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
