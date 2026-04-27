@@ -83,7 +83,8 @@ data:
         # env (set in deployment.yaml).
 
     notifier:
-      # No SMTP. 2FA enrollment URLs land in /config/notification.txt — recover
-      # via `kubectl exec -n authelia deploy/authelia -- cat /config/notification.txt`.
+      # No SMTP. 2FA enrollment URLs land in /config/notifications/notification.txt
+      # Recover via:
+      #   kubectl exec -n authelia deploy/authelia -- cat /config/notifications/notification.txt
       filesystem:
-        filename: /config/notification.txt
+        filename: /config/notifications/notification.txt
