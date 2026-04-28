@@ -133,17 +133,3 @@ spec:
   resources:
     requests:
       storage: 5Gi
----
-# Jellyfin's transcoding cache — local-fast, ephemeral. Longhorn so it can
-# follow Jellyfin if it reschedules; pinned to pop-os today.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jellyfin-cache
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 20Gi

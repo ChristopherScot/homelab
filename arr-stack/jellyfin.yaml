@@ -85,8 +85,12 @@ spec:
           persistentVolumeClaim:
             claimName: jellyfin-config-nfs
         - name: cache
-          persistentVolumeClaim:
-            claimName: jellyfin-cache
+          # Local node disk, not replicated. Jellyfin's cache is ephemeral
+          # (thumbnails, transcode segments) — replicated storage made every
+          # fsync wait on synchronous Longhorn replication over WiFi (~22ms),
+          # which murdered library navigation.
+          emptyDir:
+            sizeLimit: 20Gi
         - name: media
           persistentVolumeClaim:
             claimName: media-data
