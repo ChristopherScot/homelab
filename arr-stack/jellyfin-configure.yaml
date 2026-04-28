@@ -137,6 +137,19 @@ spec:
                     | curl -sf $AH -H Content-Type:application/json \
                       "$JF/System/Configuration/encoding" -X POST -d @-
 
+                  # Trickplay: scrubbing-preview thumbnails. Generated once per
+                  # video by ffmpeg during library scan, stored in /config.
+                  # Enable QSV hw accel since /dev/dri is mounted; keep
+                  # NonBlocking + BelowNormal so it doesn't fight playback.
+                  echo "==> setting trickplay config"
+                  curl -sf $AH "$JF/System/Configuration" \
+                    | jq '.TrickplayOptions.EnableHwAcceleration = true
+                          | .TrickplayOptions.EnableHwEncoding = true
+                          | .TrickplayOptions.ScanBehavior = "NonBlocking"
+                          | .TrickplayOptions.ProcessPriority = "BelowNormal"' \
+                    | curl -sf $AH -H Content-Type:application/json \
+                      "$JF/System/Configuration" -X POST -d @-
+
                   echo "==> triggering library scan"
                   curl -sf $AH "$JF/Library/Refresh" -X POST -d '' || true
 
