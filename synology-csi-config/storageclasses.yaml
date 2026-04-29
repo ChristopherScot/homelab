@@ -12,6 +12,13 @@ mountOptions:
   - nfsvers=4.1
   - hard
   - timeo=600
+  # Cache file attributes for 10 min so the kernel doesn't keep stat()-ing
+  # the NAS for every poll from sonarr/radarr/etc. Lets the Synology spin
+  # disks down between bursts. Tradeoff: changes made via a *different*
+  # mount (e.g. dropping a file via DSM File Station) can lag up to 10
+  # min before Jellyfin sees them. Close-to-open consistency still applies
+  # so opening a file always revalidates.
+  - actimeo=600
 reclaimPolicy: Retain
 allowVolumeExpansion: true
 volumeBindingMode: Immediate

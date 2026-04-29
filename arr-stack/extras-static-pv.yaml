@@ -25,6 +25,9 @@ spec:
     - nfsvers=4.1
     - hard
     - timeo=600
+    # Match the synology-nfs SC: cache attributes 10min so background
+    # polls don't keep waking the NAS disks.
+    - actimeo=600
   nfs:
     server: 192.168.50.220
     path: /volume1/k8s-csi-pvc-1f8d7069-868a-4303-a
