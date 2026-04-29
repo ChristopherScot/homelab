@@ -28,6 +28,45 @@ spec:
         app: gluetun-qbit-prowlarr
     spec:
       enableServiceLinks: false
+      # One-shot init that fetches dreulavelle's community Prowlarr indexer
+      # pack into the prowlarr config volume's Definitions/Custom/ dir so
+      # Prowlarr can use them on top of its built-in schema. Tarball of main
+      # so we always pull current — community trackers break/move often. We
+      # don't need git history. Runs as root because the prowlarr-config
+      # volume's files are root-owned (the prowlarr container runs PUID/
+      # PGID=0; see comment on its env above).
+      initContainers:
+        - name: load-indexer-pack
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              apk add --no-cache curl tar >/dev/null
+              DEST=/config/Definitions/Custom
+              mkdir -p "$DEST"
+              # Wipe Custom/ first so removed definitions don't linger.
+              find "$DEST" -mindepth 1 -delete
+              echo "==> downloading dreulavelle/Prowlarr-Indexers main"
+              curl -sSL https://github.com/dreulavelle/Prowlarr-Indexers/archive/refs/heads/main.tar.gz \
+                | tar -xz -C /tmp
+              SRC=/tmp/Prowlarr-Indexers-main/Custom
+              if [ ! -d "$SRC" ]; then
+                echo "ERROR: tarball layout changed, /Custom not found"
+                exit 1
+              fi
+              cp -r "$SRC"/* "$DEST"/
+              echo "==> installed $(find "$DEST" -name '*.yml' | wc -l) custom definitions"
+          volumeMounts:
+            - name: prowlarr-config
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
       containers:
         # Gluetun MUST start before the others so the netns has the tunnel
         # before qBit/Prowlarr try to use it. k8s does not order container
