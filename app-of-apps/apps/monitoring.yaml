@@ -1,0 +1,138 @@
+# Grafana Cloud Kubernetes monitoring — sends pod logs and cluster metrics to
+# the hosted Grafana Cloud stack. Trimmed compared to the original ad-hoc helm
+# install: no traces (storage exploded last time), no auto-instrumentation,
+# no profiling, no integrations, no cost metrics.
+#
+# Chart: grafana/k8s-monitoring v4 (was a major schema rewrite from v1 — top-
+# level shape is now `destinations:` (object map) + per-feature `enabled` and
+# `collector` blocks; collectors must be explicitly enabled too).
+#
+# Credentials: a single Grafana Cloud access token in Vault at kv/grafana-cloud
+# (key `token`) is pulled into the `grafana-cloud-creds` k8s Secret by
+# ExternalSecrets. Both destinations reference it via `auth.passwordKey: token`.
+# Usernames are stack-scoped numeric IDs and are not secret.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: monitoring
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  sources:
+    # 1. ServiceAccount, SecretStore, ExternalSecret for pulling the token.
+    - repoURL: https://github.com/ChristopherScot/homelab.git
+      targetRevision: HEAD
+      path: monitoring
+    # 2. The Grafana k8s-monitoring chart, fed values inline.
+    - repoURL: https://grafana.github.io/helm-charts
+      chart: k8s-monitoring
+      targetRevision: 4.0.3
+      helm:
+        releaseName: grafana-k8s-monitoring
+        valuesObject:
+          cluster:
+            name: homelab
+
+          # Destinations are an object map keyed by name in v4.
+          destinations:
+            grafanacloud-metrics:
+              type: prometheus
+              url: https://prometheus-prod-13-prod-us-east-0.grafana.net/api/prom/push
+              auth:
+                type: basic
+                username: "1054401"
+                passwordKey: token
+              secret:
+                create: false
+                name: grafana-cloud-creds
+                namespace: monitoring
+
+            grafanacloud-logs:
+              type: loki
+              url: https://logs-prod-006.grafana.net/loki/api/v1/push
+              auth:
+                type: basic
+                username: "628971"
+                passwordKey: token
+              secret:
+                create: false
+                name: grafana-cloud-creds
+                namespace: monitoring
+
+          # ---- Features: enabled ----
+          clusterMetrics:
+            enabled: true
+            collector: alloy-metrics
+
+          clusterEvents:
+            enabled: true
+            collector: alloy-singleton
+
+          # Drop ingress-nginx (single biggest source on most clusters) and
+          # kube-system (CNI / kube-proxy chatter) at the agent so they never
+          # count against ingest.
+          podLogsViaLoki:
+            enabled: true
+            collector: alloy-logs
+            excludeNamespaces:
+              - ingress-nginx
+              - kube-system
+
+          # ---- Features: explicitly disabled (so a chart upgrade can't flip
+          # them on without us noticing) ----
+          applicationObservability:
+            enabled: false
+          autoInstrumentation:
+            enabled: false
+          profiling:
+            enabled: false
+          profilesReceiver:
+            enabled: false
+          costMetrics:
+            enabled: false
+          hostMetrics:
+            enabled: false
+
+          # ---- Collectors ----
+          # alloy-metrics: single-replica deployment avoids the clustering
+          # requirement that the chart enforces on daemonset/multi-replica
+          # metrics collectors. Fine for a homelab.
+          collectors:
+            alloy-metrics:
+              enabled: true
+              controller:
+                type: deployment
+                replicas: 1
+            alloy-singleton:
+              enabled: true
+            alloy-logs:
+              enabled: true
+              presets:
+                - filesystem-log-reader
+                - daemonset
+
+          # kube-state-metrics is required by clusterMetrics; the chart
+          # deploys it as a sub-chart here.
+          telemetryServices:
+            kube-state-metrics:
+              deploy: true
+            node-exporter:
+              deploy: false
+            windows-exporter:
+              deploy: false
+            kepler:
+              deploy: false
+            opencost:
+              deploy: false
