@@ -46,29 +46,28 @@ spec:
             name: homelab
 
           # Destinations are an object map keyed by name in v4.
+          # Each destination references its own ExternalSecret-managed Secret,
+          # which carries the full set of keys Alloy's remote.kubernetes.secret
+          # block reads (url, username, token, tenantId, ca, cert, key).
+          # Field values like url/username can't live in this values block when
+          # secret.create=false — Alloy reads them from the Secret directly.
           destinations:
             grafanacloud-metrics:
               type: prometheus
-              url: https://prometheus-prod-13-prod-us-east-0.grafana.net/api/prom/push
               auth:
                 type: basic
-                username: "1054401"
-                passwordKey: token
               secret:
                 create: false
-                name: grafana-cloud-creds
+                name: grafana-cloud-metrics
                 namespace: monitoring
 
             grafanacloud-logs:
               type: loki
-              url: https://logs-prod-006.grafana.net/loki/api/v1/push
               auth:
                 type: basic
-                username: "628971"
-                passwordKey: token
               secret:
                 create: false
-                name: grafana-cloud-creds
+                name: grafana-cloud-logs
                 namespace: monitoring
 
           # ---- Features: enabled ----
