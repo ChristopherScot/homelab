@@ -67,12 +67,17 @@ spec:
             limits:
               memory: 4Gi
           # Jellyfin is heavy on first start (DB init); generous probe delays.
+          # `timeoutSeconds: 10` because the default of 1s is too tight: when
+          # the NFS-backed media volume gets slow (e.g. syncthing rescanning
+          # on the NAS), /health can take 2-5s and the kubelet was killing
+          # the pod mid-playback. 10s tolerates a brief stall without flap.
           readinessProbe:
             httpGet:
               path: /health
               port: 8096
             initialDelaySeconds: 30
             periodSeconds: 15
+            timeoutSeconds: 10
           livenessProbe:
             httpGet:
               path: /health
@@ -80,6 +85,7 @@ spec:
             initialDelaySeconds: 60
             periodSeconds: 30
             failureThreshold: 5
+            timeoutSeconds: 10
       volumes:
         - name: config
           persistentVolumeClaim:
