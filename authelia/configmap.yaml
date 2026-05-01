@@ -112,12 +112,23 @@ data:
               - policy: two_factor
                 subject:
                   - "user:chris"
+        claims_policies:
+          # Authelia defaults to a privacy-focused behavior where identity
+          # claims live only at the UserInfo endpoint, not in the ID Token.
+          # Vault's OIDC plugin reads user_claim/groups_claim from the ID
+          # Token, so for the Vault client we include them inline.
+          vault:
+            id_token:
+              - preferred_username
+              - groups
+              - email
         clients:
           - client_id: vault
             client_name: Vault
             client_secret: '{{ secret "/config/secrets/oidc_vault_client_secret_hashed" }}'
             public: false
             authorization_policy: vault_admin
+            claims_policy: vault
             redirect_uris:
               - https://vault.home.chrisscotmartin.com/ui/vault/auth/oidc/oidc/callback
               - https://vault.home.chrisscotmartin.com/oidc/callback
