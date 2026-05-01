@@ -108,16 +108,23 @@ if [ -n "$OIDC_CLIENT_SECRET" ]; then
     oidc_client_secret="$OIDC_CLIENT_SECRET" \
     default_role="admin"
 
-  vault write auth/oidc/role/admin \
-    role_type="oidc" \
-    user_claim="preferred_username" \
-    groups_claim="groups" \
-    bound_audiences="vault" \
-    bound_claims_type="string" \
-    bound_claims='{"preferred_username":"chris"}' \
-    allowed_redirect_uris="https://vault.home.chrisscotmartin.com/ui/vault/auth/oidc/oidc/callback,https://vault.home.chrisscotmartin.com/oidc/callback" \
-    policies="admin" \
-    ttl=1h
+  # bound_claims is a map; vault CLI parses it from stdin JSON.
+  cat <<'JSON' | vault write auth/oidc/role/admin -
+{
+  "role_type": "oidc",
+  "user_claim": "preferred_username",
+  "groups_claim": "groups",
+  "bound_audiences": ["vault"],
+  "bound_claims_type": "string",
+  "bound_claims": {"preferred_username": "chris"},
+  "allowed_redirect_uris": [
+    "https://vault.home.chrisscotmartin.com/ui/vault/auth/oidc/oidc/callback",
+    "https://vault.home.chrisscotmartin.com/oidc/callback"
+  ],
+  "policies": ["admin"],
+  "ttl": "1h"
+}
+JSON
 fi
 
 echo "done"
