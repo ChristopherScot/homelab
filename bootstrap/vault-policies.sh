@@ -75,4 +75,22 @@ vault write auth/kubernetes/role/homepage \
   policies="homepage" \
   ttl=1h
 
+# Human auth: userpass + admin policy. Password is read from VAULT_ADMIN_PASSWORD
+# at run time so it doesn't land in git. Re-running with the same password is a
+# no-op; with a new password it rotates.
+vault auth list 2>/dev/null | grep -q '^userpass/' || \
+  vault auth enable userpass
+
+vault policy write admin - <<'EOF'
+path "*" {
+  capabilities = ["create", "read", "update", "delete", "list", "sudo"]
+}
+EOF
+
+if [ -n "${VAULT_ADMIN_PASSWORD:-}" ]; then
+  vault write "auth/userpass/users/${VAULT_ADMIN_USER:-chris}" \
+    password="$VAULT_ADMIN_PASSWORD" \
+    policies="admin"
+fi
+
 echo "done"
