@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-custom
+  namespace: kube-system
+data:
+  # k3s's CoreDNS imports /etc/coredns/custom/*.server. Each top-level key
+  # in this ConfigMap is mounted as a file there. The .server suffix makes
+  # CoreDNS load it as a server block (vs *.override which patches the
+  # default block).
+  #
+  # Why: in-cluster services need to talk to each other via their public
+  # hostnames (issuer URLs, OIDC discovery, etc must match the public DNS
+  # name returned by the provider). Public DNS points at the external IP,
+  # which the router doesn't hairpin back into the cluster. Rewrite the
+  # A/AAAA answer to the in-cluster Service IP so traffic stays internal.
+  authelia.server: |
+    auth.home.chrisscotmartin.com:53 {
+      rewrite name auth.home.chrisscotmartin.com authelia.authelia.svc.cluster.local
+      kubernetes cluster.local in-addr.arpa ip6.arpa {
+        pods insecure
+      }
+      forward . /etc/resolv.conf
+      cache 30
+    }
