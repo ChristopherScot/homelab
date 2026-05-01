@@ -93,4 +93,31 @@ if [ -n "${VAULT_ADMIN_PASSWORD:-}" ]; then
     policies="admin"
 fi
 
+# OIDC against Authelia. Client secret is read from Vault KV (where it was
+# generated alongside the Authelia hmac/jwks/hashed-client-secret). The
+# OIDC role is locked to user "chris" via bound_claims; Authelia's
+# vault_admin authorization_policy enforces the same at its end.
+vault auth list 2>/dev/null | grep -q '^oidc/' || \
+  vault auth enable oidc
+
+OIDC_CLIENT_SECRET=$(vault kv get -field=oidc_vault_client_secret kv/authelia/keys 2>/dev/null || true)
+if [ -n "$OIDC_CLIENT_SECRET" ]; then
+  vault write auth/oidc/config \
+    oidc_discovery_url="https://auth.home.chrisscotmartin.com" \
+    oidc_client_id="vault" \
+    oidc_client_secret="$OIDC_CLIENT_SECRET" \
+    default_role="admin"
+
+  vault write auth/oidc/role/admin \
+    role_type="oidc" \
+    user_claim="preferred_username" \
+    groups_claim="groups" \
+    bound_audiences="vault" \
+    bound_claims_type="string" \
+    bound_claims='{"preferred_username":"chris"}' \
+    allowed_redirect_uris="https://vault.home.chrisscotmartin.com/ui/vault/auth/oidc/oidc/callback,https://vault.home.chrisscotmartin.com/oidc/callback" \
+    policies="admin" \
+    ttl=1h
+fi
+
 echo "done"

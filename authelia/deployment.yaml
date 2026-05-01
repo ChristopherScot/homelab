@@ -30,6 +30,10 @@ spec:
           ports:
             - containerPort: 9091
               name: http
+          env:
+            # Enables {{ secret "..." }} templating in configuration.yml.
+            - name: X_AUTHELIA_CONFIG_FILTERS
+              value: template
           envFrom:
             - secretRef:
                 name: authelia-keys
@@ -39,6 +43,9 @@ spec:
               subPath: configuration.yml
             - name: users
               mountPath: /config/users
+              readOnly: true
+            - name: oidc-secrets
+              mountPath: /config/secrets
               readOnly: true
             - name: db
               mountPath: /config/db
@@ -69,6 +76,14 @@ spec:
         - name: users
           secret:
             secretName: authelia-users
+        - name: oidc-secrets
+          secret:
+            secretName: authelia-keys
+            items:
+              - key: oidc_jwks.pem
+                path: oidc_jwks.pem
+              - key: oidc_vault_client_secret_hashed
+                path: oidc_vault_client_secret_hashed
         - name: db
           persistentVolumeClaim:
             claimName: authelia-db
