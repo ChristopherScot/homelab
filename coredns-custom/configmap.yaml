@@ -15,8 +15,12 @@ data:
   # which the router doesn't hairpin back into the cluster. Rewrite the
   # A/AAAA answer to the in-cluster Service IP so traffic stays internal.
   authelia.server: |
+    # Rewrite to the ingress controller (not the Authelia Service directly)
+    # so that in-cluster traffic terminates TLS at the same place as the
+    # public path. The cert presented is the LE-signed cert for
+    # auth.home.chrisscotmartin.com, which Vault's pod CA bundle trusts.
     auth.home.chrisscotmartin.com:53 {
-      rewrite name auth.home.chrisscotmartin.com authelia.authelia.svc.cluster.local
+      rewrite name auth.home.chrisscotmartin.com ingress-nginx-controller.ingress-nginx.svc.cluster.local
       kubernetes cluster.local in-addr.arpa ip6.arpa {
         pods insecure
       }
