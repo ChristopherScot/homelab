@@ -1,0 +1,143 @@
+# Mirrors books on autocaliweb's "Supernote" shelf into
+# /calibre-library/_supernote/ as symlinks. Supernote's WebDAV client only
+# syncs that folder, so adding/removing books from the shelf in autocaliweb
+# UI updates what shows up on the device within ~5s.
+#
+# Polls instead of inotify because both DBs sit on NFS shares — inotify
+# events don't propagate from the server-side write to client kernels.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: supernote-shelf-sync
+  namespace: media
+data:
+  sync.py: |
+    #!/usr/bin/env python3
+    import os, sqlite3, sys, time
+    from pathlib import Path
+
+    APP_DB = "/acw-config/app.db"
+    META_DB = "/calibre-library/metadata.db"
+    LIB_ROOT = Path("/calibre-library")
+    OUT_DIR = LIB_ROOT / "_supernote"
+    SHELF_NAME = "Supernote"
+    POLL_SECONDS = 5
+
+    def log(msg): print(msg, flush=True)
+
+    def sync_once():
+        OUT_DIR.mkdir(exist_ok=True)
+        try:
+            app = sqlite3.connect(f"file:{APP_DB}?mode=ro", uri=True)
+        except sqlite3.OperationalError as e:
+            log(f"can't open app.db: {e}")
+            return
+        shelf_row = app.execute(
+            "SELECT id FROM shelf WHERE name = ?", (SHELF_NAME,)
+        ).fetchone()
+        if not shelf_row:
+            return  # shelf doesn't exist yet — quiet, will pick up when created
+        shelf_id = shelf_row[0]
+        book_ids = [r[0] for r in app.execute(
+            "SELECT book_id FROM book_shelf_link WHERE shelf = ?", (shelf_id,)
+        )]
+
+        meta = sqlite3.connect(f"file:{META_DB}?mode=ro", uri=True)
+        desired = {}  # filename -> source path
+        for bid in book_ids:
+            row = meta.execute(
+                "SELECT b.path, d.name, d.format FROM books b "
+                "JOIN data d ON d.book = b.id "
+                "WHERE b.id = ? AND d.format = 'EPUB' LIMIT 1",
+                (bid,)
+            ).fetchone()
+            if not row:
+                continue
+            path, name, fmt = row
+            src = LIB_ROOT / path / f"{name}.{fmt.lower()}"
+            if not src.exists():
+                continue
+            flat_name = f"{name}.{fmt.lower()}"
+            if flat_name in desired:
+                flat_name = f"{path.replace('/', ' - ')} - {name}.{fmt.lower()}"
+            desired[flat_name] = src
+
+        existing = {p.name: p for p in OUT_DIR.iterdir() if p.is_symlink()}
+        added = removed = 0
+        for name, src in desired.items():
+            link = OUT_DIR / name
+            if name in existing and existing[name].readlink() == src:
+                continue
+            if name in existing:
+                existing[name].unlink()
+            link.symlink_to(src)
+            added += 1
+        for name, link in existing.items():
+            if name not in desired:
+                link.unlink()
+                removed += 1
+        if added or removed:
+            log(f"sync: +{added} -{removed} → {len(desired)} books in /_supernote/")
+
+    def mtime(p):
+        try:
+            return os.stat(p).st_mtime
+        except FileNotFoundError:
+            return 0
+
+    log(f"watching {APP_DB} (poll every {POLL_SECONDS}s)")
+    last = 0
+    while True:
+        m = mtime(APP_DB)
+        if m != last:
+            last = m
+            sync_once()
+        time.sleep(POLL_SECONDS)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supernote-shelf-sync
+  namespace: media
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: supernote-shelf-sync
+  template:
+    metadata:
+      labels:
+        app: supernote-shelf-sync
+    spec:
+      containers:
+        - name: sync
+          image: python:3.13-alpine
+          command: ["python3", "/script/sync.py"]
+          volumeMounts:
+            - name: script
+              mountPath: /script
+            - name: acw-config
+              mountPath: /acw-config
+              readOnly: true
+            - name: library
+              mountPath: /calibre-library
+              subPath: books
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: script
+          configMap:
+            name: supernote-shelf-sync
+            defaultMode: 0755
+        - name: acw-config
+          persistentVolumeClaim:
+            claimName: autocaliweb-config-nfs
+        - name: library
+          persistentVolumeClaim:
+            claimName: media-data
