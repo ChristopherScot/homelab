@@ -1,0 +1,28 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: longhorn-settings
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: longhorn-settings
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: longhorn-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # SSA so we can patch nodes.longhorn.io.spec.disks without owning the
+      # auto-generated default-disk-* entries Longhorn manages.
+      - ServerSideApply=true
+  ignoreDifferences:
+    # Longhorn writes runtime fields back into spec on Node CRs.
+    - group: longhorn.io
+      kind: Node
+      jsonPointers:
+        - /spec/instanceManagerCPURequest
