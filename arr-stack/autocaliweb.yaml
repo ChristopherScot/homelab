@@ -16,6 +16,25 @@ spec:
         app: autocaliweb
     spec:
       enableServiceLinks: false
+      # Patch upstream typo in usermanagement.py: code references
+      # config_reverse_proxy_login_email_header_name, but the actual
+      # ConfigSQL column is config_reverse_proxy_email_header_name.
+      # Without this fix, header-auth auto-provisioning crashes with
+      # AttributeError on first request from a new user. Drop this
+      # initContainer once upstream fixes the bug:
+      # https://codeberg.org/gelbphoenix/autocaliweb (cps/usermanagement.py)
+      initContainers:
+        - name: patch-usermanagement
+          image: gelbphoenix/autocaliweb:latest
+          command:
+            - sh
+            - -c
+            - |
+              cp /app/autocaliweb/cps/usermanagement.py /patched/usermanagement.py
+              sed -i 's/config_reverse_proxy_login_email_header_name/config_reverse_proxy_email_header_name/g' /patched/usermanagement.py
+          volumeMounts:
+            - name: patched-source
+              mountPath: /patched
       containers:
         - name: autocaliweb
           image: gelbphoenix/autocaliweb:latest
@@ -37,6 +56,9 @@ spec:
             - name: media
               mountPath: /calibre-library
               subPath: books
+            - name: patched-source
+              mountPath: /app/autocaliweb/cps/usermanagement.py
+              subPath: usermanagement.py
           resources:
             requests:
               cpu: 50m
@@ -53,6 +75,8 @@ spec:
         - name: media
           persistentVolumeClaim:
             claimName: media-data
+        - name: patched-source
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
