@@ -125,8 +125,7 @@ if [ -n "$OIDC_CLIENT_SECRET" ]; then
     "https://vault.home.chrisscotmartin.com/oidc/callback"
   ],
   "policies": ["admin"],
-  "ttl": "1h",
-  "verbose_oidc_logging": true
+  "ttl": "1h"
 }
 JSON
 fi

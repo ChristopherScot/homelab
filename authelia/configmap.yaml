@@ -15,7 +15,7 @@ data:
         write: 4096
 
     log:
-      level: debug
+      level: info
       format: json
 
     theme: dark
