@@ -75,7 +75,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: autocaliweb-config-nfs
+            claimName: autocaliweb-config-longhorn
         - name: ingest
           persistentVolumeClaim:
             claimName: acw-ingest-nfs

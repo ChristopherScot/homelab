@@ -145,7 +145,7 @@ spec:
             defaultMode: 0755
         - name: acw-config
           persistentVolumeClaim:
-            claimName: autocaliweb-config-nfs
+            claimName: autocaliweb-config-longhorn
         - name: library
           persistentVolumeClaim:
             claimName: media-data
