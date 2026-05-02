@@ -88,15 +88,30 @@ spec:
         spec:
           restartPolicy: OnFailure
           enableServiceLinks: false
+          # /config must be writable (entrypoint copies sample files in,
+          # chowns, etc.). ConfigMap mounts are read-only, so we copy the
+          # rendered config.yml from the ConfigMap into an emptyDir at
+          # init time and the main container mounts that.
+          initContainers:
+            - name: seed-config
+              image: busybox:1.37
+              command: [sh, -c, "cp /cm/config.yml /config/config.yml"]
+              volumeMounts:
+                - name: configmap
+                  mountPath: /cm
+                - name: config
+                  mountPath: /config
           containers:
             - name: qbit-manage
               image: bobokun/qbit_manage:v4.7.0
+              # Pass args through the entrypoint. --run = one-shot mode
+              # (exit after a single reconcile, don't loop).
               args:
-                - --run                     # one-shot mode (don't loop)
+                - python3
+                - qbit_manage.py
+                - --run
                 - --config-file
                 - /config/config.yml
-                - --log-file
-                - /tmp/qbit_manage.log
               env:
                 - name: QBT_USER
                   valueFrom:
@@ -118,6 +133,8 @@ spec:
                 limits:
                   memory: 256Mi
           volumes:
-            - name: config
+            - name: configmap
               configMap:
                 name: qbit-manage-config
+            - name: config
+              emptyDir: {}
