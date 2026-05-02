@@ -62,47 +62,11 @@ spec:
     requests:
       storage: 2Gi
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: sonarr-config-nfs
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-nfs
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: radarr-config-nfs
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-nfs
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: bazarr-config-nfs
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-nfs
-  resources:
-    requests:
-      storage: 2Gi
----
-# Migrating *arr configs off NFS to Longhorn block storage. Single-writer
-# SQLite workloads with lots of small reads — NFS adds 5-50ms per syscall
-# and Longhorn (block, 3-replica) is faster + still HA. The bazarr-config-nfs
-# (and other -nfs PVCs above) are kept as backup; safe to delete once the
-# Longhorn-backed configs have proven stable.
+# *arr config PVCs live on Longhorn (block, 3-replica, low-latency) rather
+# than NFS — SQLite workloads suffer 5-50ms per syscall on NFS. The
+# previously-NFS-backed PVCs were retired after migration; underlying
+# NAS shares are still on the Synology (reclaim=Retain) until manually
+# deleted in DSM.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -185,54 +149,6 @@ metadata:
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: longhorn
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jellyseerr-config-nfs
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-nfs
-  resources:
-    requests:
-      storage: 2Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: jellyfin-config-nfs
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-nfs
-  resources:
-    requests:
-      storage: 10Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: readarr-config-nfs
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-nfs
-  resources:
-    requests:
-      storage: 5Gi
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: autocaliweb-config-nfs
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-nfs
   resources:
     requests:
       storage: 5Gi
