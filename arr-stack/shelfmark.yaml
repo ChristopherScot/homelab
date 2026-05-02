@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shelfmark
+  namespace: media
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: shelfmark
+  template:
+    metadata:
+      labels:
+        app: shelfmark
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: shelfmark
+          image: ghcr.io/calibrain/shelfmark:latest
+          env:
+            - name: PUID
+              value: "0"
+            - name: PGID
+              value: "0"
+            - name: TZ
+              value: America/New_York
+            - name: FLASK_PORT
+              value: "8084"
+            # Lands directly in the autocaliweb watch folder so imports
+            # are automatic — no manual copy step.
+            - name: INGEST_DIR
+              value: /books
+          ports:
+            - containerPort: 8084
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: ingest
+              mountPath: /books
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: shelfmark-config-nfs
+        - name: ingest
+          persistentVolumeClaim:
+            claimName: acw-ingest-nfs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shelfmark
+  namespace: media
+spec:
+  selector:
+    app: shelfmark
+  ports:
+    - name: http
+      port: 8084
+      targetPort: 8084

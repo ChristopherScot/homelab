@@ -42,6 +42,8 @@ data:
         - domain:
             - seerr.home.chrisscotmartin.com
             - readarr.home.chrisscotmartin.com
+            - books.home.chrisscotmartin.com
+            - shelfmark.home.chrisscotmartin.com
           policy: one_factor
           subject:
             - "group:users"

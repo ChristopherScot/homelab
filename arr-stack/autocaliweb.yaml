@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: autocaliweb
+  namespace: media
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: autocaliweb
+  template:
+    metadata:
+      labels:
+        app: autocaliweb
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: autocaliweb
+          image: gelbphoenix/autocaliweb:latest
+          env:
+            - name: PUID
+              value: "0"
+            - name: PGID
+              value: "0"
+            - name: TZ
+              value: America/New_York
+          ports:
+            - containerPort: 8083
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /config
+            - name: ingest
+              mountPath: /acw-book-ingest
+            - name: media
+              mountPath: /calibre-library
+              subPath: books
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: autocaliweb-config-nfs
+        - name: ingest
+          persistentVolumeClaim:
+            claimName: acw-ingest-nfs
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: autocaliweb
+  namespace: media
+spec:
+  selector:
+    app: autocaliweb
+  ports:
+    - name: http
+      port: 8083
+      targetPort: 8083

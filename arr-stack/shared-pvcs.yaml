@@ -133,3 +133,41 @@ spec:
   resources:
     requests:
       storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: autocaliweb-config-nfs
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: synology-nfs
+  resources:
+    requests:
+      storage: 5Gi
+---
+# Ingest folder shared between Shelfmark (writes downloads here) and
+# autocaliweb (watches and imports). RWX so both pods can mount it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: acw-ingest-nfs
+  namespace: media
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: synology-nfs
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shelfmark-config-nfs
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: synology-nfs
+  resources:
+    requests:
+      storage: 1Gi
