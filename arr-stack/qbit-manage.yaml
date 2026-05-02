@@ -57,10 +57,16 @@ data:
         cleanup: false
         resume_torrent_after_change: true
 
-    # The remaining sections are required to be present (even empty) by
-    # qbit_manage's schema validation.
-    directory: {}
-    cat: {}
+    # qbit_manage validation requires `directory.root_dir` and at least
+    # one entry under `cat` even when we're not using cat_update / orphaned.
+    # Both point at where qBit actually stores files (set by
+    # qbittorrent-configure: save_path=/media/downloads/complete).
+    directory:
+      root_dir: /media/downloads/complete
+    cat:
+      books-readarr: /media/downloads/complete
+      movies-radarr: /media/downloads/complete
+      tv-sonarr: /media/downloads/complete
     tracker: {}
     nohardlinks: {}
     recyclebin:
