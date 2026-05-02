@@ -98,10 +98,11 @@ spec:
     requests:
       storage: 2Gi
 ---
-# Pilot migration off NFS to Longhorn block storage. Bazarr's SQLite config
-# (~1MB, single-writer, lots of small reads) is the test workload; NFS adds
-# 5-50ms per syscall and that hurts SQLite specifically. Longhorn keeps
-# 3 replicas across nodes for redundancy.
+# Migrating *arr configs off NFS to Longhorn block storage. Single-writer
+# SQLite workloads with lots of small reads — NFS adds 5-50ms per syscall
+# and Longhorn (block, 3-replica) is faster + still HA. The bazarr-config-nfs
+# (and other -nfs PVCs above) are kept as backup; safe to delete once the
+# Longhorn-backed configs have proven stable.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -113,6 +114,80 @@ spec:
   resources:
     requests:
       storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyseerr-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: readarr-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonarr-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: radarr-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: jellyfin-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+---
+# autocaliweb's config PVC is RWO; supernote-shelf-sync co-locates via
+# podAffinity to RO-mount it. Migrating to Longhorn keeps that working.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: autocaliweb-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 5Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
