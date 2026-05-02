@@ -30,8 +30,16 @@ spec:
             - sh
             - -c
             - |
+              set -e
               cp /app/autocaliweb/cps/usermanagement.py /patched/usermanagement.py
+              # Bug 1: code reads a config attribute that doesn't exist on
+              # ConfigSQL (typo: extra "_login_" segment).
               sed -i 's/config_reverse_proxy_login_email_header_name/config_reverse_proxy_email_header_name/g' /patched/usermanagement.py
+              # Bug 2: auto-provisioned users inherit config_default_language
+              # which defaults to "all" — not a valid Babel locale, so every
+              # request from the new user crashes with UnknownLocaleError
+              # until you manually update the user's locale in app.db.
+              sed -i 's|user.locale = config.config_default_language|user.locale = "en"|' /patched/usermanagement.py
           volumeMounts:
             - name: patched-source
               mountPath: /patched
