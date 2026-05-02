@@ -166,6 +166,43 @@ spec:
             limits:
               memory: 512Mi
 
+        # MAM (MyAnonaMouse) session keepalive. Pings MAM's dynamicSeedbox
+        # endpoint every 30 min from inside the gluetun network namespace,
+        # so the call's source IP matches the IP that qBit announces from
+        # (the VPN egress). Without this, our session lapses when gluetun
+        # rotates VPN endpoints within its ASN, and the tracker marks us
+        # as "Not Currently Connected" — eventually a ratio violation.
+        #
+        # mam_id comes from kv/arr/mam in Vault, projected via the
+        # mam-session ExternalSecret (mam-externalsecret.yaml).
+        - name: mam-keepalive
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache curl ca-certificates >/dev/null
+              while true; do
+                echo "[$(date -Iseconds)] hitting MAM dynamic-seedbox endpoint"
+                curl -sS -b "mam_id=$MAM_ID" \
+                  https://t.myanonamouse.net/json/dynamicSeedbox.php \
+                  || echo "[$(date -Iseconds)] keepalive failed, will retry"
+                echo
+                sleep 1800
+              done
+          env:
+            - name: MAM_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mam-session
+                  key: mam_id
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+
       volumes:
         - name: gluetun-config
           persistentVolumeClaim:
