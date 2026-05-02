@@ -109,11 +109,14 @@ if [ -n "$OIDC_CLIENT_SECRET" ]; then
     default_role="admin"
 
   # bound_claims is a map; vault CLI parses it from stdin JSON.
+  # oidc_scopes triggers a UserInfo fetch + claim merge, which is needed
+  # because Authelia keeps preferred_username/groups in UserInfo by default.
   cat <<'JSON' | vault write auth/oidc/role/admin -
 {
   "role_type": "oidc",
   "user_claim": "preferred_username",
   "groups_claim": "groups",
+  "oidc_scopes": ["profile", "groups", "email"],
   "bound_audiences": ["vault"],
   "bound_claims_type": "string",
   "bound_claims": {"preferred_username": "chris"},
@@ -122,7 +125,8 @@ if [ -n "$OIDC_CLIENT_SECRET" ]; then
     "https://vault.home.chrisscotmartin.com/oidc/callback"
   ],
   "policies": ["admin"],
-  "ttl": "1h"
+  "ttl": "1h",
+  "verbose_oidc_logging": true
 }
 JSON
 fi

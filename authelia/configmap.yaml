@@ -120,6 +120,7 @@ data:
           # Vault's OIDC plugin reads user_claim/groups_claim from the ID
           # Token, so for the Vault client we include them inline.
           vault:
+            id_token_audience_mode: specification
             id_token:
               - preferred_username
               - groups
