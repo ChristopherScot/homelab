@@ -377,6 +377,13 @@ metadata:
   namespace: media
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: "https://books.home.chrisscotmartin.com"
+    gethomepage.dev/pod-selector: "app=autocaliweb"
+    gethomepage.dev/name: "Autocaliweb"
+    gethomepage.dev/description: "Calibre library + reader"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/icon: "calibre-web.png"
     nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
     nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
     nginx.ingress.kubernetes.io/auth-snippet: |
@@ -410,6 +417,13 @@ metadata:
   namespace: media
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/href: "https://shelfmark.home.chrisscotmartin.com"
+    gethomepage.dev/pod-selector: "app=shelfmark"
+    gethomepage.dev/name: "Shelfmark"
+    gethomepage.dev/description: "Book downloader"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/icon: "calibre.png"
     nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
     nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
     nginx.ingress.kubernetes.io/auth-snippet: |
