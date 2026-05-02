@@ -54,6 +54,24 @@ spec:
               memory: 256Mi
             limits:
               memory: 1Gi
+          # Self-heal hangs: ingest worker can deadlock the Flask process
+          # (observed: stale inotify state on already-deleted files causing
+          # tight reprocess loops). If /login stops answering for ~3 min,
+          # kubelet restarts the pod.
+          startupProbe:
+            httpGet: { path: /login, port: 8083 }
+            failureThreshold: 30
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /login, port: 8083 }
+            failureThreshold: 6
+            periodSeconds: 30
+            timeoutSeconds: 10
+          readinessProbe:
+            httpGet: { path: /login, port: 8083 }
+            failureThreshold: 3
+            periodSeconds: 10
+            timeoutSeconds: 5
       volumes:
         - name: config
           persistentVolumeClaim:
