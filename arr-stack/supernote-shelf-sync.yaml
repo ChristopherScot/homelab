@@ -1,7 +1,7 @@
 # Mirrors books on autocaliweb's "Supernote" shelf into
 # /calibre-library/_supernote/ as symlinks. Supernote's WebDAV client only
 # syncs that folder, so adding/removing books from the shelf in autocaliweb
-# UI updates what shows up on the device within ~5s.
+# UI updates what shows up on the device within ~5 minutes.
 #
 # Polls instead of inotify because both DBs sit on NFS shares — inotify
 # events don't propagate from the server-side write to client kernels.
@@ -21,7 +21,7 @@ data:
     LIB_ROOT = Path("/calibre-library")
     OUT_DIR = LIB_ROOT / "_supernote"
     SHELF_NAME = "Supernote"
-    POLL_SECONDS = 5
+    POLL_SECONDS = 300
 
     def log(msg): print(msg, flush=True)
 
