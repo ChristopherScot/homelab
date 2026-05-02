@@ -89,7 +89,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: jellyfin-config-nfs
+            claimName: jellyfin-config-longhorn
         - name: cache
           # Local node disk, not replicated. Jellyfin's cache is ephemeral
           # (thumbnails, transcode segments) — replicated storage made every
