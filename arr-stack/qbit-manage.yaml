@@ -67,8 +67,15 @@ data:
       books-readarr: /media/downloads/complete
       movies-radarr: /media/downloads/complete
       tv-sonarr: /media/downloads/complete
-    tracker: {}
-    nohardlinks: {}
+    # `tracker` and `nohardlinks` are required sections. We're not using
+    # tag-by-tracker or hardlink detection, but the schema needs entries.
+    # MAM placeholder is harmless — only matches torrents with that
+    # tracker URL, of which we have none yet.
+    tracker:
+      myanonamouse.net:
+        tag: mam
+    nohardlinks:
+      books-readarr:
     recyclebin:
       enabled: false
     orphaned:
