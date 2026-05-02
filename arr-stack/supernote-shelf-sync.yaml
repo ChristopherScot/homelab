@@ -111,6 +111,14 @@ spec:
       labels:
         app: supernote-shelf-sync
     spec:
+      # Co-locate with autocaliweb so we can RO-mount its RWO config PVC.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: autocaliweb
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: sync
           image: python:3.13-alpine
