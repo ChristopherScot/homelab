@@ -381,7 +381,7 @@ metadata:
     gethomepage.dev/href: "https://books.home.chrisscotmartin.com"
     gethomepage.dev/pod-selector: "app=autocaliweb"
     gethomepage.dev/name: "Autocaliweb"
-    gethomepage.dev/description: "Calibre library + reader"
+    gethomepage.dev/description: "Download and read your books here"
     gethomepage.dev/group: "Media"
     gethomepage.dev/icon: "calibre-web.png"
     nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
