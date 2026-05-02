@@ -449,3 +449,36 @@ spec:
                 name: shelfmark
                 port:
                   number: 8084
+---
+# WebDAV: bypasses Authelia (Supernote can't follow the redirect+cookie flow,
+# same as Jellyfin). Auth is enforced by webdav itself via HTTP basic auth on
+# every request. Credentials live in the webdav-creds Secret (created
+# out-of-band; not in git, not in Vault yet).
+# WebDAV needs OPTIONS, PROPFIND etc — nginx default allows them.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: webdav
+  namespace: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Allow large book files
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [webdav.home.chrisscotmartin.com]
+      secretName: webdav-tls
+  rules:
+    - host: webdav.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: webdav
+                port:
+                  number: 6065
