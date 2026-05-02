@@ -176,12 +176,14 @@ spec:
         # mam_id comes from kv/arr/mam in Vault, projected via the
         # mam-session ExternalSecret (mam-externalsecret.yaml).
         - name: mam-keepalive
-          image: alpine:3.20
+          # curlimages/curl ships with curl + ca-certificates — no apk add
+          # needed, which matters because the gluetun firewall blocks
+          # alpine's package CDN.
+          image: curlimages/curl:8.10.1
           command:
             - sh
             - -c
             - |
-              apk add --no-cache curl ca-certificates >/dev/null
               while true; do
                 echo "[$(date -Iseconds)] hitting MAM dynamic-seedbox endpoint"
                 curl -sS -b "mam_id=$MAM_ID" \
