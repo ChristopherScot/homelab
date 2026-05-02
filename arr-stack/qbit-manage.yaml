@@ -1,0 +1,123 @@
+# qbit_manage: applies per-category share limits to qBittorrent.
+#
+# Why: MAM (and other private trackers) require seed-forever / no-time-limit
+# behavior. qBit's global ratio + max_seeding_time prefs apply to every
+# torrent — including movies/TV which we want to seed for ratio:2/72h
+# and stop. We can't have it both ways at the global level, so we keep
+# globals tuned for movies and let qbit_manage override them per-category.
+#
+# Currently overrides only `books-readarr` (Readarr drops MAM grabs there).
+# The override is "unlimited" (-1, -1, -1) on ratio + seeding time +
+# inactive seeding time — torrents in this category seed indefinitely
+# until removed manually.
+#
+# Runs every 30 minutes. The check is idempotent — re-applying limits to
+# torrents that already have them is a no-op.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qbit-manage-config
+  namespace: media
+data:
+  config.yml: |
+    commands:
+      dry_run: false
+      recheck: false
+      cat_update: false
+      tag_update: false
+      rem_unregistered: false
+      tag_tracker_error: false
+      rem_orphaned: false
+      tag_nohardlinks: false
+      share_limits: true
+      skip_qb_version_check: false
+      skip_cleanup: false
+
+    qbt:
+      host: "qbittorrent.media.svc.cluster.local:8080"
+      user: !ENV QBT_USER
+      pass: !ENV QBT_PASS
+
+    settings:
+      # Tells qbit_manage to override qBit's global share-limit defaults
+      # rather than respecting them. Required for our per-category rules
+      # to actually take effect on torrents that inherited globals.
+      disable_qbt_default_share_limits: true
+
+    # Share-limit groups. Each named group matches torrents by category
+    # (or tag/tracker) and applies the listed limits. -1 = unlimited.
+    share_limits:
+      private-trackers-seed-forever:
+        priority: 1
+        categories:
+          - books-readarr
+        max_ratio: -1
+        max_seeding_time: -1
+        max_last_active: -1
+        cleanup: false
+        resume_torrent_after_change: true
+
+    # The remaining sections are required to be present (even empty) by
+    # qbit_manage's schema validation.
+    directory: {}
+    cat: {}
+    tracker: {}
+    nohardlinks: {}
+    recyclebin:
+      enabled: false
+    orphaned:
+      empty_after_x_days: 0
+    apprise:
+    notifiarr:
+    webhooks:
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: qbit-manage
+  namespace: media
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          enableServiceLinks: false
+          containers:
+            - name: qbit-manage
+              image: bobokun/qbit_manage:v4.7.0
+              args:
+                - --run                     # one-shot mode (don't loop)
+                - --config-file
+                - /config/config.yml
+                - --log-file
+                - /tmp/qbit_manage.log
+              env:
+                - name: QBT_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: username
+                - name: QBT_PASS
+                  valueFrom:
+                    secretKeyRef:
+                      name: qbittorrent-admin
+                      key: password
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+              resources:
+                requests:
+                  cpu: 20m
+                  memory: 64Mi
+                limits:
+                  memory: 256Mi
+          volumes:
+            - name: config
+              configMap:
+                name: qbit-manage-config
