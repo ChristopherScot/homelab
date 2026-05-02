@@ -48,7 +48,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: sonarr-config-nfs
+            claimName: sonarr-config-longhorn
         - name: media
           persistentVolumeClaim:
             claimName: media-data

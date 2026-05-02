@@ -43,7 +43,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: radarr-config-nfs
+            claimName: radarr-config-longhorn
         - name: media
           persistentVolumeClaim:
             claimName: media-data

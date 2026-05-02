@@ -45,7 +45,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: readarr-config-nfs
+            claimName: readarr-config-longhorn
         - name: media
           persistentVolumeClaim:
             claimName: media-data
