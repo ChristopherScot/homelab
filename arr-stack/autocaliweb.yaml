@@ -1,3 +1,9 @@
+# Calibre-Web-Automated (the upstream crocodilestick image, NOT the
+# gelbphoenix/autocaliweb fork on Codeberg). The fork has two header-auth
+# bugs that block reverse-proxy SSO with auto-provisioning; upstream
+# doesn't have them. Resource names below stay "autocaliweb" only so we
+# don't have to touch the ingress / DNS / Authelia rules. Filename and
+# selectors will follow in a later cleanup PR.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -16,36 +22,9 @@ spec:
         app: autocaliweb
     spec:
       enableServiceLinks: false
-      # Patch upstream typo in usermanagement.py: code references
-      # config_reverse_proxy_login_email_header_name, but the actual
-      # ConfigSQL column is config_reverse_proxy_email_header_name.
-      # Without this fix, header-auth auto-provisioning crashes with
-      # AttributeError on first request from a new user. Drop this
-      # initContainer once upstream fixes the bug:
-      # https://codeberg.org/gelbphoenix/autocaliweb (cps/usermanagement.py)
-      initContainers:
-        - name: patch-usermanagement
-          image: gelbphoenix/autocaliweb:latest
-          command:
-            - sh
-            - -c
-            - |
-              set -e
-              cp /app/autocaliweb/cps/usermanagement.py /patched/usermanagement.py
-              # Bug 1: code reads a config attribute that doesn't exist on
-              # ConfigSQL (typo: extra "_login_" segment).
-              sed -i 's/config_reverse_proxy_login_email_header_name/config_reverse_proxy_email_header_name/g' /patched/usermanagement.py
-              # Bug 2: auto-provisioned users inherit config_default_language
-              # which defaults to "all" — not a valid Babel locale, so every
-              # request from the new user crashes with UnknownLocaleError
-              # until you manually update the user's locale in app.db.
-              sed -i 's|user.locale = config.config_default_language|user.locale = "en"|' /patched/usermanagement.py
-          volumeMounts:
-            - name: patched-source
-              mountPath: /patched
       containers:
-        - name: autocaliweb
-          image: gelbphoenix/autocaliweb:latest
+        - name: calibre-web-automated
+          image: crocodilestick/calibre-web-automated:latest
           env:
             - name: PUID
               value: "0"
@@ -53,6 +32,11 @@ spec:
               value: "0"
             - name: TZ
               value: America/New_York
+            # NFS mounts don't propagate inotify reliably across pods.
+            # Shelfmark drops files into the same RWX PVC mounted here as
+            # the ingest folder; CWA needs to poll, not watch.
+            - name: NETWORK_SHARE_MODE
+              value: "true"
           ports:
             - containerPort: 8083
               name: http
@@ -60,13 +44,10 @@ spec:
             - name: config
               mountPath: /config
             - name: ingest
-              mountPath: /acw-book-ingest
+              mountPath: /cwa-book-ingest
             - name: media
               mountPath: /calibre-library
               subPath: books
-            - name: patched-source
-              mountPath: /app/autocaliweb/cps/usermanagement.py
-              subPath: usermanagement.py
           resources:
             requests:
               cpu: 50m
@@ -83,8 +64,6 @@ spec:
         - name: media
           persistentVolumeClaim:
             claimName: media-data
-        - name: patched-source
-          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
