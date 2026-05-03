@@ -85,7 +85,7 @@ spec:
                     "max_ratio_enabled": true,
                     "max_ratio": 2.0,
                     "max_ratio_act": 0,
-                    "listen_port": 6881,
+                    "listen_port": 51413,
                     "upnp": false,
                     "random_port": false,
                     "encryption": 1,
