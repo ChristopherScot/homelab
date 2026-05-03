@@ -1,0 +1,118 @@
+{
+  "annotations": {"list": []},
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Bonus Points",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_seedbonus", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 1000}, {"color": "green", "value": 5000}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Ratio",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_ratio", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 2, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.95}, {"color": "green", "value": 1.0}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Hit-and-Runs",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_seed_hnr_count + mam_inactive_hnr_count", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Unsatisfied",
+      "gridPos": {"h": 4, "w": 4, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_unsatisfied_count", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}, {"color": "red", "value": 15}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Connectable",
+      "gridPos": {"h": 4, "w": 4, "x": 16, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_connectable", "refId": "A"}],
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"0": {"text": "OFFLINE", "color": "red"}, "1": {"text": "ONLINE", "color": "green"}}}], "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}}
+    },
+    {
+      "type": "stat",
+      "title": "Active Seeds",
+      "gridPos": {"h": 4, "w": 4, "x": 20, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_seed_satisfied_count + mam_seed_unsatisfied_count", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Bonus Points Over Time",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_seedbonus", "refId": "A", "legendFormat": "bonus"}],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Ratio Over Time",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "mam_ratio", "refId": "A", "legendFormat": "ratio"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 2, "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.95}, {"color": "green", "value": 1.0}]}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Downloaded / Uploaded (bytes)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [
+        {"expr": "mam_downloaded_bytes", "refId": "A", "legendFormat": "downloaded"},
+        {"expr": "mam_uploaded_bytes", "refId": "B", "legendFormat": "uploaded"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes", "custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}}}
+    },
+    {
+      "type": "timeseries",
+      "title": "Torrent Counts",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [
+        {"expr": "mam_seed_satisfied_count", "refId": "A", "legendFormat": "seed satisfied"},
+        {"expr": "mam_seed_unsatisfied_count", "refId": "B", "legendFormat": "seed unsatisfied"},
+        {"expr": "mam_leeching_count", "refId": "C", "legendFormat": "leeching"},
+        {"expr": "mam_inactive_satisfied_count", "refId": "D", "legendFormat": "inactive satisfied"}
+      ],
+      "fieldConfig": {"defaults": {"custom": {"drawStyle": "line", "fillOpacity": 10, "lineWidth": 2}}}
+    },
+    {
+      "type": "stat",
+      "title": "Scrape Health (last 5m)",
+      "gridPos": {"h": 4, "w": 6, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "grafanacloud-prom"},
+      "targets": [{"expr": "avg_over_time(mam_scrape_success[5m])", "refId": "A"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 0, "color": {"mode": "thresholds"}, "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 0.9}, {"color": "green", "value": 1.0}]}}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["mam", "books", "homelab"],
+  "templating": {"list": []},
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "America/New_York",
+  "title": "MyAnonaMouse",
+  "uid": "mam-stats",
+  "version": 1,
+  "weekStart": ""
+}
