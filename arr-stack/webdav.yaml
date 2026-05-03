@@ -4,20 +4,26 @@ metadata:
   name: webdav-config
   namespace: media
 data:
-  # No auth — LAN-only via internal nginx ingress + private DNS. The library
-  # is read-only ebooks; everyone on the LAN can read.
+  # Single read-only user; the Supernote NetVirtualDisk app rejected the
+  # no-auth setup ("couldn't connect" with no detail) — its WebDAV client
+  # requires a 401-challenge round-trip with non-empty creds. Username and
+  # password come from Vault via webdav-creds Secret, env-var substituted
+  # at startup.
   config.yml: |
     address: 0.0.0.0
     port: 6065
     prefix: /
-    directory: /data
-    permissions: R
     behindProxy: true
     cors:
       enabled: true
       credentials: false
     log:
       format: json
+    users:
+      - username: "{env}WEBDAV_USERNAME"
+        password: "{env}WEBDAV_PASSWORD"
+        directory: /data
+        permissions: R
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -41,6 +47,9 @@ spec:
           ports:
             - containerPort: 6065
               name: http
+          envFrom:
+            - secretRef:
+                name: webdav-creds
           volumeMounts:
             - name: config
               mountPath: /etc/webdav

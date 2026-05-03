@@ -451,9 +451,8 @@ spec:
                   number: 8084
 ---
 # WebDAV: bypasses Authelia (Supernote can't follow the redirect+cookie flow,
-# same as Jellyfin). Auth is enforced by webdav itself via HTTP basic auth on
-# every request. Credentials live in the webdav-creds Secret (created
-# out-of-band; not in git, not in Vault yet).
+# same as Jellyfin). No auth — LAN-only via private DNS; webdav serves the
+# books library read-only (see arr-stack/webdav.yaml).
 # WebDAV needs OPTIONS, PROPFIND etc — nginx default allows them.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
