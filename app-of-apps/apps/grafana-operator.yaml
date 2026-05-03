@@ -30,20 +30,22 @@ spec:
   source:
     # Grafana Operator publishes its Helm chart to the GitHub Container
     # Registry as an OCI artifact. Argo supports OCI-typed Helm sources
-    # natively — no extra repo registration needed.
+    # natively — no extra repo registration needed. Chart version is the
+    # plain release number (no `v` prefix) even though the operator's
+    # appVersion is `vX.Y.Z`.
     repoURL: ghcr.io/grafana/helm-charts
     chart: grafana-operator
-    targetRevision: v5.22.2
+    targetRevision: 5.22.2
     helm:
       releaseName: grafana-operator
       valuesObject:
-        # Single replica is fine for one-cluster homelab; the operator is
-        # leader-elected so n>1 just adds standby pods.
+        # Single replica is fine; the operator is leader-elected so
+        # n>1 just adds standby pods.
         replicas: 1
-        # The chart defaults to namespace-scoped watching. Set to "" to
-        # let it watch all namespaces; otherwise GrafanaDashboard CRs must
-        # live in the operator's own namespace.
-        namespaceScope: ""
+        # namespaceScope=false (the default) makes the operator watch
+        # all namespaces, so GrafanaDashboard CRs can live wherever
+        # makes sense alongside the app they describe.
+        namespaceScope: false
         resources:
           requests:
             cpu: 10m
