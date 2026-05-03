@@ -80,8 +80,22 @@ spec:
           env:
             - name: VPN_SERVICE_PROVIDER
               value: nordvpn
+            # Switched to WireGuard (NordLynx) because NordVPN's OpenVPN
+            # auth backend started silently rejecting valid service
+            # credentials around Feb 2026 (gluetun issue #3132). The
+            # WireGuard private key for the same account is unaffected
+            # because it goes through a separate auth path. Confirmed
+            # via `curl -u token:<api-token> https://api.nordvpn.com/v1/users/services/credentials`
+            # that the OpenVPN credentials in our Vault match what the
+            # API hands back — they're correct, NordVPN just won't
+            # accept them on the OpenVPN side.
             - name: VPN_TYPE
-              value: openvpn
+              value: wireguard
+            - name: WIREGUARD_PRIVATE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: nordvpn-credentials
+                  key: WIREGUARD_PRIVATE_KEY
             # Pin to 3 specific NordVPN servers, all in AS60068 (Datacamp).
             # Why pinned: MAM tracker session is locked to a small ASN list,
             # but the dynamicSeedbox API only refreshes IP within an ASN —
