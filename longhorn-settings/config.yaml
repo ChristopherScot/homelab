@@ -15,15 +15,30 @@ value: "2"
 apiVersion: longhorn.io/v1beta1
 kind: RecurringJob
 metadata:
-  name: auto-backup
+  name: auto-snapshot
   namespace: longhorn-system
 spec:
-  # weekly backup
-  cron: "0 0 * * 0"
+  cron: "0 */6 * * *"
   task: "snapshot"
   groups:
   - default
-  retain: 1
+  retain: 8
+  concurrency: 2
+  labels:
+    app: longhorn
+    type: auto-snapshot
+---
+apiVersion: longhorn.io/v1beta1
+kind: RecurringJob
+metadata:
+  name: auto-backup
+  namespace: longhorn-system
+spec:
+  cron: "0 3 * * 0"
+  task: "backup"
+  groups:
+  - default
+  retain: 4
   concurrency: 2
   labels:
     app: longhorn
