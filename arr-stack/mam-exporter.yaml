@@ -134,42 +134,81 @@ data:
             try: return float(x)
             except: return 0.0
 
+        base = {"source": "myanonamouse", "user": str(d.get("username", "unknown"))}
         metrics = []
-        base = {"source": "myanonamouse"}
 
+        # Lifetime totals
         if "downloaded_bytes" in d:
             metrics.append(("mam_downloaded_bytes", base, num(d["downloaded_bytes"])))
         if "uploaded_bytes" in d:
             metrics.append(("mam_uploaded_bytes", base, num(d["uploaded_bytes"])))
+
+        # Currency-like
         if "seedbonus" in d:
             metrics.append(("mam_seedbonus", base, num(d["seedbonus"])))
+        if "wedges" in d:
+            metrics.append(("mam_wedges", base, num(d["wedges"])))
 
+        # Ratio (skip "∞" string)
         r = d.get("ratio")
         if isinstance(r, (int, float)):
             metrics.append(("mam_ratio", base, float(r)))
         elif isinstance(r, str):
             try: metrics.append(("mam_ratio", base, float(r)))
-            except: pass  # "∞" etc.
+            except: pass
 
-        for key, metric_name in [
-            ("leeching", "mam_leeching_count"),
-            ("seedHnr", "mam_seed_hnr_count"),
-            ("inactHnr", "mam_inactive_hnr_count"),
-            ("seedUnsat", "mam_seed_unsatisfied_count"),
-            ("inactUnsat", "mam_inactive_unsatisfied_count"),
-            ("inactSat", "mam_inactive_satisfied_count"),
-            ("sSat", "mam_seed_satisfied_count"),
-            ("upAct", "mam_upload_active_count"),
-            ("unsat", "mam_unsatisfied_count"),
-            ("duplicates", "mam_duplicates_count"),
-        ]:
+        # Bucketed counts + sizes
+        BUCKETS = [
+            ("leeching", "leeching"),
+            ("seedHnr", "seed_hnr"),
+            ("inactHnr", "inactive_hnr"),
+            ("seedUnsat", "seed_unsatisfied"),
+            ("inactUnsat", "inactive_unsatisfied"),
+            ("inactSat", "inactive_satisfied"),
+            ("sSat", "seed_satisfied"),
+            ("upAct", "upload_active"),
+            ("upInact", "upload_inactive"),
+            ("unsat", "unsatisfied"),
+            ("duplicates", "duplicates"),
+        ]
+        for key, metric_suffix in BUCKETS:
             v = d.get(key)
-            if isinstance(v, dict) and "count" in v:
-                metrics.append((metric_name, base, num(v["count"])))
+            if not isinstance(v, dict): continue
+            if "count" in v:
+                metrics.append((f"mam_{metric_suffix}_count", base, num(v["count"])))
+            if "size" in v and v["size"] is not None:
+                metrics.append((f"mam_{metric_suffix}_bytes", base, num(v["size"])))
 
+        # Reseed: torrents you can re-seed (from prior library)
+        rs = d.get("reseed")
+        if isinstance(rs, dict):
+            metrics.append(("mam_reseed_count", base, num(rs.get("count", 0))))
+            metrics.append(("mam_reseed_inactive_count", base, num(rs.get("inactive", 0))))
+
+        # Slot limit (cap on simultaneous active downloads)
+        unsat = d.get("unsat")
+        if isinstance(unsat, dict) and "limit" in unsat:
+            metrics.append(("mam_unsatisfied_limit", base, num(unsat["limit"])))
+
+        # Recently deleted by MAM (HnR risk if you weren't seeding)
+        if "recently_deleted" in d:
+            metrics.append(("mam_recently_deleted", base, num(d["recently_deleted"])))
+
+        # Invitations
+        ite = d.get("ite")
+        if isinstance(ite, dict):
+            metrics.append(("mam_invitations", base, num(ite.get("count", 0))))
+
+        # Connectable status (1 = MAM can reach you for incoming connections)
         if "connectable" in d:
             metrics.append(("mam_connectable", base, 1.0 if d["connectable"] == "online" else 0.0))
 
+        # Account age in days
+        if "created" in d:
+            age_days = (time.time() - d["created"]) / 86400.0
+            metrics.append(("mam_account_age_days", base, age_days))
+
+        # Scrape liveness
         metrics.append(("mam_scrape_success", base, 1.0))
         return metrics
 
