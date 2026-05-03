@@ -113,8 +113,17 @@ spec:
             # us2943-2945 are OpenVPN-only; the corresponding WG servers
             # in AS60068 (Datacamp) Atlanta are us5109-5113, us6694-6699,
             # us8192-8194, etc. Picked 3 with confirmed AS60068 IPs.
+            # Pin to ONE server, not three. With three, gluetun reconnects
+            # within minutes and the egress IP drifts (185.187.171.57 ↔
+            # .58 ↔ .59). MAM's dynamicSeedbox API is rate-limited to
+            # ONCE PER HOUR per session, so MouseHole can't keep up with
+            # gluetun's rotation — we end up with "Unrecognized host/
+            # PassKey" tracker errors. One server = one stable IP =
+            # MouseHole only needs to update on a true reconnect.
+            # Failover: if us5109 dies, switch to us5110 or us5111
+            # (both AS60068/Datacamp, both in our MAM allowlist).
             - name: SERVER_HOSTNAMES
-              value: us5109.nordvpn.com,us5110.nordvpn.com,us5111.nordvpn.com
+              value: us5109.nordvpn.com
             - name: TZ
               value: America/New_York
             - name: FIREWALL_OUTBOUND_SUBNETS
