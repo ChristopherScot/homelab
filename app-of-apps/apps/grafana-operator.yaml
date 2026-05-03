@@ -1,0 +1,52 @@
+# Grafana Operator — manages GrafanaDashboard / Grafana / GrafanaDatasource
+# CRDs and reconciles them against a Grafana instance (in our case the
+# external Grafana Cloud at chrisscotmartin.grafana.net). Each dashboard
+# becomes a YAML-wrapped first-class k8s object that can sit next to the
+# rest of our infra-as-code.
+#
+# Operator install: just the controller, no Grafana instance (we use the
+# external SaaS one). The Grafana CR + GrafanaDashboard CRs live alongside
+# everything else under monitoring/ and are picked up by the existing
+# `monitoring` Argo app.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: grafana-operator
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  source:
+    # Grafana Operator publishes its Helm chart to the GitHub Container
+    # Registry as an OCI artifact. Argo supports OCI-typed Helm sources
+    # natively — no extra repo registration needed.
+    repoURL: ghcr.io/grafana/helm-charts
+    chart: grafana-operator
+    targetRevision: v5.22.2
+    helm:
+      releaseName: grafana-operator
+      valuesObject:
+        # Single replica is fine for one-cluster homelab; the operator is
+        # leader-elected so n>1 just adds standby pods.
+        replicas: 1
+        # The chart defaults to namespace-scoped watching. Set to "" to
+        # let it watch all namespaces; otherwise GrafanaDashboard CRs must
+        # live in the operator's own namespace.
+        namespaceScope: ""
+        resources:
+          requests:
+            cpu: 10m
+            memory: 64Mi
+          limits:
+            memory: 256Mi

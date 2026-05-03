@@ -1,0 +1,798 @@
+# Auto-generated wrapper around monitoring/dashboards/mam.json.
+# Edit the source JSON (or this file's .spec.json), then `git push`. The
+# grafana-operator picks up the change within a few seconds and POSTs to
+# Grafana Cloud via the SA token in the cloud Grafana CR.
+#
+# resyncPeriod = how often the operator re-pushes the dashboard back to
+# Grafana even without a CR change — defends against UI edits drifting
+# from git. Keep it short (5m) so accidental edits get reverted quickly.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: mam
+  namespace: monitoring
+spec:
+  resyncPeriod: 5m
+  instanceSelector:
+    matchLabels:
+      dashboards: cloud
+  json: |-
+    {
+      "annotations": {
+        "list": []
+      },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 0,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "type": "stat",
+          "title": "Bonus Points",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_seedbonus",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1000
+                  },
+                  {
+                    "color": "green",
+                    "value": 5000
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Wedges",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_wedges",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Ratio",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_ratio",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 2,
+              "color": {
+                "mode": "thresholds"
+              },
+              "noValue": "\u221e",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.95
+                  },
+                  {
+                    "color": "green",
+                    "value": 1.0
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Hit-and-Runs",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_seed_hnr_count + mam_inactive_hnr_count",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Active Slots",
+          "description": "Active downloads vs slot limit. Stay under limit to avoid throttling.",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_unsatisfied_count",
+              "refId": "A",
+              "legendFormat": "current"
+            },
+            {
+              "expr": "mam_unsatisfied_limit",
+              "refId": "B",
+              "legendFormat": "limit"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Connectable",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 0
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_connectable",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "mappings": [
+                {
+                  "type": "value",
+                  "options": {
+                    "0": {
+                      "text": "OFFLINE",
+                      "color": "red"
+                    },
+                    "1": {
+                      "text": "ONLINE",
+                      "color": "green"
+                    }
+                  }
+                }
+              ],
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "green",
+                    "value": 1
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Active Seeds",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 0,
+            "y": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_seed_satisfied_count + mam_seed_unsatisfied_count",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Inactive Seeds",
+          "description": "Seeds that haven't completed yet. Watch for stuck/orphaned torrents.",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 4,
+            "y": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_inactive_satisfied_count + mam_inactive_unsatisfied_count",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Reseed Available",
+          "description": "Torrents from your old library you can reseed for upload credit.",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 8,
+            "y": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_reseed_count",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Recently Deleted",
+          "description": "Torrents MAM removed. HnR risk if you weren't seeding when removed.",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 12,
+            "y": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_recently_deleted",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 1
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Account Age",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 16,
+            "y": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_account_age_days",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "d",
+              "decimals": 1
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Invitations",
+          "gridPos": {
+            "h": 4,
+            "w": 4,
+            "x": 20,
+            "y": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_invitations",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short"
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Bonus Points Over Time",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_seedbonus",
+              "refId": "A",
+              "legendFormat": "bonus"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Ratio Over Time",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 8
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_ratio",
+              "refId": "A",
+              "legendFormat": "ratio"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 2,
+              "custom": {
+                "thresholdsStyle": {
+                  "mode": "line"
+                }
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.95
+                  },
+                  {
+                    "color": "green",
+                    "value": 1.0
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Downloaded / Uploaded (lifetime)",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 16
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_downloaded_bytes",
+              "refId": "A",
+              "legendFormat": "downloaded"
+            },
+            {
+              "expr": "mam_uploaded_bytes",
+              "refId": "B",
+              "legendFormat": "uploaded"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Upload Rate (per 1h)",
+          "description": "Bytes uploaded per hour. Healthy seeding shows steady positive rate.",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 16
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "rate(mam_uploaded_bytes[1h]) * 3600",
+              "refId": "A",
+              "legendFormat": "upload bytes/hr"
+            },
+            {
+              "expr": "rate(mam_downloaded_bytes[1h]) * 3600",
+              "refId": "B",
+              "legendFormat": "download bytes/hr"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "Bps",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Torrent Counts by Bucket",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 24
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_seed_satisfied_count",
+              "refId": "A",
+              "legendFormat": "seed satisfied"
+            },
+            {
+              "expr": "mam_seed_unsatisfied_count",
+              "refId": "B",
+              "legendFormat": "seed unsatisfied"
+            },
+            {
+              "expr": "mam_leeching_count",
+              "refId": "C",
+              "legendFormat": "leeching"
+            },
+            {
+              "expr": "mam_inactive_satisfied_count",
+              "refId": "D",
+              "legendFormat": "inactive satisfied"
+            },
+            {
+              "expr": "mam_inactive_unsatisfied_count",
+              "refId": "E",
+              "legendFormat": "inactive unsatisfied"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            }
+          }
+        },
+        {
+          "type": "timeseries",
+          "title": "Seeded / Leeched Bytes by Bucket",
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 24
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_seed_satisfied_bytes",
+              "refId": "A",
+              "legendFormat": "seed satisfied"
+            },
+            {
+              "expr": "mam_seed_unsatisfied_bytes",
+              "refId": "B",
+              "legendFormat": "seed unsatisfied"
+            },
+            {
+              "expr": "mam_inactive_satisfied_bytes",
+              "refId": "C",
+              "legendFormat": "inactive satisfied"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "bytes",
+              "custom": {
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "lineWidth": 2
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Scrape Health (last 5m)",
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 32
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "avg_over_time(mam_scrape_success[5m])",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "decimals": 0,
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "red",
+                    "value": null
+                  },
+                  {
+                    "color": "yellow",
+                    "value": 0.9
+                  },
+                  {
+                    "color": "green",
+                    "value": 1.0
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "stat",
+          "title": "Duplicates",
+          "description": "Same torrent counted twice (qBit + another client). Should be 0.",
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 32
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "grafanacloud-prom"
+          },
+          "targets": [
+            {
+              "expr": "mam_duplicates_count",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": [
+        "mam",
+        "books",
+        "homelab"
+      ],
+      "templating": {
+        "list": []
+      },
+      "time": {
+        "from": "now-6h",
+        "to": "now"
+      },
+      "timepicker": {},
+      "timezone": "America/New_York",
+      "title": "MyAnonaMouse",
+      "uid": "mam-stats",
+      "version": 2,
+      "weekStart": ""
+    }

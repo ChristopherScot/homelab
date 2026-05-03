@@ -1,0 +1,30 @@
+# External Grafana CR pointing at our Grafana Cloud instance.
+# The grafana-operator (deployed via app-of-apps/apps/grafana-operator.yaml)
+# watches this and lets us declare GrafanaDashboard CRs that get pushed
+# to the Cloud instance via API.
+#
+# .spec.external means the operator does NOT try to deploy/manage Grafana
+# itself — it just talks to the URL we give it. .spec.config is ignored
+# (we can't mount grafana.ini into a hosted instance).
+#
+# Auth via a service-account token (glsa_*) created in the stack at
+# admin/access-control/serviceaccounts. The token is held in the
+# grafana-cloud-dashboard-token Secret (managed by the ExternalSecret
+# in grafana-dashboard-token-externalsecret.yaml).
+#
+# `dashboards: cloud` label is the selector that GrafanaDashboard CRs
+# match against — keep all dashboards aimed at this instance using that
+# label.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: cloud
+  namespace: monitoring
+  labels:
+    dashboards: cloud
+spec:
+  external:
+    url: https://chrisscotmartin.grafana.net
+    apiKey:
+      name: grafana-cloud-dashboard-token
+      key: token
