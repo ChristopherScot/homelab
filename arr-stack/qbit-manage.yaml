@@ -51,6 +51,7 @@ data:
         priority: 1
         categories:
           - books-readarr
+          - books-mam-seedonly
         max_ratio: -1
         max_seeding_time: -1
         max_last_active: -1
@@ -65,6 +66,7 @@ data:
       root_dir: /media/downloads/complete
     cat:
       books-readarr: /media/downloads/complete
+      books-mam-seedonly: /media/downloads/seedonly
       movies-radarr: /media/downloads/complete
       tv-sonarr: /media/downloads/complete
     # `tracker` and `nohardlinks` are required sections. We're not using
