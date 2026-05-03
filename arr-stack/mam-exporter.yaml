@@ -1,0 +1,193 @@
+# Polls MAM stats and pushes to Grafana Cloud Prometheus via remote_write.
+# Lives in the gluetun pod as a sidecar so it inherits the VPN egress
+# (MAM session cookie is ASN-bound).
+#
+# Cookie comes from MouseHole's REST API at localhost:5010, which itself
+# auto-refreshes the cookie when the VPN egress IP changes.
+#
+# Metrics land in your existing Grafana Cloud tenant (same Prometheus
+# instance Alloy ships to). Look for series prefix `mam_*`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mam-exporter-script
+  namespace: media
+data:
+  mam_exporter.py: |
+    """
+    MAM stats exporter — pulls current mam_id from MouseHole (same pod),
+    polls myanonamouse.net /jsonLoad.php every 60s, pushes Prometheus
+    metrics to Grafana Cloud via remote_write.
+    """
+    import os, json, time, base64, struct, sys
+    import urllib.request, urllib.error
+
+    MOUSEHOLE_URL = os.environ.get("MOUSEHOLE_URL", "http://localhost:5010/state")
+    MAM_URL = "https://www.myanonamouse.net/jsonLoad.php?snatch_summary=true"
+    RW_URL  = os.environ["GRAFANA_REMOTE_WRITE_URL"]
+    RW_USER = os.environ["GRAFANA_REMOTE_WRITE_USER"]
+    RW_TOKEN = os.environ["GRAFANA_REMOTE_WRITE_TOKEN"]
+    INTERVAL = int(os.environ.get("INTERVAL_SECONDS", "60"))
+
+    AUTH = "Basic " + base64.b64encode(f"{RW_USER}:{RW_TOKEN}".encode()).decode()
+
+    def log(msg):
+        print(f"[mam-exporter] {msg}", flush=True)
+
+    def get_cookie():
+        """Pull the current mam_id from MouseHole's REST API (auto-refreshed on ASN change)."""
+        with urllib.request.urlopen(MOUSEHOLE_URL, timeout=5) as r:
+            return json.loads(r.read())["currentCookie"]
+
+    def fetch_mam(cookie):
+        req = urllib.request.Request(
+            MAM_URL,
+            headers={"Cookie": f"mam_id={cookie}", "User-Agent": "Mozilla/5.0"},
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            body = resp.read().decode()
+        if "Session ASN mismatch" in body or "not signed in" in body:
+            raise RuntimeError(f"MAM auth failed: {body[:200]}")
+        return json.loads(body)
+
+    # --- Minimal Prometheus remote_write protobuf encoding ---
+
+    def varint(n):
+        out = bytearray()
+        while n > 0x7F:
+            out.append((n & 0x7F) | 0x80)
+            n >>= 7
+        out.append(n & 0x7F)
+        return bytes(out)
+
+    def field(num, wire_type, payload):
+        tag = (num << 3) | wire_type
+        return varint(tag) + payload
+
+    def length_delim(num, payload):
+        return field(num, 2, varint(len(payload)) + payload)
+
+    def string_field(num, s):
+        return length_delim(num, s.encode())
+
+    def label(name, value):
+        return string_field(1, name) + string_field(2, value)
+
+    def sample(value, timestamp_ms):
+        val_bytes = struct.pack("<d", float(value))
+        out = field(1, 1, val_bytes)
+        out += field(2, 0, varint(timestamp_ms))
+        return out
+
+    def timeseries(labels_dict, value, timestamp_ms):
+        payload = b""
+        for k, v in labels_dict.items():
+            payload += length_delim(1, label(k, v))
+        payload += length_delim(2, sample(value, timestamp_ms))
+        return payload
+
+    def write_request(metrics, timestamp_ms):
+        body = b""
+        for name, labels, value in metrics:
+            all_labels = {"__name__": name, **labels}
+            body += length_delim(1, timeseries(all_labels, value, timestamp_ms))
+        return body
+
+    def snappy_compress(data):
+        try:
+            import snappy
+            return snappy.compress(data)
+        except ImportError:
+            try:
+                import cramjam
+                return bytes(cramjam.snappy.compress_raw(data))
+            except ImportError:
+                log("ERROR: install python-snappy or cramjam")
+                sys.exit(1)
+
+    def push_metrics(metrics):
+        ts_ms = int(time.time() * 1000)
+        pb = write_request(metrics, ts_ms)
+        compressed = snappy_compress(pb)
+        req = urllib.request.Request(
+            RW_URL,
+            data=compressed,
+            headers={
+                "Authorization": AUTH,
+                "Content-Type": "application/x-protobuf",
+                "Content-Encoding": "snappy",
+                "X-Prometheus-Remote-Write-Version": "0.1.0",
+                "User-Agent": "mam-exporter/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status
+        except urllib.error.HTTPError as e:
+            log(f"remote_write {e.code}: {e.read()[:200]}")
+            return e.code
+
+    def parse_mam(d):
+        def num(x):
+            if isinstance(x, (int, float)): return float(x)
+            try: return float(x)
+            except: return 0.0
+
+        metrics = []
+        base = {"source": "myanonamouse"}
+
+        if "downloaded_bytes" in d:
+            metrics.append(("mam_downloaded_bytes", base, num(d["downloaded_bytes"])))
+        if "uploaded_bytes" in d:
+            metrics.append(("mam_uploaded_bytes", base, num(d["uploaded_bytes"])))
+        if "seedbonus" in d:
+            metrics.append(("mam_seedbonus", base, num(d["seedbonus"])))
+
+        r = d.get("ratio")
+        if isinstance(r, (int, float)):
+            metrics.append(("mam_ratio", base, float(r)))
+        elif isinstance(r, str):
+            try: metrics.append(("mam_ratio", base, float(r)))
+            except: pass  # "∞" etc.
+
+        for key, metric_name in [
+            ("leeching", "mam_leeching_count"),
+            ("seedHnr", "mam_seed_hnr_count"),
+            ("inactHnr", "mam_inactive_hnr_count"),
+            ("seedUnsat", "mam_seed_unsatisfied_count"),
+            ("inactUnsat", "mam_inactive_unsatisfied_count"),
+            ("inactSat", "mam_inactive_satisfied_count"),
+            ("sSat", "mam_seed_satisfied_count"),
+            ("upAct", "mam_upload_active_count"),
+            ("unsat", "mam_unsatisfied_count"),
+            ("duplicates", "mam_duplicates_count"),
+        ]:
+            v = d.get(key)
+            if isinstance(v, dict) and "count" in v:
+                metrics.append((metric_name, base, num(v["count"])))
+
+        if "connectable" in d:
+            metrics.append(("mam_connectable", base, 1.0 if d["connectable"] == "online" else 0.0))
+
+        metrics.append(("mam_scrape_success", base, 1.0))
+        return metrics
+
+    def main():
+        log(f"starting; interval={INTERVAL}s; rw_url={RW_URL}; cookie source={MOUSEHOLE_URL}")
+        while True:
+            try:
+                cookie = get_cookie()
+                data = fetch_mam(cookie)
+                metrics = parse_mam(data)
+                code = push_metrics(metrics)
+                log(f"pushed {len(metrics)} metrics, http {code}, bonus={data.get('seedbonus','?')}, ratio={data.get('ratio','?')}, dl={data.get('downloaded','?')}")
+            except Exception as e:
+                log(f"scrape error: {e}")
+                try:
+                    push_metrics([("mam_scrape_success", {"source": "myanonamouse"}, 0.0)])
+                except: pass
+            time.sleep(INTERVAL)
+
+    if __name__ == "__main__":
+        main()

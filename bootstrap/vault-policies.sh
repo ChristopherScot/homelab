@@ -38,6 +38,20 @@ APPS=(
   "jellyseerr|kv/data/jellyseerr/*|media|external-secrets-sa"
 )
 
+# Cross-app role for media: lets the mam-exporter sidecar read the shared
+# grafana-cloud token to push MAM metrics via Prometheus remote_write.
+# Kept separate from the per-app roles above because grafana-cloud lives
+# outside any single arr-stack app's Vault path.
+vault policy write media-grafana-cloud - <<EOF
+path "kv/data/grafana-cloud"     { capabilities = ["read"] }
+path "kv/metadata/grafana-cloud" { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/media-grafana-cloud \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="media" \
+  policies="media-grafana-cloud" \
+  ttl=1h
+
 for entry in "${APPS[@]}"; do
   IFS='|' read -r app path ns sa <<<"$entry"
 

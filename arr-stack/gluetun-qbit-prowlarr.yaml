@@ -255,6 +255,55 @@ spec:
             limits:
               memory: 64Mi
 
+        # Polls MAM /jsonLoad.php every 60s and pushes Prometheus metrics
+        # (ratio, bonus, HnR counts, etc.) to Grafana Cloud via remote_write.
+        # Lives in this pod so it inherits the VPN's pinned-ASN egress
+        # (MAM session cookie is ASN-bound). Pulls the current cookie from
+        # MouseHole at localhost:5010, so it survives ASN rotations.
+        #
+        # Script lives in mam-exporter-script ConfigMap. Grafana Cloud creds
+        # come from the grafana-cloud-metrics Secret in this namespace
+        # (currently kubectl-applied as a one-shot copy from the monitoring
+        # namespace; could be GitOps-ified via PushSecret/ClusterSecretStore
+        # later).
+        - name: mam-exporter
+          image: python:3.13-alpine
+          command:
+            - sh
+            - -c
+            - |
+              pip install --quiet --root-user-action ignore python-snappy 2>/dev/null \
+                || pip install --quiet --root-user-action ignore cramjam
+              exec python3 /app/mam_exporter.py
+          env:
+            - name: GRAFANA_REMOTE_WRITE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-cloud-metrics
+                  key: url
+            - name: GRAFANA_REMOTE_WRITE_USER
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-cloud-metrics
+                  key: username
+            - name: GRAFANA_REMOTE_WRITE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-cloud-metrics
+                  key: token
+            - name: INTERVAL_SECONDS
+              value: "60"
+          volumeMounts:
+            - name: mam-exporter-script
+              mountPath: /app
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+
       volumes:
         - name: gluetun-config
           persistentVolumeClaim:
@@ -270,6 +319,9 @@ spec:
         # sidecar re-injects the cookie from the Secret.
         - name: mousehole-state
           emptyDir: {}
+        - name: mam-exporter-script
+          configMap:
+            name: mam-exporter-script
         - name: media
           persistentVolumeClaim:
             claimName: media-data
