@@ -82,8 +82,20 @@ spec:
               value: nordvpn
             - name: VPN_TYPE
               value: openvpn
-            - name: SERVER_COUNTRIES
-              value: United States
+            # Pin to 3 specific NordVPN servers, all in AS60068 (Datacamp).
+            # Why pinned: MAM tracker session is locked to a small ASN list,
+            # but the dynamicSeedbox API only refreshes IP within an ASN —
+            # not the ASN itself. NordVPN normally load-balances across
+            # dozens of ASNs (M247, Tefincom, PacketHub, etc.), which kills
+            # the MAM session every reconnect. Pinning to 3 servers in one
+            # ASN gives us redundancy without ASN drift.
+            #
+            # If these all go down: pick replacements from
+            # api.nordvpn.com/v1/servers?filters[country_id]=228 and probe
+            # ipinfo.io for ASN — keep it on AS60068 (Datacamp) or AS9009
+            # (M247), both already in our MAM allowlist.
+            - name: SERVER_HOSTNAMES
+              value: us2943.nordvpn.com,us2944.nordvpn.com,us2945.nordvpn.com
             - name: TZ
               value: America/New_York
             - name: FIREWALL_OUTBOUND_SUBNETS
@@ -166,32 +178,51 @@ spec:
             limits:
               memory: 512Mi
 
-        # MAM (MyAnonaMouse) session keepalive. Pings MAM's dynamicSeedbox
-        # endpoint every 30 min from inside the gluetun network namespace,
-        # so the call's source IP matches the IP that qBit announces from
-        # (the VPN egress). Without this, our session lapses when gluetun
-        # rotates VPN endpoints within its ASN, and the tracker marks us
-        # as "Not Currently Connected" — eventually a ratio violation.
+        # MouseHole — official MAM dynamic-seedbox updater. Polls every
+        # 5 min, only POSTs to dynamicSeedbox.php when the egress IP has
+        # actually changed (IP changes within our pinned ASN are normal as
+        # NordVPN reassigns connections). Respects MAM's 1/hour API rate
+        # limit on its own. Web UI on port 5010 (cluster-internal only).
         #
-        # mam_id comes from kv/arr/mam in Vault, projected via the
-        # mam-session ExternalSecret (mam-externalsecret.yaml).
-        - name: mam-keepalive
-          # curlimages/curl ships with curl + ca-certificates — no apk add
-          # needed, which matters because the gluetun firewall blocks
-          # alpine's package CDN.
+        # mam_id is seeded via a startup hook on the cookie-seed container
+        # below — MouseHole's REST API (PUT /state) lets us inject the
+        # cookie at boot from the mam-session Secret without manual UI
+        # clicks. See mam-externalsecret.yaml for the Vault → Secret path.
+        - name: mousehole
+          image: tmmrtn/mousehole:latest
+          env:
+            - name: TZ
+              value: America/New_York
+          volumeMounts:
+            - name: mousehole-state
+              mountPath: /srv/mousehole
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+        # Sidecar that ensures MouseHole has the current mam_id cookie.
+        # Runs once at pod start (after MouseHole is reachable), then
+        # idles. If the Vault secret rotates, deleting this pod will
+        # re-seed on next start.
+        - name: mousehole-seed
           image: curlimages/curl:8.10.1
           command:
             - sh
             - -c
             - |
-              while true; do
-                echo "[$(date -Iseconds)] hitting MAM dynamic-seedbox endpoint"
-                curl -sS -b "mam_id=$MAM_ID" \
-                  https://t.myanonamouse.net/json/dynamicSeedbox.php \
-                  || echo "[$(date -Iseconds)] keepalive failed, will retry"
-                echo
-                sleep 1800
+              # Wait for MouseHole to come up
+              until curl -sf http://localhost:5010/state >/dev/null 2>&1; do
+                echo "waiting for mousehole..."; sleep 2
               done
+              echo "seeding mam_id into mousehole"
+              curl -sS -X PUT http://localhost:5010/state \
+                -H "Content-Type: application/json" \
+                -d "{\"currentCookie\":\"$MAM_ID\"}" \
+                && echo " ✓ seeded"
+              # Sleep forever so the container doesn't restart
+              tail -f /dev/null
           env:
             - name: MAM_ID
               valueFrom:
@@ -215,6 +246,11 @@ spec:
         - name: prowlarr-config
           persistentVolumeClaim:
             claimName: prowlarr-config-nfs
+        # MouseHole's persistent state (cookie + last-seen-IP cache).
+        # Tiny — emptyDir is fine; if the pod restarts, the seed
+        # sidecar re-injects the cookie from the Secret.
+        - name: mousehole-state
+          emptyDir: {}
         - name: media
           persistentVolumeClaim:
             claimName: media-data
