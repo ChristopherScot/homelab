@@ -108,8 +108,13 @@ spec:
             # api.nordvpn.com/v1/servers?filters[country_id]=228 and probe
             # ipinfo.io for ASN — keep it on AS60068 (Datacamp) or AS9009
             # (M247), both already in our MAM allowlist.
+            # NOTE: NordVPN's WireGuard and OpenVPN server pools have
+            # DIFFERENT hostnames even when on the same physical machine.
+            # us2943-2945 are OpenVPN-only; the corresponding WG servers
+            # in AS60068 (Datacamp) Atlanta are us5109-5113, us6694-6699,
+            # us8192-8194, etc. Picked 3 with confirmed AS60068 IPs.
             - name: SERVER_HOSTNAMES
-              value: us2943.nordvpn.com,us2944.nordvpn.com,us2945.nordvpn.com
+              value: us5109.nordvpn.com,us5110.nordvpn.com,us5111.nordvpn.com
             - name: TZ
               value: America/New_York
             - name: FIREWALL_OUTBOUND_SUBNETS
