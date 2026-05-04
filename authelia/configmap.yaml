@@ -55,6 +55,7 @@ data:
             - prowlarr.home.chrisscotmartin.com
             - bazarr.home.chrisscotmartin.com
             - qbit.home.chrisscotmartin.com
+            - grafana.home.chrisscotmartin.com
           policy: two_factor
           subject:
             - "group:admins"

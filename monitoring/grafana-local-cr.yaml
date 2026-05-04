@@ -1,0 +1,87 @@
+# Local Grafana instance, operator-managed.
+#
+# Sibling to grafana-cr.yaml (which points at Grafana Cloud). During the
+# cloud → local migration both Grafana CRs exist in parallel; dashboards
+# get a `dashboards: local` label to push here, `dashboards: cloud` to
+# push to Cloud. Once cutover is done we delete grafana-cr.yaml.
+#
+# Auth model:
+#   - The ingress (grafana-local-ingress.yaml) puts Authelia in front,
+#     which sets the Remote-User header for authenticated requests.
+#   - Grafana's auth.proxy reads that header, auto-creating users on
+#     first access with role=Admin (because Authelia only lets the
+#     `admins` group through).
+#   - The internal admin user/pw (from grafana-local-admin-secret.yaml)
+#     exists for API access by the operator and as a break-glass login.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: local
+  namespace: monitoring
+  labels:
+    dashboards: local
+spec:
+  config:
+    log:
+      mode: "console"
+      level: "warn"
+    server:
+      root_url: "https://grafana.home.chrisscotmartin.com"
+      enforce_domain: "false"
+    security:
+      # Hide the version footer; keeps the UI clean and doesn't broadcast
+      # which Grafana version we're running externally.
+      disable_initial_admin_creation: "false"
+    users:
+      auto_assign_org_role: "Admin"
+      allow_sign_up: "false"
+    auth:
+      disable_login_form: "true"
+      disable_signout_menu: "true"
+    auth.basic:
+      enabled: "true"   # keep on for API access via admin user
+    auth.proxy:
+      enabled: "true"
+      header_name: "Remote-User"
+      header_property: "username"
+      auto_sign_up: "true"
+      headers: "Email:Remote-Email Name:Remote-Name Groups:Remote-Groups"
+    auth.anonymous:
+      enabled: "false"
+  deployment:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: grafana
+              env:
+                - name: GF_SECURITY_ADMIN_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-local-admin
+                      key: GF_SECURITY_ADMIN_USER
+                - name: GF_SECURITY_ADMIN_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-local-admin
+                      key: GF_SECURITY_ADMIN_PASSWORD
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 256Mi
+                limits:
+                  memory: 512Mi
+  persistentVolumeClaim:
+    spec:
+      accessModes: [ReadWriteOnce]
+      storageClassName: longhorn
+      resources:
+        requests:
+          storage: 1Gi
+  service:
+    spec:
+      type: ClusterIP
+      ports:
+        - name: grafana
+          port: 3000
+          targetPort: 3000

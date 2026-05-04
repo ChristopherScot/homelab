@@ -1,0 +1,56 @@
+# Datasources for the local Grafana instance.
+#
+# instanceSelector matches the Grafana CR labeled `dashboards: local`,
+# which is the local instance only. The cloud Grafana CR has label
+# `dashboards: cloud`, so it never gets these.
+#
+# Both datasources are in-cluster (ClusterIP services), no auth needed.
+# `editable: false` keeps users from accidentally rewriting the config in
+# the UI — datasource is GitOps-managed.
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: victoria-metrics
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  datasource:
+    name: VictoriaMetrics
+    type: prometheus
+    access: proxy
+    url: http://victoria-metrics.monitoring.svc.cluster.local:8428
+    isDefault: true
+    editable: false
+    jsonData:
+      # VM exposes Prometheus-compatible API; this hint enables the
+      # PromQL editor's autocomplete and version-specific features.
+      prometheusType: "Prometheus"
+      prometheusVersion: "2.40.0"
+      timeInterval: "30s"
+      # Increase the default 30s query timeout — VM range queries over
+      # 30d retention can take a few seconds at our scale.
+      queryTimeout: "60s"
+      httpMethod: "POST"
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDatasource
+metadata:
+  name: loki-local
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  datasource:
+    name: Loki
+    type: loki
+    access: proxy
+    url: http://loki.monitoring.svc.cluster.local:3100
+    isDefault: false
+    editable: false
+    jsonData:
+      maxLines: 5000
+      timeout: 60

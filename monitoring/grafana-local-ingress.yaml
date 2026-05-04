@@ -1,0 +1,53 @@
+# Ingress for the local Grafana UI.
+#
+# Same Authelia forward-auth pattern as the arr-stack ingresses (see
+# arr-stack/ingresses.yaml comments for the full rationale).
+# Requires `admins` group + 2FA per Authelia's access_control rules —
+# Grafana queries metrics & logs across the whole cluster, so it gets
+# the same protection level as the arr-stack admin UIs.
+#
+# The Grafana instance gets the authenticated user's identity via the
+# Remote-User header (see auth.proxy block in grafana-local-cr.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-local
+  namespace: monitoring
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Grafana"
+    gethomepage.dev/description: "Local metrics + logs"
+    gethomepage.dev/group: "Infrastructure"
+    gethomepage.dev/icon: "grafana.png"
+    gethomepage.dev/href: "https://grafana.home.chrisscotmartin.com"
+    gethomepage.dev/pod-selector: "app=grafana"
+    nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
+    # NOTE: requires `allow-snippet-annotations: "true"` and
+    # `annotations-risk-level: Critical` in the ingress-nginx ConfigMap.
+    # Already set out-of-band; see arr-stack/ingresses.yaml for context.
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Forwarded-Method $request_method;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Uri $request_uri;
+      proxy_set_header X-Forwarded-For $remote_addr;
+    nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [grafana.home.chrisscotmartin.com]
+      secretName: grafana-local-tls
+  rules:
+    - host: grafana.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                # Grafana operator names the Service `<grafana-cr-name>-service`.
+                name: local-service
+                port:
+                  number: 3000
