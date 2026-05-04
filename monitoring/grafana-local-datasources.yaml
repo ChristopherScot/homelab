@@ -9,6 +9,9 @@ spec:
     matchLabels:
       dashboards: local
   datasource:
+    # UID matches the one referenced by the MAM dashboard JSON so the same
+    # dashboard works against both cloud and local without per-panel edits.
+    uid: grafanacloud-prom
     name: VictoriaMetrics
     type: prometheus
     access: proxy
