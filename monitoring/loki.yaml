@@ -1,14 +1,5 @@
-# Loki single-binary mode — log storage backend.
-# Single-binary means all Loki components (ingester, querier, compactor,
-# distributor) run in one process. Trade-off: no horizontal scaling, but
-# zero operational complexity. Right call for a homelab.
-#
-# Filesystem chunks (not S3) because we don't have local object storage
-# and Synology's S3 emulation is more trouble than it's worth here.
-# Everything sits on one Longhorn PVC.
-#
-# Push API at /loki/api/v1/push on port 3100. Alloy collectors in this
-# namespace ship to it as a `loki`-type destination.
+# Loki single-binary mode (all components in one process). Push API on :3100.
+# Filesystem chunks on one Longhorn PVC — no S3 dependency.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -16,15 +7,11 @@ metadata:
   namespace: monitoring
 data:
   loki.yaml: |
-    # No multitenancy — single-tenant homelab use.
     auth_enabled: false
 
     server:
       http_listen_port: 3100
       grpc_listen_port: 9096
-      # Default log_level=info is too chatty for steady state; bump to warn
-      # so Loki's own logs don't dominate the cluster log volume we're
-      # trying to capture.
       log_level: warn
 
     common:
@@ -56,22 +43,17 @@ data:
       compaction_interval: 10m
 
     limits_config:
-      # 30-day retention matches our 10GB disk budget assuming roughly
-      # 300MB/day post-compression. Tune after burn-in.
       retention_period: 720h
       reject_old_samples: true
       reject_old_samples_max_age: 168h
-      # Per-stream rate limits prevent a single chatty pod from filling
-      # the disk in hours. 5MB/s sustained per stream is generous.
+      # Per-stream rate limit stops a single chatty pod from filling disk.
       per_stream_rate_limit: 5MB
       per_stream_rate_limit_burst: 20MB
-      # Cluster-wide ingest cap as a second safety net.
       ingestion_rate_mb: 10
       ingestion_burst_size_mb: 20
-      # Allow up to ~5K active streams; alerts if cardinality explodes.
       max_global_streams_per_user: 5000
 
-    # Required by recent Loki versions even though we don't use rules.
+    # Loki refuses to start without a ruler config block, even unused.
     ruler:
       storage:
         type: local
@@ -102,11 +84,9 @@ metadata:
   labels:
     app: loki
   annotations:
-    # Roll the pod when loki-config ConfigMap changes (Reloader handles it).
     reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
-  # Recreate because PVC is RWO.
   strategy:
     type: Recreate
   selector:
@@ -118,8 +98,7 @@ spec:
         app: loki
     spec:
       enableServiceLinks: false
-      # Loki's filesystem layout assumes UID/GID 10001 (the loki user in
-      # the official image). The PVC needs to be writable by that uid.
+      # Loki image runs as uid 10001; PVC needs to be writable by it.
       securityContext:
         runAsUser: 10001
         runAsGroup: 10001

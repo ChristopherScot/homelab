@@ -1,9 +1,3 @@
-# Datasources for the local Grafana instance.
-#
-# instanceSelector matches Grafana CRs labeled `dashboards: local`.
-# Both backends are cluster-internal (ClusterIP services), no auth needed.
-# `editable: false` keeps users from rewriting the config in the UI —
-# datasource is GitOps-managed.
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource
@@ -22,13 +16,9 @@ spec:
     isDefault: true
     editable: false
     jsonData:
-      # VM exposes Prometheus-compatible API; this hint enables the
-      # PromQL editor's autocomplete and version-specific features.
       prometheusType: "Prometheus"
       prometheusVersion: "2.40.0"
       timeInterval: "30s"
-      # Increase the default 30s query timeout — VM range queries over
-      # 30d retention can take a few seconds at our scale.
       queryTimeout: "60s"
       httpMethod: "POST"
 ---

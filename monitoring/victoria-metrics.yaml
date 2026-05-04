@@ -1,13 +1,4 @@
-# Victoria Metrics single-node — TSDB backend for the local monitoring stack.
-# Stands in for Prometheus/Mimir at ~7x lower RAM and ~10x better disk
-# compression, which matters with an 8GB Longhorn budget.
-#
-# Single replica is fine for a homelab. VM has a clustered mode
-# (vmstorage/vmselect/vminsert) but that's overkill until we're sharding
-# across nodes.
-#
-# Receives Prometheus remote_write at /api/v1/write on port 8428.
-# Exposes a Prometheus-compatible query API on the same port for Grafana.
+# Victoria Metrics single-node TSDB — Prometheus-compatible read+write API on :8428.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -29,8 +20,7 @@ metadata:
     app: victoria-metrics
 spec:
   replicas: 1
-  # Recreate (not RollingUpdate) because the PVC is RWO and the new pod
-  # can't attach until the old one releases.
+  # Recreate: PVC is RWO, new pod can't attach until old one releases.
   strategy:
     type: Recreate
   selector:
@@ -48,11 +38,8 @@ spec:
           args:
             - -storageDataPath=/storage
             - -httpListenAddr=:8428
-            # 30d retention matches the disk budget at our cardinality
-            # (~10-15K series). Bump if disk usage stays low after burn-in.
             - -retentionPeriod=30d
-            # Drop incoming samples whose labels exceed reasonable size —
-            # cheap defense against label-cardinality explosions.
+            # Cheap defense against label-cardinality explosions.
             - -maxLabelsPerTimeseries=40
           ports:
             - containerPort: 8428

@@ -1,11 +1,5 @@
-# Reloader — watches mounted ConfigMaps/Secrets and triggers rolling
-# restarts of any Deployment/StatefulSet/DaemonSet annotated with
-#   reloader.stakater.com/auto: "true"
-#
-# Necessary for apps that load their config at startup and don't watch
-# the file for changes (e.g. Authelia). Targeted opt-in (vs cluster-wide
-# watching) keeps the blast radius small — unrelated workloads aren't
-# restarted just because we touched a configmap.
+# Reloader: rolls workloads annotated with reloader.stakater.com/auto: "true"
+# when a ConfigMap or Secret they mount changes.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -33,9 +27,6 @@ spec:
       releaseName: reloader
       valuesObject:
         reloader:
-          # Default behavior: watch all namespaces, only act on workloads
-          # carrying the `reloader.stakater.com/auto: "true"` annotation.
-          # That keeps the blast radius small.
           reloadStrategy: annotations
           deployment:
             replicas: 1
