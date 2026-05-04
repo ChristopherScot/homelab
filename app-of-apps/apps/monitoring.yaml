@@ -74,6 +74,22 @@ spec:
                 name: grafana-cloud-logs
                 namespace: monitoring
 
+            # ---- Local stack (Phase 3 of the cloud → local migration). ----
+            # No auth — both backends are cluster-internal ClusterIP services.
+            # Each Alloy collector ships to BOTH the cloud and local destinations
+            # of its type until we cut over and remove the cloud ones.
+            local-metrics:
+              type: prometheus
+              url: http://victoria-metrics.monitoring.svc.cluster.local:8428/api/v1/write
+              auth:
+                type: none
+
+            local-logs:
+              type: loki
+              url: http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push
+              auth:
+                type: none
+
           # ---- Features: enabled ----
           clusterMetrics:
             enabled: true
