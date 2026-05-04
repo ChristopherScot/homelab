@@ -24,12 +24,20 @@ data:
 
     MOUSEHOLE_URL = os.environ.get("MOUSEHOLE_URL", "http://localhost:5010/state")
     MAM_URL = "https://www.myanonamouse.net/jsonLoad.php?snatch_summary=true"
-    RW_URL  = os.environ["GRAFANA_REMOTE_WRITE_URL"]
-    RW_USER = os.environ["GRAFANA_REMOTE_WRITE_USER"]
-    RW_TOKEN = os.environ["GRAFANA_REMOTE_WRITE_TOKEN"]
     INTERVAL = int(os.environ.get("INTERVAL_SECONDS", "60"))
 
-    AUTH = "Basic " + base64.b64encode(f"{RW_USER}:{RW_TOKEN}".encode()).decode()
+    # Each destination is (url, auth_header_or_None). Cloud uses basic auth;
+    # in-cluster targets like VictoriaMetrics need no auth.
+    DESTINATIONS = []
+    cloud_url = os.environ.get("GRAFANA_REMOTE_WRITE_URL")
+    if cloud_url:
+        cloud_user = os.environ["GRAFANA_REMOTE_WRITE_USER"]
+        cloud_token = os.environ["GRAFANA_REMOTE_WRITE_TOKEN"]
+        cloud_auth = "Basic " + base64.b64encode(f"{cloud_user}:{cloud_token}".encode()).decode()
+        DESTINATIONS.append((cloud_url, cloud_auth))
+    local_url = os.environ.get("LOCAL_REMOTE_WRITE_URL")
+    if local_url:
+        DESTINATIONS.append((local_url, None))
 
     def log(msg):
         print(f"[mam-exporter] {msg}", flush=True)
@@ -109,24 +117,27 @@ data:
         ts_ms = int(time.time() * 1000)
         pb = write_request(metrics, ts_ms)
         compressed = snappy_compress(pb)
-        req = urllib.request.Request(
-            RW_URL,
-            data=compressed,
-            headers={
-                "Authorization": AUTH,
+        results = []
+        for url, auth in DESTINATIONS:
+            headers = {
                 "Content-Type": "application/x-protobuf",
                 "Content-Encoding": "snappy",
                 "X-Prometheus-Remote-Write-Version": "0.1.0",
                 "User-Agent": "mam-exporter/1.0",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=10) as resp:
-                return resp.status
-        except urllib.error.HTTPError as e:
-            log(f"remote_write {e.code}: {e.read()[:200]}")
-            return e.code
+            }
+            if auth:
+                headers["Authorization"] = auth
+            req = urllib.request.Request(url, data=compressed, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=10) as resp:
+                    results.append(resp.status)
+            except urllib.error.HTTPError as e:
+                log(f"remote_write {url} {e.code}: {e.read()[:200]}")
+                results.append(e.code)
+            except Exception as e:
+                log(f"remote_write {url} error: {e}")
+                results.append(0)
+        return results
 
     def parse_mam(d):
         def num(x):
@@ -213,14 +224,17 @@ data:
         return metrics
 
     def main():
-        log(f"starting; interval={INTERVAL}s; rw_url={RW_URL}; cookie source={MOUSEHOLE_URL}")
+        if not DESTINATIONS:
+            log("ERROR: no destinations configured (set GRAFANA_REMOTE_WRITE_URL and/or LOCAL_REMOTE_WRITE_URL)")
+            sys.exit(1)
+        log(f"starting; interval={INTERVAL}s; destinations={[u for u,_ in DESTINATIONS]}; cookie source={MOUSEHOLE_URL}")
         while True:
             try:
                 cookie = get_cookie()
                 data = fetch_mam(cookie)
                 metrics = parse_mam(data)
-                code = push_metrics(metrics)
-                log(f"pushed {len(metrics)} metrics, http {code}, bonus={data.get('seedbonus','?')}, ratio={data.get('ratio','?')}, dl={data.get('downloaded','?')}")
+                codes = push_metrics(metrics)
+                log(f"pushed {len(metrics)} metrics, codes {codes}, bonus={data.get('seedbonus','?')}, ratio={data.get('ratio','?')}, dl={data.get('downloaded','?')}")
             except Exception as e:
                 log(f"scrape error: {e}")
                 try:
