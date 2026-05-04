@@ -226,7 +226,7 @@ spec:
               # Without this, MouseHole starts before gluetun establishes the
               # tunnel and fails to reach MAM on first attempt.
               echo "Waiting for VPN connectivity..."
-              until wget -q -O- https://ipinfo.io/ip >/dev/null 2>&1; do
+              until curl -sf https://ipinfo.io/ip >/dev/null 2>&1; do
                 echo "VPN not ready, retrying in 2s..."
                 sleep 2
               done
