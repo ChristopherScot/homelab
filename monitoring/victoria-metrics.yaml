@@ -1,15 +1,13 @@
 # Victoria Metrics single-node — TSDB backend for the local monitoring stack.
 # Stands in for Prometheus/Mimir at ~7x lower RAM and ~10x better disk
-# compression, which matters because we're capped at 8GB of Longhorn for
-# metrics.
+# compression, which matters with an 8GB Longhorn budget.
 #
-# Single replica is fine for a homelab. VM has a clustered mode (vmstorage/
-# vmselect/vminsert) but that's overkill until we're sharding across nodes.
+# Single replica is fine for a homelab. VM has a clustered mode
+# (vmstorage/vmselect/vminsert) but that's overkill until we're sharding
+# across nodes.
 #
-# Receives Prometheus remote_write at /api/v1/write on port 8428. Alloy
-# (deployed by the k8s-monitoring helm chart) will be pointed here as a
-# second destination during Phase 3 of the migration; until then this just
-# sits empty.
+# Receives Prometheus remote_write at /api/v1/write on port 8428.
+# Exposes a Prometheus-compatible query API on the same port for Grafana.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

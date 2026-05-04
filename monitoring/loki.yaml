@@ -7,8 +7,8 @@
 # and Synology's S3 emulation is more trouble than it's worth here.
 # Everything sits on one Longhorn PVC.
 #
-# Receives Loki API push at /loki/api/v1/push on port 3100. Alloy will
-# write here during Phase 3 alongside the existing Grafana Cloud target.
+# Push API at /loki/api/v1/push on port 3100. Alloy collectors in this
+# namespace ship to it as a `loki`-type destination.
 apiVersion: v1
 kind: ConfigMap
 metadata:

@@ -1,15 +1,11 @@
-# Reloader — watches mounted ConfigMaps/Secrets and triggers rolling restarts
-# of any Deployment/StatefulSet/DaemonSet that opts in via the
+# Reloader — watches mounted ConfigMaps/Secrets and triggers rolling
+# restarts of any Deployment/StatefulSet/DaemonSet annotated with
 #   reloader.stakater.com/auto: "true"
-# annotation.
 #
-# Solves the "I updated the configmap but the app didn't reload" problem.
-# Originally bit us when a new domain was added to authelia/configmap.yaml
-# and Authelia kept enforcing the old in-memory ruleset until manually
-# kicked. Now any annotated workload picks up changes within ~30s.
-#
-# Targeted opt-in (vs cluster-wide watching) keeps the blast radius small —
-# unrelated workloads aren't restarted just because we touched a configmap.
+# Necessary for apps that load their config at startup and don't watch
+# the file for changes (e.g. Authelia). Targeted opt-in (vs cluster-wide
+# watching) keeps the blast radius small — unrelated workloads aren't
+# restarted just because we touched a configmap.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

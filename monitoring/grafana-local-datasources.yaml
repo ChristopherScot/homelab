@@ -1,12 +1,9 @@
 # Datasources for the local Grafana instance.
 #
-# instanceSelector matches the Grafana CR labeled `dashboards: local`,
-# which is the local instance only. The cloud Grafana CR has label
-# `dashboards: cloud`, so it never gets these.
-#
-# Both datasources are in-cluster (ClusterIP services), no auth needed.
-# `editable: false` keeps users from accidentally rewriting the config in
-# the UI — datasource is GitOps-managed.
+# instanceSelector matches Grafana CRs labeled `dashboards: local`.
+# Both backends are cluster-internal (ClusterIP services), no auth needed.
+# `editable: false` keeps users from rewriting the config in the UI —
+# datasource is GitOps-managed.
 ---
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDatasource

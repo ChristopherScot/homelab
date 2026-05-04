@@ -1,16 +1,13 @@
-# Local Grafana instance, operator-managed.
-#
-# Sibling to grafana-cr.yaml (which points at Grafana Cloud). During the
-# cloud → local migration both Grafana CRs exist in parallel; dashboards
-# get a `dashboards: local` label to push here, `dashboards: cloud` to
-# push to Cloud. Once cutover is done we delete grafana-cr.yaml.
+# Local Grafana instance, operator-managed. The `dashboards: local`
+# label is the selector used by GrafanaDashboard / GrafanaDatasource
+# CRs that should target this instance.
 #
 # Auth model:
 #   - The ingress (grafana-local-ingress.yaml) puts Authelia in front,
 #     which sets the Remote-User header for authenticated requests.
 #   - Grafana's auth.proxy reads that header, auto-creating users on
-#     first access with role=Admin (because Authelia only lets the
-#     `admins` group through).
+#     first access with role=Admin (Authelia only lets the `admins`
+#     group through).
 #   - The internal admin user/pw (from grafana-local-admin-secret.yaml)
 #     exists for API access by the operator and as a break-glass login.
 apiVersion: grafana.integreatly.org/v1beta1
