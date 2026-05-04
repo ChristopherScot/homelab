@@ -75,3 +75,4 @@ spec:
         - name: grafana
           port: 3000
           targetPort: 3000
+          protocol: TCP
