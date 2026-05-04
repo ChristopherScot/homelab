@@ -1,11 +1,5 @@
-# Auto-generated wrapper around monitoring/dashboards/mam.json.
-# Edit the source JSON (or this file's .spec.json), then `git push`. The
-# grafana-operator picks up the change within a few seconds and POSTs to
-# Grafana Cloud via the SA token in the cloud Grafana CR.
-#
-# resyncPeriod = how often the operator re-pushes the dashboard back to
-# Grafana even without a CR change — defends against UI edits drifting
-# from git. Keep it short (5m) so accidental edits get reverted quickly.
+# resyncPeriod re-pushes the dashboard even without a CR change — reverts
+# UI edits that drift from git. Keep short so drift is corrected quickly.
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
@@ -14,8 +8,10 @@ metadata:
 spec:
   resyncPeriod: 5m
   instanceSelector:
-    matchLabels:
-      dashboards: cloud
+    matchExpressions:
+      - key: dashboards
+        operator: In
+        values: [cloud, local]
   json: |-
     {
       "annotations": {

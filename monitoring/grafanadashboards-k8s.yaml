@@ -1,0 +1,44 @@
+# Community Kubernetes dashboards pulled from grafana.com.
+# Local-only — the cloud Grafana stack ships with equivalents pre-built.
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: k8s-views-global
+  namespace: monitoring
+spec:
+  resyncPeriod: 5m
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  grafanaCom:
+    id: 15758
+    revision: 43
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: k8s-views-pods
+  namespace: monitoring
+spec:
+  resyncPeriod: 5m
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  grafanaCom:
+    id: 15760
+    revision: 39
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: loki-logs-app
+  namespace: monitoring
+spec:
+  resyncPeriod: 5m
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  grafanaCom:
+    id: 13639
+    revision: 2

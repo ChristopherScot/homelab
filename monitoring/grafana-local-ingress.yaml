@@ -12,7 +12,7 @@ metadata:
     gethomepage.dev/group: "Infrastructure"
     gethomepage.dev/icon: "grafana.png"
     gethomepage.dev/href: "https://grafana.home.chrisscotmartin.com"
-    gethomepage.dev/pod-selector: "app=grafana"
+    gethomepage.dev/pod-selector: "app=local"
     nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
     nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
     nginx.ingress.kubernetes.io/auth-snippet: |
