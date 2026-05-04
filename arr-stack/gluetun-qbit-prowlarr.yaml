@@ -123,7 +123,7 @@ spec:
             # Failover: if us5109 dies, switch to us5110 or us5111
             # (both AS60068/Datacamp, both in our MAM allowlist).
             - name: SERVER_HOSTNAMES
-              value: us5109.nordvpn.com
+              value: us5110.nordvpn.com
             - name: TZ
               value: America/New_York
             - name: FIREWALL_OUTBOUND_SUBNETS
