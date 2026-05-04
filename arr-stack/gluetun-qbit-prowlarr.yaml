@@ -317,6 +317,60 @@ spec:
             limits:
               memory: 128Mi
 
+        # Reapplies qBittorrent preferences from the qbittorrent-prefs
+        # ConfigMap on every pod start. Survives PVC loss, settings drift,
+        # and chart re-installs. Replaces the previous suspended
+        # qbittorrent-configure CronJob (which had to be triggered manually
+        # and was easy to forget after editing the JSON).
+        - name: qbit-configure
+          image: alpine:3.20
+          env:
+            - name: QBT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-admin
+                  key: username
+            - name: QBT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-admin
+                  key: password
+          command:
+            - sh
+            - -c
+            - |
+              apk add --no-cache curl >/dev/null
+              # Same netns as qBit via the gluetun pod, so localhost works.
+              until curl -sf http://localhost:8080/ -o /dev/null; do
+                echo "waiting for qbit..."; sleep 2
+              done
+              COOKIE=$(curl -sfi http://localhost:8080/api/v2/auth/login \
+                --data-urlencode "username=$QBT_USERNAME" \
+                --data-urlencode "password=$QBT_PASSWORD" \
+                -H "Referer: http://localhost:8080" \
+                | awk '/^[Ss]et-[Cc]ookie:/{sub(/^[Ss]et-[Cc]ookie: /,""); split($0,a,";"); print a[1]}')
+              if [ -z "$COOKIE" ]; then
+                echo "ERROR: login failed (check qbittorrent-admin Secret)" >&2
+                exit 1
+              fi
+              curl -sf http://localhost:8080/api/v2/app/setPreferences \
+                -H "Cookie: $COOKIE" \
+                --data-urlencode "json=$(cat /prefs/prefs.json)"
+              echo "✓ prefs applied from ConfigMap"
+              # Sleep forever so the container doesn't restart and re-trigger
+              # the apply on every k8s liveness check.
+              tail -f /dev/null
+          volumeMounts:
+            - name: qbit-prefs
+              mountPath: /prefs
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+
       volumes:
         - name: gluetun-config
           persistentVolumeClaim:
@@ -335,6 +389,9 @@ spec:
         - name: mam-exporter-script
           configMap:
             name: mam-exporter-script
+        - name: qbit-prefs
+          configMap:
+            name: qbittorrent-prefs
         - name: media
           persistentVolumeClaim:
             claimName: media-data

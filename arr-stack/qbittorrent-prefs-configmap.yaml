@@ -1,0 +1,52 @@
+# qBittorrent preferences applied on every pod start by the qbit-configure
+# sidecar in gluetun-qbit-prowlarr.yaml. Single source of truth for qBit
+# settings — edit here, restart the pod, settings reapply.
+#
+# Note: qBit also persists settings in /config/qBittorrent/qBittorrent.conf
+# on its PVC. The sidecar uses the API to override whatever's there with
+# what's in this ConfigMap on every pod start. UI changes will revert on
+# next restart — if you want a UI tweak to persist, add it here.
+#
+# Replaces the previous qbittorrent-configure CronJob (which was suspended
+# and required manual triggering — settings drifted from this file).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: qbittorrent-prefs
+  namespace: media
+data:
+  prefs.json: |
+    {
+      "save_path": "/media/downloads/complete",
+      "temp_path_enabled": true,
+      "temp_path": "/media/downloads/incomplete",
+      "preallocate_all": false,
+      "incomplete_files_ext": true,
+      "auto_delete_mode": 0,
+      "queueing_enabled": true,
+      "max_active_downloads": 5,
+      "max_active_uploads": 999,
+      "max_active_torrents": 999,
+      "dont_count_slow_torrents": true,
+      "max_ratio_enabled": true,
+      "max_ratio": 2.0,
+      "max_ratio_act": 0,
+      "listen_port": 51413,
+      "upnp": false,
+      "random_port": false,
+      "encryption": 1,
+      "anonymous_mode": false,
+      "dht": true,
+      "pex": true,
+      "lsd": false,
+      "add_trackers_enabled": false,
+      "bypass_local_auth": false,
+      "bypass_auth_subnet_whitelist_enabled": false,
+      "alternative_webui_enabled": false,
+      "use_https": false,
+      "web_ui_csrf_protection_enabled": true,
+      "web_ui_clickjacking_protection_enabled": true,
+      "web_ui_secure_cookie_enabled": true,
+      "web_ui_host_header_validation_enabled": false,
+      "web_ui_session_timeout": 2592000
+    }
