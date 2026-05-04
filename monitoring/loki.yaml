@@ -101,6 +101,9 @@ metadata:
   namespace: monitoring
   labels:
     app: loki
+  annotations:
+    # Roll the pod when loki-config ConfigMap changes (Reloader handles it).
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
   # Recreate because PVC is RWO.
@@ -113,9 +116,6 @@ spec:
     metadata:
       labels:
         app: loki
-      annotations:
-        # Roll the pod when the config map changes.
-        configHash: placeholder
     spec:
       enableServiceLinks: false
       # Loki's filesystem layout assumes UID/GID 10001 (the loki user in

@@ -1,0 +1,51 @@
+# Reloader — watches mounted ConfigMaps/Secrets and triggers rolling restarts
+# of any Deployment/StatefulSet/DaemonSet that opts in via the
+#   reloader.stakater.com/auto: "true"
+# annotation.
+#
+# Solves the "I updated the configmap but the app didn't reload" problem.
+# Originally bit us when a new domain was added to authelia/configmap.yaml
+# and Authelia kept enforcing the old in-memory ruleset until manually
+# kicked. Now any annotated workload picks up changes within ~30s.
+#
+# Targeted opt-in (vs cluster-wide watching) keeps the blast radius small —
+# unrelated workloads aren't restarted just because we touched a configmap.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reloader
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+  source:
+    repoURL: https://stakater.github.io/stakater-charts
+    chart: reloader
+    targetRevision: 2.2.11
+    helm:
+      releaseName: reloader
+      valuesObject:
+        reloader:
+          # Default behavior: watch all namespaces, only act on workloads
+          # carrying the `reloader.stakater.com/auto: "true"` annotation.
+          # That keeps the blast radius small.
+          reloadStrategy: annotations
+          deployment:
+            replicas: 1
+            resources:
+              requests:
+                cpu: 10m
+                memory: 64Mi
+              limits:
+                memory: 128Mi

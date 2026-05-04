@@ -5,6 +5,12 @@ metadata:
   namespace: authelia
   labels:
     app: authelia
+  annotations:
+    # Auto-rollout when authelia-config ConfigMap or authelia-keys/users
+    # Secrets change. Authelia loads its config at startup and does not
+    # watch for file changes, so a configmap edit is invisible until the
+    # pod restarts. Reloader handles that automatically.
+    reloader.stakater.com/auto: "true"
 spec:
   replicas: 1
   strategy:
