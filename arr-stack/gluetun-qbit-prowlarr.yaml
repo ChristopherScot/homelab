@@ -233,7 +233,7 @@ spec:
                 sleep 2
               done
               echo "VPN ready, starting MouseHole"
-              exec bun run --bun /app/src/index.tsx
+              cd /app && exec bun run start
           env:
             - name: TZ
               value: America/New_York
