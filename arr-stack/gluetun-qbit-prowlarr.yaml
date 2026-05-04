@@ -218,27 +218,13 @@ spec:
         # clicks. See mam-externalsecret.yaml for the Vault → Secret path.
         - name: mousehole
           image: tmmrtn/mousehole:latest
-          command:
-            - sh
-            - -c
-            - |
-              # Wait for VPN to be ready before starting MouseHole.
-              # Without this, MouseHole starts before gluetun establishes the
-              # tunnel and fails to reach MAM on first attempt. We check gluetun's
-              # health endpoint on localhost:9999 which reports ready once the
-              # tunnel is established.
-              echo "Waiting for VPN connectivity..."
-              until curl -sf http://localhost:9999 >/dev/null 2>&1; do
-                echo "VPN not ready, retrying in 2s..."
-                sleep 2
-              done
-              echo "VPN ready, starting MouseHole"
-              cd /app && exec bun run start
+          # MouseHole may fail on first startup before VPN is ready, but it
+          # reschedules updates every 5 min and will succeed once gluetun
+          # establishes the tunnel. Adding a wrapper to wait for VPN proved
+          # complex due to missing tools (wget/ca-certs) in the image.
           env:
             - name: TZ
               value: America/New_York
-            - name: NODE_ENV
-              value: production
           volumeMounts:
             - name: mousehole-state
               mountPath: /srv/mousehole
