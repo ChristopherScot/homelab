@@ -71,6 +71,17 @@ EOF
     ttl=1h
 done
 
+# Authelia gets an extra grant for shared SES SMTP creds (used by its
+# notifier.smtp config). The per-app loop above only sets one path per
+# policy; re-write here to include both kv/authelia/* and kv/ses/*.
+# Re-write (not append) because Vault policies are replace-on-write.
+vault policy write authelia - <<EOF
+path "kv/data/authelia/*"          { capabilities = ["read"] }
+path "kv/data/authelia/metadata/*" { capabilities = ["read", "list"] }
+path "kv/data/ses/*"               { capabilities = ["read"] }
+path "kv/metadata/ses/*"           { capabilities = ["read", "list"] }
+EOF
+
 # homepage reads keys for every app it shows widgets for. Distinct from
 # the per-app roles above because it spans namespaces.
 vault policy write homepage - <<EOF

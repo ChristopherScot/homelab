@@ -40,6 +40,10 @@ spec:
           envFrom:
             - secretRef:
                 name: authelia-keys
+            # SES SMTP credentials (AUTHELIA_NOTIFIER_SMTP_*).
+            # Synced from Vault kv/ses/smtp by externalsecret-smtp.yaml.
+            - secretRef:
+                name: authelia-smtp
           volumeMounts:
             - name: config
               mountPath: /config/configuration.yml

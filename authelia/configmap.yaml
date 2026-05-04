@@ -90,11 +90,22 @@ data:
         # env (set in deployment.yaml).
 
     notifier:
-      # No SMTP. 2FA enrollment URLs land in /config/notifications/notification.txt
-      # Recover via:
-      #   kubectl exec -n authelia deploy/authelia -- cat /config/notifications/notification.txt
-      filesystem:
-        filename: /config/notifications/notification.txt
+      # Sends 2FA enrollment, password reset, and security alert emails via
+      # AWS SES. Connection details (address/username/password/sender) come
+      # from the authelia-smtp Secret as AUTHELIA_NOTIFIER_SMTP_* env vars
+      # (see externalsecret-smtp.yaml).
+      #
+      # Authelia performs an SMTP startup check; if SES is unreachable or
+      # auth fails on boot, the pod will fail to become Ready. Disable the
+      # check with `disable_startup_check: true` if that's a problem.
+      smtp:
+        timeout: 10s
+        identifier: 'authelia.home.chrisscotmartin.com'
+        subject: '[Authelia] {title}'
+        # SES startup check sends a no-op message to validate auth. Use a
+        # verified-recipient address so it works even if we ever drop back
+        # to SES sandbox mode.
+        startup_check_address: 'me@chrisscotmartin.com'
 
     identity_providers:
       oidc:
