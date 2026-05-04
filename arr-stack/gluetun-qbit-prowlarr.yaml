@@ -224,9 +224,11 @@ spec:
             - |
               # Wait for VPN to be ready before starting MouseHole.
               # Without this, MouseHole starts before gluetun establishes the
-              # tunnel and fails to reach MAM on first attempt.
+              # tunnel and fails to reach MAM on first attempt. We check gluetun's
+              # health endpoint on localhost:9999 which reports ready once the
+              # tunnel is established.
               echo "Waiting for VPN connectivity..."
-              until curl -sf https://ipinfo.io/ip >/dev/null 2>&1; do
+              until curl -sf http://localhost:9999 >/dev/null 2>&1; do
                 echo "VPN not ready, retrying in 2s..."
                 sleep 2
               done
