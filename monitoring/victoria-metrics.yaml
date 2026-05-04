@@ -1,0 +1,99 @@
+# Victoria Metrics single-node — TSDB backend for the local monitoring stack.
+# Stands in for Prometheus/Mimir at ~7x lower RAM and ~10x better disk
+# compression, which matters because we're capped at 8GB of Longhorn for
+# metrics.
+#
+# Single replica is fine for a homelab. VM has a clustered mode (vmstorage/
+# vmselect/vminsert) but that's overkill until we're sharding across nodes.
+#
+# Receives Prometheus remote_write at /api/v1/write on port 8428. Alloy
+# (deployed by the k8s-monitoring helm chart) will be pointed here as a
+# second destination during Phase 3 of the migration; until then this just
+# sits empty.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victoria-metrics-storage
+  namespace: monitoring
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoria-metrics
+  namespace: monitoring
+  labels:
+    app: victoria-metrics
+spec:
+  replicas: 1
+  # Recreate (not RollingUpdate) because the PVC is RWO and the new pod
+  # can't attach until the old one releases.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: victoria-metrics
+  template:
+    metadata:
+      labels:
+        app: victoria-metrics
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: victoria-metrics
+          image: victoriametrics/victoria-metrics:v1.108.1
+          args:
+            - -storageDataPath=/storage
+            - -httpListenAddr=:8428
+            # 30d retention matches the disk budget at our cardinality
+            # (~10-15K series). Bump if disk usage stays low after burn-in.
+            - -retentionPeriod=30d
+            # Drop incoming samples whose labels exceed reasonable size —
+            # cheap defense against label-cardinality explosions.
+            - -maxLabelsPerTimeseries=40
+          ports:
+            - containerPort: 8428
+              name: http
+          volumeMounts:
+            - name: storage
+              mountPath: /storage
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8428
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8428
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+      volumes:
+        - name: storage
+          persistentVolumeClaim:
+            claimName: victoria-metrics-storage
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoria-metrics
+  namespace: monitoring
+spec:
+  selector:
+    app: victoria-metrics
+  ports:
+    - name: http
+      port: 8428
+      targetPort: 8428
