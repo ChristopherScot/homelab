@@ -1,15 +1,19 @@
 # qbit_manage: applies per-category share limits to qBittorrent.
 #
 # Why: MAM (and other private trackers) require seed-forever / no-time-limit
-# behavior. qBit's global ratio + max_seeding_time prefs apply to every
-# torrent — including movies/TV which we want to seed for ratio:2/72h
-# and stop. We can't have it both ways at the global level, so we keep
-# globals tuned for movies and let qbit_manage override them per-category.
+# behavior, while public-tracker grabs (movies/TV) should stop at ratio 2.0
+# or 72h to free resources. qBit's globals can't express both, so qbit_manage
+# applies different limits per category.
 #
-# Currently overrides only `books-readarr` (Readarr drops MAM grabs there).
-# The override is "unlimited" (-1, -1, -1) on ratio + seeding time +
-# inactive seeding time — torrents in this category seed indefinitely
-# until removed manually.
+# Globals are now permissive (max_ratio_enabled=false in qbittorrent-prefs):
+# every torrent seeds forever by default. qbit_manage then OVERRIDES to:
+#   - books-readarr / books-mam-seedonly → seed forever (-1/-1/-1)
+#   - movies-radarr / tv-sonarr          → stop at ratio 2.0 or 72h
+#
+# Why this split: previously globals stopped everything at 2.0 and qbit_manage
+# overrode books to seed forever. After disabling the global ratio cap (to
+# protect MAM H&R seeding clocks from premature stops), movies/TV need an
+# explicit cap here instead.
 #
 # Runs every 30 minutes. The check is idempotent — re-applying limits to
 # torrents that already have them is a no-op.
@@ -46,6 +50,7 @@ data:
 
     # Share-limit groups. Each named group matches torrents by category
     # (or tag/tracker) and applies the listed limits. -1 = unlimited.
+    # Lower priority number wins when a torrent matches multiple groups.
     share_limits:
       private-trackers-seed-forever:
         priority: 1
@@ -57,6 +62,22 @@ data:
         max_last_active: -1
         cleanup: false
         resume_torrent_after_change: true
+
+      # Public-tracker grabs from radarr/sonarr — stop seeding once we've
+      # given back 2x what we took, OR after 72h, whichever comes first.
+      # cleanup:false leaves the torrent (paused) in qBit so the *arr apps
+      # don't lose track of it; manual cleanup or qbit retention handles
+      # actual deletion later.
+      public-trackers-stop-at-ratio-or-time:
+        priority: 2
+        categories:
+          - movies-radarr
+          - tv-sonarr
+        max_ratio: 2.0
+        max_seeding_time: 4320     # minutes (72h)
+        max_last_active: -1
+        cleanup: false
+        resume_torrent_after_change: false
 
     # qbit_manage validation requires `directory.root_dir` and at least
     # one entry under `cat` even when we're not using cat_update / orphaned.
