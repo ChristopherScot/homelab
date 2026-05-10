@@ -100,6 +100,21 @@ vault write auth/kubernetes/role/homepage \
   policies="homepage" \
   ttl=1h
 
+# Shelfmark needs both prowlarr API key (under kv/arr/) and qbit creds
+# (under kv/qbittorrent/) to render its settings.json — multi-path role
+# like homepage.
+vault policy write shelfmark - <<EOF
+path "kv/data/arr/api-keys"        { capabilities = ["read"] }
+path "kv/metadata/arr/api-keys"    { capabilities = ["read", "list"] }
+path "kv/data/qbittorrent/*"       { capabilities = ["read"] }
+path "kv/metadata/qbittorrent/*"   { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/shelfmark \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="media" \
+  policies="shelfmark" \
+  ttl=1h
+
 # Human auth: OIDC via Authelia (below). Userpass was a stepping-stone;
 # the root token + unseal keys are the break-glass. Disable userpass if
 # previously enabled.
