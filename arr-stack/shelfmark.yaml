@@ -25,13 +25,17 @@ spec:
         # app's settings.json on every pod start. UI-managed cosmetic keys
         # (theme, language, etc.) are preserved by the deep merge — only
         # the keys we explicitly manage are overwritten.
+        # alpine + apk (~5MB pulled once, cached). The jqlang/jq image is
+        # FROM scratch and has no shell — we need sh for the conditional
+        # default-empty + atomic replace.
         - name: merge-settings
-          image: ghcr.io/jqlang/jq:1.7.1
+          image: alpine:3.20
           command:
             - sh
             - -c
             - |
               set -eu
+              apk add --no-cache jq >/dev/null
               CFG=/config/settings.json
               IN=/managed/settings.json
               [ -f "$CFG" ] || echo '{}' > "$CFG"
