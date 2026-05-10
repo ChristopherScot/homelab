@@ -53,6 +53,7 @@ data:
             - sonarr.home.chrisscotmartin.com
             - radarr.home.chrisscotmartin.com
             - prowlarr.home.chrisscotmartin.com
+            - prowlarr-public.home.chrisscotmartin.com
             - bazarr.home.chrisscotmartin.com
             - qbit.home.chrisscotmartin.com
             - grafana.home.chrisscotmartin.com
