@@ -178,3 +178,18 @@ spec:
   resources:
     requests:
       storage: 1Gi
+---
+# Second Prowlarr instance — handles public trackers via direct WAN,
+# bypassing gluetun so Cloudflare's datacenter-IP blocks don't apply.
+# Longhorn matches the rest of the *arr config convention.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prowlarr-public-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 2Gi

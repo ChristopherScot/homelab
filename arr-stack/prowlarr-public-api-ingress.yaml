@@ -1,0 +1,28 @@
+# Auth-bypassed API endpoint for the public-trackers Prowlarr instance.
+# Mirrors prowlarr-api-ingress.yaml — used by q-stack on pop-os to register
+# itself with this Prowlarr and execute searches. Prowlarr's /api/* endpoints
+# require an X-Api-Key header so this isn't more permissive than the auth'd
+# path; anyone who could reach it could already authenticate via Authelia.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: prowlarr-public-api
+  namespace: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [prowlarr-public-api.home.chrisscotmartin.com]
+      secretName: prowlarr-public-api-tls
+  rules:
+    - host: prowlarr-public-api.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prowlarr-public
+                port:
+                  number: 9696
