@@ -146,6 +146,7 @@ spec:
                 - python3
                 - qbit_manage.py
                 - --run
+                - --web-server=False
                 - --config-file
                 - /config/config.yml
               env:
