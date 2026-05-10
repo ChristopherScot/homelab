@@ -85,10 +85,10 @@ spec:
                       href: https://vault.home.chrisscotmartin.com
                 - Grafana:
                     - abbr: GF
-                      href: https://chrisscotmartin.grafana.net/
+                      href: https://grafana.home.chrisscotmartin.com/
                 - MAM Dashboard:
                     - abbr: MM
-                      href: https://chrisscotmartin.grafana.net/d/mam-stats
+                      href: https://grafana.home.chrisscotmartin.com/d/mam-stats
 
           # Auto-discovered services from ingress annotations show up here.
           # Static service entries (for things without ingresses) can be added.
