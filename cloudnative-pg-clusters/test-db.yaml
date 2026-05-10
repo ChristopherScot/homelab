@@ -1,0 +1,24 @@
+# Tiny single-instance Postgres cluster, just to give CNPG something to
+# manage and satisfy the Argo `pg-clusters` app. Not used by any app.
+# Bump `instances` and resources if you ever want to actually use it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pg-test
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: test-db
+  namespace: pg-test
+spec:
+  instances: 1
+  storage:
+    size: 1Gi
+    storageClass: longhorn
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 512Mi
