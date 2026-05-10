@@ -151,7 +151,9 @@ spec:
   storageClassName: longhorn
   resources:
     requests:
-      storage: 5Gi
+      # 5Gi filled up: processed_books/ keeps a backup copy of every
+      # ingested book + originals + failed imports. 20Gi gives headroom.
+      storage: 20Gi
 ---
 # Ingest folder shared between Shelfmark (writes downloads here) and
 # autocaliweb (watches and imports). RWX so both pods can mount it.
