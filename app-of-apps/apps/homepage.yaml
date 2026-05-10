@@ -74,18 +74,6 @@ spec:
                     - abbr: GH
                       href: https://github.com/ChristopherScot/homelab
             - Cluster:
-                - ArgoCD:
-                    - abbr: AR
-                      href: https://argo.home.chrisscotmartin.com
-                - Longhorn:
-                    - abbr: LH
-                      href: https://longhorn.home.chrisscotmartin.com
-                - Vault:
-                    - abbr: VA
-                      href: https://vault.home.chrisscotmartin.com
-                - Grafana:
-                    - abbr: GF
-                      href: https://grafana.home.chrisscotmartin.com/
                 - MAM Dashboard:
                     - abbr: MM
                       href: https://grafana.home.chrisscotmartin.com/d/mam-stats
