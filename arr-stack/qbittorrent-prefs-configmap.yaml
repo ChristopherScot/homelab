@@ -40,7 +40,7 @@ data:
       "pex": true,
       "lsd": false,
       "add_trackers_enabled": false,
-      "bypass_local_auth": false,
+      "bypass_local_auth": true,
       "bypass_auth_subnet_whitelist_enabled": false,
       "alternative_webui_enabled": false,
       "use_https": false,
