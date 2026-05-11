@@ -91,6 +91,8 @@ spec:
                 path: oidc_jwks.pem
               - key: oidc_vault_client_secret_hashed
                 path: oidc_vault_client_secret_hashed
+              - key: oidc_kavita_client_secret_hashed
+                path: oidc_kavita_client_secret_hashed
         - name: db
           persistentVolumeClaim:
             claimName: authelia-db

@@ -139,6 +139,14 @@ data:
               - preferred_username
               - groups
               - email
+          # Kavita's OIDC role-sync feature reads `groups` from the ID Token
+          # to determine admin vs user role mapping.
+          kavita:
+            id_token_audience_mode: specification
+            id_token:
+              - preferred_username
+              - groups
+              - email
         clients:
           - client_id: vault
             client_name: Vault
@@ -149,6 +157,23 @@ data:
             redirect_uris:
               - https://vault.home.chrisscotmartin.com/ui/vault/auth/oidc/oidc/callback
               - https://vault.home.chrisscotmartin.com/oidc/callback
+            scopes:
+              - openid
+              - profile
+              - groups
+              - email
+            userinfo_signed_response_alg: none
+            token_endpoint_auth_method: client_secret_basic
+
+          - client_id: kavita
+            client_name: Kavita
+            client_secret: '{{ secret "/config/secrets/oidc_kavita_client_secret_hashed" }}'
+            public: false
+            # one_factor matches the book-tier apps (Jellyseerr/Readarr).
+            authorization_policy: one_factor
+            claims_policy: kavita
+            redirect_uris:
+              - https://kavita.home.chrisscotmartin.com/api/account/callback
             scopes:
               - openid
               - profile
