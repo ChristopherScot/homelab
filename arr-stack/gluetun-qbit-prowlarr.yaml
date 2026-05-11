@@ -36,6 +36,35 @@ spec:
       # volume's files are root-owned (the prowlarr container runs PUID/
       # PGID=0; see comment on its env above).
       initContainers:
+        # Render gluetun's auth config from the ConfigMap template, substituting
+        # the API key from the protonvpn-credentials Secret. Goes into an
+        # emptyDir that gluetun mounts at /gluetun/auth/config.toml.
+        - name: render-gluetun-auth
+          image: alpine:3.20
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              sed "s|__API_KEY__|$GLUETUN_API_KEY|" /tmpl/config.toml.tmpl > /out/config.toml
+              chmod 600 /out/config.toml
+          env:
+            - name: GLUETUN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: protonvpn-credentials
+                  key: GLUETUN_API_KEY
+          volumeMounts:
+            - name: gluetun-auth-template
+              mountPath: /tmpl
+            - name: gluetun-auth-rendered
+              mountPath: /out
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
         - name: load-indexer-pack
           image: alpine:3.20
           command:
@@ -91,51 +120,35 @@ spec:
                   - "(ip rule del table 51820; ip -6 rule del table 51820) || true"
           env:
             - name: VPN_SERVICE_PROVIDER
-              value: nordvpn
-            # Switched to WireGuard (NordLynx) because NordVPN's OpenVPN
-            # auth backend started silently rejecting valid service
-            # credentials around Feb 2026 (gluetun issue #3132). The
-            # WireGuard private key for the same account is unaffected
-            # because it goes through a separate auth path. Confirmed
-            # via `curl -u token:<api-token> https://api.nordvpn.com/v1/users/services/credentials`
-            # that the OpenVPN credentials in our Vault match what the
-            # API hands back — they're correct, NordVPN just won't
-            # accept them on the OpenVPN side.
+              value: protonvpn
             - name: VPN_TYPE
               value: wireguard
+            # Proton WG private key from Vault (kv/protonvpn/gluetun).
             - name: WIREGUARD_PRIVATE_KEY
               valueFrom:
                 secretKeyRef:
-                  name: nordvpn-credentials
+                  name: protonvpn-credentials
                   key: WIREGUARD_PRIVATE_KEY
-            # Pin to 3 specific NordVPN servers, all in AS60068 (Datacamp).
-            # Why pinned: MAM tracker session is locked to a small ASN list,
-            # but the dynamicSeedbox API only refreshes IP within an ASN —
-            # not the ASN itself. NordVPN normally load-balances across
-            # dozens of ASNs (M247, Tefincom, PacketHub, etc.), which kills
-            # the MAM session every reconnect. Pinning to 3 servers in one
-            # ASN gives us redundancy without ASN drift.
-            #
-            # If these all go down: pick replacements from
-            # api.nordvpn.com/v1/servers?filters[country_id]=228 and probe
-            # ipinfo.io for ASN — keep it on AS60068 (Datacamp) or AS9009
-            # (M247), both already in our MAM allowlist.
-            # NOTE: NordVPN's WireGuard and OpenVPN server pools have
-            # DIFFERENT hostnames even when on the same physical machine.
-            # us2943-2945 are OpenVPN-only; the corresponding WG servers
-            # in AS60068 (Datacamp) Atlanta are us5109-5113, us6694-6699,
-            # us8192-8194, etc. Picked 3 with confirmed AS60068 IPs.
-            # Pin to ONE server, not three. With three, gluetun reconnects
-            # within minutes and the egress IP drifts (185.187.171.57 ↔
-            # .58 ↔ .59). MAM's dynamicSeedbox API is rate-limited to
-            # ONCE PER HOUR per session, so MouseHole can't keep up with
-            # gluetun's rotation — we end up with "Unrecognized host/
-            # PassKey" tracker errors. One server = one stable IP =
-            # MouseHole only needs to update on a true reconnect.
-            # Failover: if us5109 dies, switch to us5110 or us5111
-            # (both AS60068/Datacamp, both in our MAM allowlist).
-            - name: SERVER_HOSTNAMES
-              value: us5110.nordvpn.com
+            - name: WIREGUARD_ADDRESSES
+              value: 10.2.0.2/32
+            # Pin to one specific Proton server in M247 (AS9009) — already
+            # in MAM's allowlist. One server = stable IP = MouseHole's
+            # dynamicSeedbox only re-runs on a true reconnect.
+            # Failover: any other US M247 server in Proton's bundled list
+            # (US-FL#102, US-CA#321, etc). Verify ASN with ipinfo before
+            # switching.
+            - name: SERVER_NAMES
+              value: US-FL#102
+            - name: VPN_PORT_FORWARDING
+              value: "on"
+            - name: VPN_PORT_FORWARDING_PROVIDER
+              value: protonvpn
+            # Expose gluetun's HTTP API on :8000 so the qBit sync-port
+            # mod (in the qbittorrent sidecar) can poll /v1/portforward.
+            - name: HTTP_CONTROL_SERVER_ADDRESS
+              value: :8000
+            - name: HTTP_CONTROL_SERVER_LOG
+              value: "off"
             - name: TZ
               value: America/New_York
             - name: FIREWALL_OUTBOUND_SUBNETS
@@ -143,12 +156,11 @@ spec:
               # can reach in-cluster services (Sonarr/Radarr at 10.43.x.x and
               # the NAS at 192.168.50.220) without going through the VPN.
               value: 10.42.0.0/16,10.43.0.0/16,192.168.50.0/24
-          envFrom:
-            - secretRef:
-                name: nordvpn-credentials
           volumeMounts:
             - name: gluetun-config
               mountPath: /gluetun
+            - name: gluetun-auth-rendered
+              mountPath: /gluetun/auth
             - name: dev-tun
               mountPath: /dev/net/tun
           ports:
@@ -187,6 +199,15 @@ spec:
               value: America/New_York
             - name: WEBUI_PORT
               value: "8080"
+            # GSP docker-mod polls gluetun's HTTP API and updates qBit's
+            # listen_port whenever Proton rotates the forwarded port.
+            - name: DOCKER_MODS
+              value: ghcr.io/t-anc/gsp-qbittorent-gluetun-sync-port-mod:main
+            - name: GSP_GTN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: protonvpn-credentials
+                  key: GLUETUN_API_KEY
           volumeMounts:
             - name: qbittorrent-config
               mountPath: /config
@@ -389,6 +410,11 @@ spec:
         - name: gluetun-config
           persistentVolumeClaim:
             claimName: gluetun-config
+        - name: gluetun-auth-template
+          configMap:
+            name: gluetun-auth-template
+        - name: gluetun-auth-rendered
+          emptyDir: {}
         - name: qbittorrent-config
           persistentVolumeClaim:
             claimName: qbittorrent-config

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gluetun-auth-template
+  namespace: media
+data:
+  config.toml.tmpl: |
+    [[roles]]
+    name = "qbit-port-sync"
+    routes = ["GET /v1/openvpn/portforwarded", "GET /v1/portforward"]
+    auth = "apikey"
+    apikey = "__API_KEY__"

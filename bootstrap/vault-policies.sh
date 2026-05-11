@@ -100,6 +100,21 @@ vault write auth/kubernetes/role/homepage \
   policies="homepage" \
   ttl=1h
 
+# Gluetun-vpn role lets the in-cluster gluetun sidecar read its WireGuard
+# private key (Proton) and the gluetun HTTP API key. Multi-path because
+# kv/protonvpn/* and kv/gluetun/* are separate.
+vault policy write gluetun-vpn - <<EOF
+path "kv/data/protonvpn/*"     { capabilities = ["read"] }
+path "kv/metadata/protonvpn/*" { capabilities = ["read", "list"] }
+path "kv/data/gluetun/*"       { capabilities = ["read"] }
+path "kv/metadata/gluetun/*"   { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/gluetun-vpn \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="media" \
+  policies="gluetun-vpn" \
+  ttl=1h
+
 # Shelfmark needs both prowlarr API key (under kv/arr/) and qbit creds
 # (under kv/qbittorrent/) to render its settings.json — multi-path role
 # like homepage.
