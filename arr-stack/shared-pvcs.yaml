@@ -62,6 +62,20 @@ spec:
     requests:
       storage: 2Gi
 ---
+# Replaces prowlarr-config-nfs. Configs on Longhorn (sqlite + heavy
+# Definitions cache); NFS reserved for bulk media only.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prowlarr-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 2Gi
+---
 # *arr config PVCs live on Longhorn (block, 3-replica, low-latency) rather
 # than NFS — SQLite workloads suffer 5-50ms per syscall on NFS. The
 # previously-NFS-backed PVCs were retired after migration; underlying
@@ -177,6 +191,20 @@ metadata:
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: synology-nfs
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Replaces shelfmark-config-nfs. Configs go on Longhorn (matches *arr
+# convention); only bulk media stays on NFS.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shelfmark-config-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
   resources:
     requests:
       storage: 1Gi
