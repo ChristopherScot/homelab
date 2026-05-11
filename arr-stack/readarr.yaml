@@ -36,6 +36,11 @@ spec:
               mountPath: /config
             - name: media
               mountPath: /media
+            # Books library lives on its own Longhorn RWX PVC for
+            # SQLite performance — overlay-mounted at /media/books so
+            # Readarr's existing rootfolder config keeps working unchanged.
+            - name: books
+              mountPath: /media/books
           resources:
             requests:
               cpu: 50m
@@ -49,6 +54,9 @@ spec:
         - name: media
           persistentVolumeClaim:
             claimName: media-data
+        - name: books
+          persistentVolumeClaim:
+            claimName: books-longhorn
 ---
 apiVersion: v1
 kind: Service

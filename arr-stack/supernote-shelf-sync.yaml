@@ -143,7 +143,6 @@ spec:
               readOnly: true
             - name: library
               mountPath: /calibre-library
-              subPath: books
           resources:
             requests:
               cpu: 5m

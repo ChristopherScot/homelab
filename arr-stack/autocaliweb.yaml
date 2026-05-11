@@ -45,9 +45,8 @@ spec:
               mountPath: /config
             - name: ingest
               mountPath: /cwa-book-ingest
-            - name: media
+            - name: books
               mountPath: /calibre-library
-              subPath: books
           resources:
             requests:
               cpu: 50m
@@ -79,9 +78,9 @@ spec:
         - name: ingest
           persistentVolumeClaim:
             claimName: acw-ingest-longhorn
-        - name: media
+        - name: books
           persistentVolumeClaim:
-            claimName: media-data
+            claimName: books-longhorn
 ---
 apiVersion: v1
 kind: Service

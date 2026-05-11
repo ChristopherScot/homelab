@@ -55,7 +55,6 @@ spec:
               mountPath: /etc/webdav
             - name: library
               mountPath: /data
-              subPath: books
               readOnly: true
           resources:
             requests:
@@ -69,7 +68,7 @@ spec:
             name: webdav-config
         - name: library
           persistentVolumeClaim:
-            claimName: media-data
+            claimName: books-longhorn
 ---
 apiVersion: v1
 kind: Service
