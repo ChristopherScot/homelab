@@ -45,6 +45,8 @@ spec:
               mountPath: /config
             - name: ingest
               mountPath: /cwa-book-ingest
+            - name: metadata
+              mountPath: /calibre-metadata
             - name: books
               mountPath: /calibre-library
           resources:
@@ -81,6 +83,9 @@ spec:
         - name: ingest
           persistentVolumeClaim:
             claimName: acw-ingest-longhorn
+        - name: metadata
+          persistentVolumeClaim:
+            claimName: autocaliweb-metadata-longhorn
         - name: books
           persistentVolumeClaim:
             claimName: books-longhorn

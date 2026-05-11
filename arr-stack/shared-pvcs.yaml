@@ -169,6 +169,24 @@ spec:
       # ingested book + originals + failed imports. 20Gi gives headroom.
       storage: 20Gi
 ---
+# Calibre metadata.db on RWO Longhorn — SQLite over the NFS-Ganesha
+# share-manager that backs Longhorn RWX adds 30-50ms per pread, which
+# stacks up to seconds per page render and trips the liveness probe.
+# Calibre-Web's built-in split-library feature points its DB here while
+# the book files remain on books-longhorn (RWX, shared with readarr,
+# supernote-shelf-sync, webdav).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: autocaliweb-metadata-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 1Gi
+---
 # Ingest folder shared between Shelfmark (writes downloads here) and
 # autocaliweb (watches and imports). RWX so both pods can mount it.
 # Longhorn (block + share-manager) instead of synology-nfs because the
