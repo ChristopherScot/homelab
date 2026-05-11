@@ -395,6 +395,14 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-body-size: "0"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # Inject the media-cleanup JS into Jellyfin's HTML so admins get a
+    # "Cleanup" button on movie/series detail pages. Clearing Accept-Encoding
+    # forces uncompressed responses so sub_filter can rewrite them.
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Accept-Encoding "";
+      sub_filter '</body>' '<script src="https://media-cleanup.home.chrisscotmartin.com/inject.js"></script></body>';
+      sub_filter_once on;
+      sub_filter_types text/html;
 spec:
   ingressClassName: external
   tls:

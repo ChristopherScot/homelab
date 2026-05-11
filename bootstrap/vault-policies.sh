@@ -130,6 +130,22 @@ vault write auth/kubernetes/role/shelfmark \
   policies="shelfmark" \
   ttl=1h
 
+# Media-cleanup needs arr api keys, jellyfin admin key, jellyseerr admin key
+# to fan out a single delete across cluster + q-stack instances.
+vault policy write media-cleanup - <<EOF
+path "kv/data/arr/*"          { capabilities = ["read"] }
+path "kv/metadata/arr/*"      { capabilities = ["read", "list"] }
+path "kv/data/jellyfin/*"     { capabilities = ["read"] }
+path "kv/metadata/jellyfin/*" { capabilities = ["read", "list"] }
+path "kv/data/jellyseerr/*"   { capabilities = ["read"] }
+path "kv/metadata/jellyseerr/*" { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/media-cleanup \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="media" \
+  policies="media-cleanup" \
+  ttl=1h
+
 # Autocaliweb reads shared SES SMTP transport creds (kv/ses/smtp — host,
 # port, username, password only; sender is hardcoded per-app in the
 # ExternalSecret/init container) to write Calibre-Web's mail_* settings

@@ -1,0 +1,412 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: media-cleanup-app
+  namespace: media
+data:
+  app.py: |
+    """
+    Single-button cleanup for finished media. Given a TMDB or TVDB id, deletes
+    the movie/series from radarr/sonarr (both cluster + q-stack instances),
+    marks the jellyseerr request as declined so it doesn't re-request, and
+    triggers a jellyfin library refresh.
+
+    Endpoints:
+      GET  /              -> status page (recent deletes, config sanity)
+      GET  /inject.js     -> JS injected into jellyfin for the cleanup button
+      POST /delete/movie?tmdb=<id>   -> delete movie everywhere
+      POST /delete/show?tvdb=<id>    -> delete series everywhere
+    """
+    import os, json, time, threading
+    from urllib.parse import urlencode
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    import urllib.request, urllib.error
+
+    R = lambda k: os.environ.get(k, '')
+
+    ARR_TARGETS = {
+        'radarr': [
+            ('cluster', 'http://radarr.media.svc.cluster.local:7878', R('RADARR_KEY')),
+            ('q-stack', 'http://192.168.50.179:7879', R('Q_RADARR_KEY')),
+        ],
+        'sonarr': [
+            ('cluster', 'http://sonarr.media.svc.cluster.local:8989', R('SONARR_KEY')),
+            ('q-stack', 'http://192.168.50.179:8990', R('Q_SONARR_KEY')),
+        ],
+    }
+    JELLYFIN = ('http://jellyfin.media.svc.cluster.local:8096', R('JELLYFIN_KEY'))
+    JELLYSEERR = ('http://jellyseerr.media.svc.cluster.local:5055', R('JELLYSEERR_KEY'))
+
+    HISTORY = []  # last 20 actions
+    HISTORY_LOCK = threading.Lock()
+
+    def http(method, url, headers=None, body=None, timeout=10):
+        req = urllib.request.Request(url, method=method, headers=headers or {})
+        if body is not None:
+            req.data = json.dumps(body).encode()
+            req.add_header('Content-Type', 'application/json')
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                data = r.read()
+                return r.status, (json.loads(data) if data else None)
+        except urllib.error.HTTPError as e:
+            return e.code, {'error': e.read().decode(errors='replace')[:200]}
+        except Exception as e:
+            return 0, {'error': str(e)}
+
+    def arr_find_and_delete(kind, lookup_key, lookup_value):
+        """kind: 'radarr' or 'sonarr'. lookup_key: 'tmdbId' or 'tvdbId'."""
+        results = []
+        path = '/api/v3/movie' if kind == 'radarr' else '/api/v3/series'
+        for name, base, key in ARR_TARGETS[kind]:
+            if not key:
+                results.append({'instance': name, 'skipped': 'no api key'})
+                continue
+            status, items = http('GET', base + path, {'X-Api-Key': key})
+            if status != 200 or not isinstance(items, list):
+                results.append({'instance': name, 'error': f'list status={status}'})
+                continue
+            match = next((m for m in items if m.get(lookup_key) == lookup_value), None)
+            if not match:
+                results.append({'instance': name, 'found': False})
+                continue
+            qs = urlencode({'deleteFiles': 'true', 'addImportExclusion': 'true'})
+            del_url = f'{base}{path}/{match["id"]}?{qs}'
+            dstatus, _ = http('DELETE', del_url, {'X-Api-Key': key})
+            results.append({
+                'instance': name,
+                'found': True,
+                'title': match.get('title'),
+                'deleted': 200 <= dstatus < 300,
+                'status': dstatus,
+            })
+        return results
+
+    def jellyseerr_decline_by_tmdb(tmdb_id, media_type):
+        base, key = JELLYSEERR
+        if not key:
+            return {'skipped': 'no api key'}
+        # Find requests for this tmdb. Jellyseerr's /request endpoint lists by
+        # media; we filter client-side because the filter param is finicky.
+        status, body = http('GET', f'{base}/api/v1/request?take=200', {'X-Api-Key': key})
+        if status != 200:
+            return {'error': f'list status={status}'}
+        matches = [r for r in body.get('results', [])
+                   if r.get('media', {}).get('tmdbId') == tmdb_id
+                   and r.get('media', {}).get('mediaType') == media_type]
+        if not matches:
+            return {'found': 0}
+        out = []
+        for r in matches:
+            rid = r['id']
+            # Delete the request entirely — simpler than declining and avoids
+            # the "auto-approve previously requested" case.
+            ds, _ = http('DELETE', f'{base}/api/v1/request/{rid}', {'X-Api-Key': key})
+            out.append({'id': rid, 'deleted': 200 <= ds < 300, 'status': ds})
+        return {'found': len(matches), 'requests': out}
+
+    def jellyfin_refresh():
+        base, key = JELLYFIN
+        if not key:
+            return {'skipped': 'no api key'}
+        status, _ = http('POST', f'{base}/Library/Refresh', {'X-Emby-Token': key})
+        return {'triggered': 200 <= status < 300, 'status': status}
+
+    def record(action):
+        with HISTORY_LOCK:
+            HISTORY.insert(0, action)
+            del HISTORY[20:]
+
+    INJECT_JS = b"""
+    // media-cleanup: adds a "Cleanup" button to Jellyfin detail pages.
+    (function () {
+      const ORIGIN = 'https://media-cleanup.home.chrisscotmartin.com';
+      const TAG = 'mc-cleanup-btn';
+
+      async function jf(path) {
+        const r = await fetch(path, { credentials: 'include' });
+        if (!r.ok) throw new Error(path + ' -> ' + r.status);
+        return r.json();
+      }
+
+      function currentItemId() {
+        const m = location.hash.match(/[?&]id=([0-9a-f]{32})/i);
+        return m ? m[1] : null;
+      }
+
+      async function onClick() {
+        const itemId = currentItemId();
+        if (!itemId) return alert('No item id in URL');
+        let item;
+        try { item = await jf('/Items/' + itemId); }
+        catch (e) { return alert('Jellyfin lookup failed: ' + e); }
+        const tmdb = item.ProviderIds && item.ProviderIds.Tmdb;
+        const tvdb = item.ProviderIds && item.ProviderIds.Tvdb;
+        const isMovie = item.Type === 'Movie';
+        const isShow  = item.Type === 'Series';
+        if (!isMovie && !isShow) return alert('Not a movie or series');
+        const id = isMovie ? tmdb : tvdb;
+        if (!id) return alert('No ' + (isMovie ? 'TMDB' : 'TVDB') + ' id on this item');
+        if (!confirm('Delete "' + item.Name + '" from radarr/sonarr + remove files + decline future re-requests?')) return;
+        const ep = isMovie ? '/delete/movie?tmdb=' + id : '/delete/show?tvdb=' + id;
+        try {
+          const r = await fetch(ORIGIN + ep, { method: 'POST', credentials: 'include' });
+          const body = await r.json();
+          alert('Cleanup result:\\n' + JSON.stringify(body, null, 2));
+        } catch (e) {
+          alert('Cleanup failed: ' + e);
+        }
+      }
+
+      function injectButton() {
+        if (document.getElementById(TAG)) return;
+        // Jellyfin detail page has a toolbar with .detailButton elements;
+        // pick the first one's parent and append our button.
+        const anchor = document.querySelector('.itemDetailPage:not(.hide) .mainDetailButtons')
+                    || document.querySelector('.itemDetailPage:not(.hide) .detailButton');
+        if (!anchor) return;
+        const host = anchor.parentElement || anchor;
+        const b = document.createElement('button');
+        b.id = TAG;
+        b.className = 'detailButton emby-button';
+        b.style.cssText = 'margin-left:.5em;background:#aa1f1f;color:#fff';
+        b.title = 'media-cleanup';
+        b.innerHTML = '<span class="detailButton-icon material-icons" aria-hidden="true">delete_sweep</span><span class="detailButton-textInside">Cleanup</span>';
+        b.addEventListener('click', onClick);
+        host.appendChild(b);
+      }
+
+      // Jellyfin is an SPA; rescan on every URL hash change.
+      new MutationObserver(injectButton).observe(document.documentElement, {subtree:true, childList:true});
+      window.addEventListener('hashchange', injectButton);
+      injectButton();
+    })();
+    """
+
+    INDEX_HTML = lambda: f"""<!doctype html>
+    <meta charset=utf-8>
+    <title>media-cleanup</title>
+    <style>
+      body{{font-family:system-ui;max-width:880px;margin:2em auto;padding:0 1em;color:#222}}
+      h1{{font-weight:600}}
+      pre{{background:#f4f4f4;padding:1em;border-radius:6px;overflow:auto}}
+    </style>
+    <h1>media-cleanup</h1>
+    <p>POST <code>/delete/movie?tmdb=&lt;id&gt;</code> or <code>/delete/show?tvdb=&lt;id&gt;</code>.</p>
+    <p>JS injected into Jellyfin from <code>/inject.js</code>.</p>
+    <h2>Recent actions</h2>
+    <pre>{json.dumps(HISTORY[:20], indent=2)}</pre>
+    """
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, fmt, *args):
+            print('%s %s' % (self.command, self.path), flush=True)
+
+        def _send_json(self, code, body):
+            data = json.dumps(body, indent=2).encode()
+            self.send_response(code)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(data)))
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_OPTIONS(self):
+            self.send_response(204)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
+            self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+            self.end_headers()
+
+        def do_GET(self):
+            if self.path == '/':
+                html = INDEX_HTML().encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html; charset=utf-8')
+                self.send_header('Content-Length', str(len(html)))
+                self.end_headers()
+                self.wfile.write(html)
+            elif self.path == '/inject.js':
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/javascript; charset=utf-8')
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('Content-Length', str(len(INJECT_JS)))
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.end_headers()
+                self.wfile.write(INJECT_JS)
+            elif self.path == '/healthz':
+                self._send_json(200, {'ok': True})
+            else:
+                self._send_json(404, {'error': 'not found'})
+
+        def do_POST(self):
+            from urllib.parse import urlparse, parse_qs
+            u = urlparse(self.path)
+            qs = parse_qs(u.query)
+            t0 = time.time()
+            if u.path == '/delete/movie':
+                tmdb = qs.get('tmdb', [None])[0]
+                if not tmdb or not tmdb.isdigit():
+                    return self._send_json(400, {'error': 'tmdb required'})
+                tmdb = int(tmdb)
+                result = {
+                    'kind': 'movie',
+                    'tmdb': tmdb,
+                    'radarr': arr_find_and_delete('radarr', 'tmdbId', tmdb),
+                    'jellyseerr': jellyseerr_decline_by_tmdb(tmdb, 'movie'),
+                    'jellyfin': jellyfin_refresh(),
+                    'elapsed_ms': int((time.time() - t0) * 1000),
+                }
+                record(result)
+                return self._send_json(200, result)
+            if u.path == '/delete/show':
+                tvdb = qs.get('tvdb', [None])[0]
+                tmdb = qs.get('tmdb', [None])[0]
+                if not (tvdb and tvdb.isdigit()):
+                    return self._send_json(400, {'error': 'tvdb required'})
+                tvdb = int(tvdb)
+                result = {
+                    'kind': 'show',
+                    'tvdb': tvdb,
+                    'sonarr': arr_find_and_delete('sonarr', 'tvdbId', tvdb),
+                    'jellyseerr': jellyseerr_decline_by_tmdb(int(tmdb), 'tv') if tmdb and tmdb.isdigit() else {'skipped': 'no tmdb id supplied'},
+                    'jellyfin': jellyfin_refresh(),
+                    'elapsed_ms': int((time.time() - t0) * 1000),
+                }
+                record(result)
+                return self._send_json(200, result)
+            self._send_json(404, {'error': 'not found'})
+
+    if __name__ == '__main__':
+        port = int(os.environ.get('PORT', '8080'))
+        print(f'media-cleanup listening on :{port}', flush=True)
+        ThreadingHTTPServer(('0.0.0.0', port), Handler).serve_forever()
+---
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: vault-media-cleanup
+  namespace: media
+spec:
+  provider:
+    vault:
+      server: http://vault.default.svc.cluster.local:8200
+      path: kv
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: media-cleanup
+          serviceAccountRef:
+            name: external-secrets-sa
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: media-cleanup-keys
+  namespace: media
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-media-cleanup
+    kind: SecretStore
+  target:
+    name: media-cleanup-keys
+  data:
+    - secretKey: RADARR_KEY
+      remoteRef: { key: arr/api-keys, property: radarr }
+    - secretKey: SONARR_KEY
+      remoteRef: { key: arr/api-keys, property: sonarr }
+    - secretKey: Q_RADARR_KEY
+      remoteRef: { key: arr/api-keys, property: q_radarr }
+    - secretKey: Q_SONARR_KEY
+      remoteRef: { key: arr/api-keys, property: q_sonarr }
+    - secretKey: JELLYFIN_KEY
+      remoteRef: { key: jellyfin/admin, property: api_key }
+    - secretKey: JELLYSEERR_KEY
+      remoteRef: { key: jellyseerr/admin, property: api_key }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: media-cleanup
+  namespace: media
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: media-cleanup }
+  template:
+    metadata:
+      labels: { app: media-cleanup }
+    spec:
+      containers:
+        - name: app
+          image: python:3.13-alpine
+          command: ["python3", "/app/app.py"]
+          envFrom:
+            - secretRef:
+                name: media-cleanup-keys
+          ports:
+            - containerPort: 8080
+              name: http
+          volumeMounts:
+            - name: app
+              mountPath: /app
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 128Mi }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 10
+      volumes:
+        - name: app
+          configMap:
+            name: media-cleanup-app
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: media-cleanup
+  namespace: media
+spec:
+  selector: { app: media-cleanup }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: media-cleanup
+  namespace: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Forwarded-Method $request_method;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Uri $request_uri;
+      proxy_set_header X-Forwarded-For $remote_addr;
+    nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [media-cleanup.home.chrisscotmartin.com]
+      secretName: media-cleanup-tls
+  rules:
+    - host: media-cleanup.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: media-cleanup
+                port:
+                  number: 80
