@@ -158,8 +158,19 @@ data:
         }
       }
 
-      function injectButton() {
+      let isAdmin = null;
+      async function checkAdmin() {
+        if (isAdmin !== null) return isAdmin;
+        try {
+          const u = await jf('/Users/Me');
+          isAdmin = !!(u.Policy && u.Policy.IsAdministrator);
+        } catch (e) { isAdmin = false; }
+        return isAdmin;
+      }
+
+      async function injectButton() {
         if (document.getElementById(TAG)) return;
+        if (!(await checkAdmin())) return;
         // Jellyfin detail page has a toolbar with .detailButton elements;
         // pick the first one's parent and append our button.
         const anchor = document.querySelector('.itemDetailPage:not(.hide) .mainDetailButtons')

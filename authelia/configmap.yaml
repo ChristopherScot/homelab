@@ -45,6 +45,7 @@ data:
             - books.home.chrisscotmartin.com
             - shelfmark.home.chrisscotmartin.com
             - kavita.home.chrisscotmartin.com
+            - media-cleanup.home.chrisscotmartin.com
           policy: one_factor
           subject:
             - "group:users"
