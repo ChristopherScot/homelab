@@ -57,20 +57,23 @@ spec:
           # (observed: stale inotify state on already-deleted files causing
           # tight reprocess loops). If /login stops answering for ~3 min,
           # kubelet restarts the pod.
+          # /static/favicon.ico is served without auth and doesn't trigger
+          # Flask session/CSRF setup, so it stays cheap during heavy library
+          # scans that previously made /login time out and trip liveness.
           startupProbe:
-            httpGet: { path: /login, port: 8083 }
+            httpGet: { path: /static/favicon.ico, port: 8083 }
             failureThreshold: 30
             periodSeconds: 10
           livenessProbe:
-            httpGet: { path: /login, port: 8083 }
-            failureThreshold: 6
+            httpGet: { path: /static/favicon.ico, port: 8083 }
+            failureThreshold: 10
             periodSeconds: 30
-            timeoutSeconds: 10
+            timeoutSeconds: 30
           readinessProbe:
-            httpGet: { path: /login, port: 8083 }
+            httpGet: { path: /static/favicon.ico, port: 8083 }
             failureThreshold: 3
             periodSeconds: 10
-            timeoutSeconds: 5
+            timeoutSeconds: 10
       volumes:
         - name: config
           persistentVolumeClaim:
