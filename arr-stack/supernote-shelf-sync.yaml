@@ -159,4 +159,4 @@ spec:
             claimName: autocaliweb-config-longhorn
         - name: library
           persistentVolumeClaim:
-            claimName: media-data
+            claimName: books-longhorn
