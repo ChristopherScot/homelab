@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kavita
+  namespace: media
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kavita
+  template:
+    metadata:
+      labels:
+        app: kavita
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: kavita
+          image: jvmilazz0/kavita:latest
+          env:
+            - name: TZ
+              value: America/New_York
+          ports:
+            - containerPort: 5000
+              name: http
+          volumeMounts:
+            - name: config
+              mountPath: /kavita/config
+            - name: books
+              mountPath: /books
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          readinessProbe:
+            httpGet: { path: /, port: 5000 }
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /, port: 5000 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 6
+      volumes:
+        - name: config
+          persistentVolumeClaim:
+            claimName: kavita-config-longhorn
+        - name: books
+          persistentVolumeClaim:
+            claimName: books-longhorn
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kavita
+  namespace: media
+spec:
+  selector:
+    app: kavita
+  ports:
+    - name: http
+      port: 5000
+      targetPort: 5000
