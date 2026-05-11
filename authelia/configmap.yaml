@@ -173,6 +173,9 @@ data:
             authorization_policy: one_factor
             claims_policy: kavita
             redirect_uris:
+              # .NET OpenIdConnectHandler default callback
+              - https://kavita.home.chrisscotmartin.com/signin-oidc
+              # Kavita's own documented callback (kept for safety)
               - https://kavita.home.chrisscotmartin.com/api/account/callback
             scopes:
               - openid
@@ -182,3 +185,4 @@ data:
             userinfo_signed_response_alg: none
             # Kavita's .NET OIDC handler sends client_secret in the POST body.
             token_endpoint_auth_method: client_secret_post
+            pushed_authorization_request_endpoint_auth_method: client_secret_post

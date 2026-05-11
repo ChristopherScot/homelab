@@ -130,6 +130,20 @@ vault write auth/kubernetes/role/shelfmark \
   policies="shelfmark" \
   ttl=1h
 
+# Autocaliweb reads shared SES SMTP transport creds (kv/ses/smtp — host,
+# port, username, password only; sender is hardcoded per-app in the
+# ExternalSecret/init container) to write Calibre-Web's mail_* settings
+# into /config/app.db at pod start.
+vault policy write autocaliweb - <<EOF
+path "kv/data/ses/*"      { capabilities = ["read"] }
+path "kv/metadata/ses/*"  { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/autocaliweb \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="media" \
+  policies="autocaliweb" \
+  ttl=1h
+
 # Human auth: OIDC via Authelia (below). Userpass was a stepping-stone;
 # the root token + unseal keys are the break-glass. Disable userpass if
 # previously enabled.
