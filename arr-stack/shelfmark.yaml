@@ -80,7 +80,7 @@ spec:
       volumes:
         - name: config
           persistentVolumeClaim:
-            claimName: shelfmark-config-nfs
+            claimName: shelfmark-config-longhorn
         - name: ingest
           persistentVolumeClaim:
             claimName: acw-ingest-nfs

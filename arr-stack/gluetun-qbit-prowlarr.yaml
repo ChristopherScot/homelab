@@ -394,7 +394,7 @@ spec:
             claimName: qbittorrent-config
         - name: prowlarr-config
           persistentVolumeClaim:
-            claimName: prowlarr-config-nfs
+            claimName: prowlarr-config-longhorn
         # MouseHole's persistent state (cookie + last-seen-IP cache).
         # Tiny — emptyDir is fine; if the pod restarts, the seed
         # sidecar re-injects the cookie from the Secret.
