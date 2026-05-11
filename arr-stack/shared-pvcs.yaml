@@ -171,14 +171,19 @@ spec:
 ---
 # Ingest folder shared between Shelfmark (writes downloads here) and
 # autocaliweb (watches and imports). RWX so both pods can mount it.
+# Longhorn (block + share-manager) instead of synology-nfs because the
+# Synology NFS class uses `actimeo=600` which caches directory entries
+# for 10 minutes — autocaliweb's polling watcher sees ghost entries for
+# deleted files and gets stuck in an ingest loop that starves the Flask
+# web UI and triggers liveness probe failures → 503s on books.home.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: acw-ingest-nfs
+  name: acw-ingest-longhorn
   namespace: media
 spec:
   accessModes: [ReadWriteMany]
-  storageClassName: synology-nfs
+  storageClassName: longhorn
   resources:
     requests:
       storage: 50Gi
