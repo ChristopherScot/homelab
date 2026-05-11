@@ -1,0 +1,31 @@
+# Argo CD global resource customizations. Ignore CRD-default fields
+# that get injected by admission webhooks but aren't in our git
+# sources, so apps don't sit forever in OutOfSync over cosmetic
+# defaults like ESO's `creationPolicy: Owner` or APIService's
+# `annotations: null`.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: argocd-cm
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: argocd-cm
+    app.kubernetes.io/part-of: argocd
+data:
+  # ExternalSecret CRD: ESO admission webhook fills in default
+  # conversionStrategy/decodingStrategy/metadataPolicy on data
+  # entries, plus creationPolicy/deletionPolicy on target.
+  resource.customizations.ignoreDifferences.external-secrets.io_ExternalSecret: |
+    jsonPointers:
+      - /spec/target/creationPolicy
+      - /spec/target/deletionPolicy
+    jqPathExpressions:
+      - .spec.data[]?.remoteRef.conversionStrategy
+      - .spec.data[]?.remoteRef.decodingStrategy
+      - .spec.data[]?.remoteRef.metadataPolicy
+
+  # APIService: chart renders `annotations:` as null but live has
+  # no annotations key. Cosmetic only.
+  resource.customizations.ignoreDifferences.apiregistration.k8s.io_APIService: |
+    jsonPointers:
+      - /metadata/annotations
