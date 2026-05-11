@@ -16,6 +16,15 @@ spec:
         app: kavita
     spec:
       enableServiceLinks: false
+      # Colocate with autocaliweb so we share the same node as the
+      # books-longhorn-rwo volume Longhorn attaches there.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: autocaliweb
+              topologyKey: kubernetes.io/hostname
       containers:
         - name: kavita
           image: jvmilazz0/kavita:latest
@@ -52,7 +61,7 @@ spec:
             claimName: kavita-config-longhorn
         - name: books
           persistentVolumeClaim:
-            claimName: books-longhorn
+            claimName: books-longhorn-rwo
 ---
 apiVersion: v1
 kind: Service

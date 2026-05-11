@@ -159,4 +159,4 @@ spec:
             claimName: autocaliweb-config-longhorn
         - name: library
           persistentVolumeClaim:
-            claimName: books-longhorn
+            claimName: books-longhorn-rwo

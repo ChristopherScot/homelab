@@ -217,11 +217,26 @@ spec:
     requests:
       storage: 50Gi
 ---
-# Dedicated PVC for the calibre books library (was a subPath of the
-# 2 TiB media-data NFS share). NFS round-trips on every SQLite read
-# made the calibre-web UI sluggish on cold loads; moving to Longhorn
-# block + share-manager keeps it in-cluster with no cross-host caching.
-# 50 GiB headroom for growth.
+# Calibre books library — RWO Longhorn. Was RWX (NFS-Ganesha
+# share-manager) but every SQLite/file op from autocaliweb suffered
+# 30–50 ms per pread, making the UI unusable. Now RWO; all consumers
+# (autocaliweb, readarr, supernote-shelf-sync, webdav, kavita)
+# colocate via podAffinity on whichever non-pop-os node Longhorn
+# attaches this volume to.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: books-longhorn-rwo
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 50Gi
+---
+# Old RWX volume — retained while consumers cut over; remove once
+# verified.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

@@ -22,6 +22,17 @@ spec:
         app: autocaliweb
     spec:
       enableServiceLinks: false
+      # books-longhorn-rwo is RWO; all consumers colocate on this pod via
+      # podAffinity. Pin away from pop-os (already busy hosting docker
+      # workloads and not in the Longhorn pool).
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values: [pop-os]
       containers:
         - name: calibre-web-automated
           image: crocodilestick/calibre-web-automated:latest
@@ -88,7 +99,7 @@ spec:
             claimName: autocaliweb-metadata-longhorn
         - name: books
           persistentVolumeClaim:
-            claimName: books-longhorn
+            claimName: books-longhorn-rwo
 ---
 apiVersion: v1
 kind: Service
