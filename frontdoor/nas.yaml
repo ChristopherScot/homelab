@@ -45,7 +45,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/kubernetes-status: "false"
+    # NAS isn't in-cluster; point status check at ingress-nginx instead.
+    gethomepage.dev/app: "ingress-nginx-controller"
+    gethomepage.dev/namespace: "ingress-nginx"
     gethomepage.dev/name: "Synology NAS"
     gethomepage.dev/description: "DSM web admin"
     gethomepage.dev/group: "Infrastructure"
