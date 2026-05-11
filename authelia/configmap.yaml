@@ -180,4 +180,5 @@ data:
               - groups
               - email
             userinfo_signed_response_alg: none
-            token_endpoint_auth_method: client_secret_basic
+            # Kavita's .NET OIDC handler sends client_secret in the POST body.
+            token_endpoint_auth_method: client_secret_post
