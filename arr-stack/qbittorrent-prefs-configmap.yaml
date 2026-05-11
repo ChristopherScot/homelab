@@ -41,7 +41,10 @@ data:
       "lsd": false,
       "add_trackers_enabled": false,
       "bypass_local_auth": true,
-      "bypass_auth_subnet_whitelist_enabled": false,
+      # Trust the cluster pod CIDR so requests forwarded by ingress-nginx
+      # (after Authelia) skip qBit's own login screen.
+      "bypass_auth_subnet_whitelist_enabled": true,
+      "bypass_auth_subnet_whitelist": "10.42.0.0/16",
       "alternative_webui_enabled": false,
       "use_https": false,
       "web_ui_csrf_protection_enabled": true,
