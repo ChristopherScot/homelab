@@ -188,6 +188,23 @@ spec:
     requests:
       storage: 50Gi
 ---
+# Dedicated PVC for the calibre books library (was a subPath of the
+# 2 TiB media-data NFS share). NFS round-trips on every SQLite read
+# made the calibre-web UI sluggish on cold loads; moving to Longhorn
+# block + share-manager keeps it in-cluster with no cross-host caching.
+# 50 GiB headroom for growth.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: books-longhorn
+  namespace: media
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 50Gi
+---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
