@@ -16,5 +16,9 @@ spec:
     namespace: default
   syncPolicy:
     automated:
-      prune: true
+      # selfHeal but NOT prune — auto-applies new/changed Application CRs
+      # so leaf apps get their spec updates without manual triggers, but a
+      # bad commit (deleted/malformed yaml) can't cascade-delete child
+      # Applications. Manual prune via the Argo UI when truly retiring an
+      # Application from app-of-apps/apps/.
       selfHeal: true
