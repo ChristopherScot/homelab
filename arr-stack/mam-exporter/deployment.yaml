@@ -210,9 +210,12 @@ data:
         if isinstance(ite, dict):
             metrics.append(("mam_invitations", base, num(ite.get("count", 0))))
 
-        # Connectable status (1 = MAM can reach you for incoming connections)
+        # Connectable status (1 = MAM can reach you for incoming connections).
+        # MAM returns the literal string "yes" / "no" for this field — early
+        # versions of this exporter compared against "online" and always
+        # emitted 0 even when sessions were fine.
         if "connectable" in d:
-            metrics.append(("mam_connectable", base, 1.0 if d["connectable"] == "online" else 0.0))
+            metrics.append(("mam_connectable", base, 1.0 if str(d["connectable"]).lower() in ("yes", "online", "1", "true") else 0.0))
 
         # Account age in days
         if "created" in d:
