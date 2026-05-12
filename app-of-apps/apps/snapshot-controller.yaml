@@ -1,0 +1,25 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: snapshot-controller
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: snapshot-controller
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: kube-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # CRDs ship in this app; let them install before resources that
+      # might reference them on the very first sync.
+      - ServerSideApply=true
+      - CreateNamespace=false

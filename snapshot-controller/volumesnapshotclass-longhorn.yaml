@@ -1,0 +1,22 @@
+# VolumeSnapshotClass binding the snapshot-controller to Longhorn's CSI
+# driver. Set as default-class so VolumeSnapshot CRs without an explicit
+# volumeSnapshotClassName get this one.
+#
+# Longhorn supports two snapshot types via the same VolumeSnapshot
+# resource — pick via the `type` parameter:
+#   - "snap" (default): in-volume Longhorn snapshot (fast, stays on the same node)
+#   - "bak": Longhorn backup to the backupstore (slower, durable, cross-cluster)
+#
+# We default to "bak" because the chart's restoreFromSnapshot use case is
+# "recover from disaster", which means we need backups (durable, off-node)
+# not snapshots (volatile, attached to a single volume).
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: longhorn-backup
+  annotations:
+    snapshot.storage.kubernetes.io/is-default-class: "true"
+driver: driver.longhorn.io
+deletionPolicy: Delete
+parameters:
+  type: bak
