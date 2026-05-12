@@ -1,0 +1,56 @@
+# mcp-grafana lets Claude Code query the in-cluster Grafana (and through it
+# Loki + Prometheus datasources) via the Model Context Protocol. The pod
+# stays idle (sleep infinity); Claude shells in per-session with
+#   kubectl exec -n monitoring -i deploy/mcp-grafana -- /app/mcp-grafana stdio
+# so authn is entirely "do you have kubectl creds for this cluster" + the
+# grafana service-account token mounted in the pod.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: mcp-grafana
+  namespace: monitoring
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-monitoring
+    kind: SecretStore
+  target:
+    name: mcp-grafana
+  data:
+    - secretKey: GRAFANA_API_KEY
+      remoteRef:
+        key: grafana-local
+        property: mcp_token
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-grafana
+  namespace: monitoring
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: mcp-grafana }
+  template:
+    metadata:
+      labels: { app: mcp-grafana }
+    spec:
+      containers:
+        - name: mcp-grafana
+          image: grafana/mcp-grafana:0.14.0-alpine
+          # The image's default entrypoint runs mcp-grafana. We override
+          # to sleep so Claude can shell in fresh per session.
+          command: ["sleep", "infinity"]
+          env:
+            - name: GRAFANA_URL
+              value: "http://local-service.monitoring.svc.cluster.local:3000"
+          envFrom:
+            - secretRef:
+                name: mcp-grafana
+          resources:
+            requests: { cpu: 10m, memory: 64Mi }
+            limits:   { memory: 256Mi }
