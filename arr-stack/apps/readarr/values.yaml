@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../_charts/arr-app/values.schema.json
 # No 'latest'/stable tag exists — upstream stable branch has been frozen for
 # years. Develop branch is the de-facto stable.
 name: readarr

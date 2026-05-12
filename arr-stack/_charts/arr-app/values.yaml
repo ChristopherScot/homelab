@@ -9,8 +9,10 @@ name: ""                       # e.g. bazarr — used for resource names + selec
 image: ""                      # full image ref including tag, e.g. lscr.io/linuxserver/bazarr:1.5.6
 port: 80                       # container port (== Service port == Ingress backend port)
 
-# Persistence — one config PVC always; extra PVCs (e.g. media, books) optional.
+# Persistence. Default is one config PVC on Longhorn. Stateless apps
+# (flaresolverr et al.) can opt out by setting config.enabled: false.
 config:
+  enabled: true
   size: 1Gi
   storageClass: longhorn
   # Optional one-time restore. Set to the name of a VolumeSnapshot CR
@@ -25,6 +27,16 @@ config:
   # The PVC stays on the normal `longhorn` storageClass throughout, so
   # there's no rebind dance needed afterward.
   restoreFromSnapshot: ""
+
+# Extra env vars (appended to the baseline PUID/PGID/TZ block).
+# Each entry is a normal envVar — name + (value | valueFrom).
+env: []
+
+# Probes — set to the full probe spec or leave empty.
+probes:
+  liveness: {}
+  readiness: {}
+  startup: {}
 
 # Extra volumes to mount. Each entry creates a volumeMount + volume from an
 # existing PVC (this chart doesn't create extra PVCs — they're shared).

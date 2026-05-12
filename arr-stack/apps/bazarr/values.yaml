@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../_charts/arr-app/values.schema.json
 name: bazarr
 image: lscr.io/linuxserver/bazarr:1.5.6
 port: 6767

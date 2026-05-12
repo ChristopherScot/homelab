@@ -1,0 +1,41 @@
+#!/bin/bash
+# Pre-push hook — regenerate Helm chart values.schema.json files if their
+# corresponding values.yaml changed since the last push, and fail the push
+# if they're out of date in git (so the committed schema always matches the
+# committed values defaults).
+#
+# Install: ./bootstrap/install-hooks.sh
+
+set -euo pipefail
+
+repo_root=$(git rev-parse --show-toplevel)
+cd "$repo_root"
+
+# Each chart directory we want to keep schema'd.
+charts=(arr-stack/_charts/arr-app)
+
+stale=0
+for chart in "${charts[@]}"; do
+  values="$chart/values.yaml"
+  schema="$chart/values.schema.json"
+  [ -f "$values" ] || continue
+
+  # Regenerate into a temp file and diff against the committed schema.
+  tmp=$(mktemp)
+  trap 'rm -f "$tmp"' EXIT
+
+  (cd "$chart" && helm schema >/dev/null 2>&1) || {
+    echo "pre-push: helm schema failed for $chart (is the helm plugin installed?)"
+    echo "  install: helm plugin install https://github.com/losisin/helm-values-schema-json.git --verify=false"
+    exit 1
+  }
+
+  if ! git diff --quiet -- "$schema"; then
+    echo "pre-push: $schema is out of date — values.yaml changed without regenerating the schema."
+    echo "  Run: (cd $chart && helm schema) && git add $schema && git commit --amend --no-edit"
+    stale=1
+  fi
+done
+
+[ $stale -eq 0 ] || exit 1
+exit 0

@@ -1,3 +1,4 @@
+{{- if .Values.config.enabled -}}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -20,3 +21,4 @@ spec:
     kind: VolumeSnapshot
     name: {{ .Values.config.restoreFromSnapshot }}
   {{- end }}
+{{- end }}

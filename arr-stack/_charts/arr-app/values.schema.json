@@ -1,0 +1,113 @@
+{
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "properties": {
+        "affinity": {
+            "type": "object"
+        },
+        "config": {
+            "type": "object",
+            "properties": {
+                "enabled": {
+                    "type": "boolean"
+                },
+                "restoreFromSnapshot": {
+                    "type": "string"
+                },
+                "size": {
+                    "type": "string"
+                },
+                "storageClass": {
+                    "type": "string"
+                }
+            }
+        },
+        "env": {
+            "type": "array"
+        },
+        "extraVolumes": {
+            "type": "array"
+        },
+        "image": {
+            "type": "string"
+        },
+        "ingress": {
+            "type": "object",
+            "properties": {
+                "authelia": {
+                    "type": "string"
+                },
+                "homepage": {
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string"
+                        },
+                        "displayName": {
+                            "type": "string"
+                        },
+                        "enabled": {
+                            "type": "boolean"
+                        },
+                        "icon": {
+                            "type": "string"
+                        },
+                        "widgetKeyVar": {
+                            "type": "string"
+                        },
+                        "widgetType": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "host": {
+                    "type": "string"
+                }
+            }
+        },
+        "name": {
+            "type": "string"
+        },
+        "port": {
+            "type": "integer"
+        },
+        "probes": {
+            "type": "object",
+            "properties": {
+                "liveness": {
+                    "type": "object"
+                },
+                "readiness": {
+                    "type": "object"
+                },
+                "startup": {
+                    "type": "object"
+                }
+            }
+        },
+        "resources": {
+            "type": "object",
+            "properties": {
+                "limits": {
+                    "type": "object",
+                    "properties": {
+                        "memory": {
+                            "type": "string"
+                        }
+                    }
+                },
+                "requests": {
+                    "type": "object",
+                    "properties": {
+                        "cpu": {
+                            "type": "string"
+                        },
+                        "memory": {
+                            "type": "string"
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

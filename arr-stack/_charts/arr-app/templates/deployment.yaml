@@ -35,24 +35,47 @@ spec:
               value: "0"
             - name: TZ
               value: America/New_York
+            {{- range .Values.env }}
+            - {{ toYaml . | nindent 14 | trim }}
+            {{- end }}
           ports:
             - containerPort: {{ .Values.port }}
               name: http
+          {{- with .Values.probes.liveness }}
+          livenessProbe:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+          {{- with .Values.probes.readiness }}
+          readinessProbe:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+          {{- with .Values.probes.startup }}
+          startupProbe:
+{{ toYaml . | indent 12 }}
+          {{- end }}
+          {{- if or .Values.config.enabled .Values.extraVolumes }}
           volumeMounts:
+            {{- if .Values.config.enabled }}
             - name: config
               mountPath: /config
+            {{- end }}
             {{- range .Values.extraVolumes }}
             - name: {{ .name }}
               mountPath: {{ .mountPath }}
             {{- end }}
+          {{- end }}
           resources:
 {{ toYaml .Values.resources | indent 12 }}
+      {{- if or .Values.config.enabled .Values.extraVolumes }}
       volumes:
+        {{- if .Values.config.enabled }}
         - name: config
           persistentVolumeClaim:
             claimName: {{ .Values.name }}-config-longhorn
+        {{- end }}
         {{- range .Values.extraVolumes }}
         - name: {{ .name }}
           persistentVolumeClaim:
             claimName: {{ .claimName }}
         {{- end }}
+      {{- end }}

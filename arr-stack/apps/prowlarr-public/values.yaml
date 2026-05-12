@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../../_charts/arr-app/values.schema.json
 # Second Prowlarr instance dedicated to public indexers.
 #
 # Why two: Cloudflare blocks NordVPN datacenter-exit IPs (error 1006) on

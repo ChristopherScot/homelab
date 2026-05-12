@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=../../_charts/arr-app/values.schema.json
+# FlareSolverr — proxies Prowlarr's requests through a headless browser to
+# bypass Cloudflare's anti-bot challenges. Used by 1337x, EZTV and other
+# CF-protected public indexers.
+#
+# No persistent state, no auth (cluster-internal only, not on any ingress).
+name: flaresolverr
+image: ghcr.io/flaresolverr/flaresolverr:v3.4.6
+port: 8191
+
+config:
+  enabled: false
+
+env:
+  - name: LOG_LEVEL
+    value: info
+  - name: CAPTCHA_SOLVER
+    value: none
+
+# FlareSolverr boots Chrome on each request; readiness is fast but the
+# first request after a long idle can take ~10s.
+probes:
+  readiness:
+    httpGet: { path: /, port: 8191 }
+    initialDelaySeconds: 5
+    periodSeconds: 15
+  liveness:
+    httpGet: { path: /, port: 8191 }
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    failureThreshold: 5
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
