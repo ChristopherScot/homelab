@@ -125,6 +125,13 @@ kind: PersistentVolumeClaim
 metadata:
   name: radarr-config-longhorn
   namespace: media
+  annotations:
+    # Prevent arr-stack from pruning this PVC during the Pattern D migration
+    # to a chart-driven Application — protects against a race where the
+    # raw manifests are deleted from arr-stack's source before the new
+    # bazarr-style Application takes ownership. Remove once radarr's
+    # chart-based Application owns the resource.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: longhorn
