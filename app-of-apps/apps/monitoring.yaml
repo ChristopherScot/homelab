@@ -1,16 +1,10 @@
-# Grafana Cloud Kubernetes monitoring — sends pod logs and cluster metrics to
-# the hosted Grafana Cloud stack. Trimmed compared to the original ad-hoc helm
-# install: no traces (storage exploded last time), no auto-instrumentation,
-# no profiling, no integrations, no cost metrics.
+# Kubernetes monitoring via the grafana/k8s-monitoring helm chart (v4) —
+# Alloy collectors ship pod logs, cluster events, and cluster metrics to
+# the in-cluster VictoriaMetrics + Loki destinations. Grafana Cloud was
+# retired; this stack is local-only now.
 #
-# Chart: grafana/k8s-monitoring v4 (was a major schema rewrite from v1 — top-
-# level shape is now `destinations:` (object map) + per-feature `enabled` and
-# `collector` blocks; collectors must be explicitly enabled too).
-#
-# Credentials: a single Grafana Cloud access token in Vault at kv/grafana-cloud
-# (key `token`) is pulled into the `grafana-cloud-creds` k8s Secret by
-# ExternalSecrets. Both destinations reference it via `auth.passwordKey: token`.
-# Usernames are stack-scoped numeric IDs and are not secret.
+# Chart shape: `destinations:` (object map) + per-feature `enabled` and
+# `collector` blocks; collectors must be explicitly enabled too.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -45,35 +39,10 @@ spec:
           cluster:
             name: homelab
 
-          # Destinations are an object map keyed by name in v4.
-          # The chart's bring-your-own-secret pattern reads username/token/
-          # tenantId/ca/cert/key from the Secret, but url stays in values.
-          # The ExternalSecret-managed Secrets in monitoring/ supply the rest.
+          # Destinations are an object map keyed by name in v4. Local only —
+          # we used to dual-ship to Grafana Cloud, but the cloud stack and
+          # all dependent secrets/tokens have been retired.
           destinations:
-            grafanacloud-metrics:
-              type: prometheus
-              url: https://prometheus-prod-13-prod-us-east-0.grafana.net/api/prom/push
-              auth:
-                type: basic
-                # The chart defaults to reading password from secret.data["password"];
-                # our ESO-managed Secret stores it under key "token" instead.
-                passwordKey: token
-              secret:
-                create: false
-                name: grafana-cloud-metrics
-                namespace: monitoring
-
-            grafanacloud-logs:
-              type: loki
-              url: https://logs-prod-006.grafana.net/loki/api/v1/push
-              auth:
-                type: basic
-                passwordKey: token
-              secret:
-                create: false
-                name: grafana-cloud-logs
-                namespace: monitoring
-
             # No auth on the local destinations — both are cluster-internal
             # ClusterIP services in the same namespace as the collectors.
             local-metrics:
@@ -107,10 +76,24 @@ spec:
               - ingress-nginx
               - kube-system
 
-          # ---- Features: explicitly disabled (so a chart upgrade can't flip
-          # them on without us noticing) ----
+          # Pick up any ServiceMonitor/PodMonitor/Probe CR in any namespace.
+          # Apps express their own scrape config rather than us hand-rolling
+          # Alloy stanzas per app. CRDs are already installed cluster-wide.
+          prometheusOperatorObjects:
+            enabled: true
+
+          # Also scrape pods/services that opt in with the legacy
+          # prometheus.io/scrape annotation set. Covers the arr-stack apps
+          # that don't ship Prometheus Operator CRs.
+          annotationAutodiscovery:
+            enabled: true
+
+          # OTLP receiver (gRPC :4317, HTTP :4318) for push-based telemetry.
+          # Nothing pushes today; left enabled so future OTEL-instrumented
+          # apps can send traces/metrics without another commit. Receivers
+          # are cluster-internal — no ingress, no LAN surface.
           applicationObservability:
-            enabled: false
+            enabled: true
           autoInstrumentation:
             enabled: false
           profiling:

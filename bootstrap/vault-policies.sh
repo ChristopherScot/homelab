@@ -38,20 +38,6 @@ APPS=(
   "jellyseerr|kv/data/jellyseerr/*|media|external-secrets-sa"
 )
 
-# Cross-app role for media: lets the mam-exporter sidecar read the shared
-# grafana-cloud token to push MAM metrics via Prometheus remote_write.
-# Kept separate from the per-app roles above because grafana-cloud lives
-# outside any single arr-stack app's Vault path.
-vault policy write media-grafana-cloud - <<EOF
-path "kv/data/grafana-cloud"     { capabilities = ["read"] }
-path "kv/metadata/grafana-cloud" { capabilities = ["read", "list"] }
-EOF
-vault write auth/kubernetes/role/media-grafana-cloud \
-  bound_service_account_names="external-secrets-sa" \
-  bound_service_account_namespaces="media" \
-  policies="media-grafana-cloud" \
-  ttl=1h
-
 for entry in "${APPS[@]}"; do
   IFS='|' read -r app path ns sa <<<"$entry"
 
@@ -82,12 +68,10 @@ path "kv/data/ses/*"               { capabilities = ["read"] }
 path "kv/metadata/ses/*"           { capabilities = ["read", "list"] }
 EOF
 
-# Monitoring reads grafana-cloud + grafana-local creds, plus shared SES
-# SMTP so Grafana can send alert emails. mcp-grafana and Alloy collectors
-# all bind to the same role via external-secrets-sa in the monitoring ns.
+# Monitoring reads grafana-local creds and shared SES SMTP so Grafana can
+# send alert emails. mcp-grafana and Alloy collectors bind to the same
+# role via external-secrets-sa in the monitoring ns.
 vault policy write monitoring - <<EOF
-path "kv/data/grafana-cloud"     { capabilities = ["read"] }
-path "kv/metadata/grafana-cloud" { capabilities = ["read", "list"] }
 path "kv/data/grafana-local"     { capabilities = ["read"] }
 path "kv/metadata/grafana-local" { capabilities = ["read", "list"] }
 path "kv/data/ses/*"             { capabilities = ["read"] }

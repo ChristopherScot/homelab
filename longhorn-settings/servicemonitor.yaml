@@ -1,0 +1,21 @@
+# Tells Alloy (k8s-monitoring chart, prometheusOperatorObjects feature)
+# to scrape longhorn-backend's /metrics. Exports `longhorn_volume_*`,
+# `longhorn_node_*`, `longhorn_disk_*` — used by the volume-degraded
+# alert rule that emails Chris.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: longhorn-backend
+  namespace: longhorn-system
+  labels:
+    app: longhorn-manager
+spec:
+  namespaceSelector:
+    matchNames: [longhorn-system]
+  selector:
+    matchLabels:
+      app: longhorn-manager
+  endpoints:
+    - port: manager
+      interval: 30s
+      scrapeTimeout: 10s
