@@ -1,25 +1,3 @@
-{{- if .Values.config.restoreFromBackup -}}
-# When restoreFromBackup is set, the PVC needs a dedicated StorageClass
-# carrying the fromBackup parameter so Longhorn provisions a NEW volume
-# pre-populated from the named backup. After restore completes (data is
-# in the volume, not in fromBackup parameter), unset restoreFromBackup
-# in values.yaml and the chart switches back to the plain `longhorn` SC.
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: {{ .Values.name }}-restore-sc
-provisioner: driver.longhorn.io
-allowVolumeExpansion: true
-reclaimPolicy: Delete
-volumeBindingMode: Immediate
-parameters:
-  numberOfReplicas: "3"
-  staleReplicaTimeout: "30"
-  fromBackup: {{ .Values.config.restoreFromBackup | quote }}
-  fsType: ext4
-  dataLocality: disabled
----
-{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -27,7 +5,18 @@ metadata:
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
-  storageClassName: {{ if .Values.config.restoreFromBackup }}{{ .Values.name }}-restore-sc{{ else }}{{ .Values.config.storageClass }}{{ end }}
+  storageClassName: {{ .Values.config.storageClass }}
   resources:
     requests:
       storage: {{ .Values.config.size }}
+  {{- if .Values.config.restoreFromSnapshot }}
+  # CSI VolumeSnapshot dataSource — Longhorn provisions a NEW volume
+  # pre-populated from the named snapshot. Field is immutable on a bound
+  # PVC, but consulted only at provisioning time. After restore completes
+  # the underlying VolumeSnapshot CR can be deleted; this field becomes
+  # a dead pointer with no functional effect, safe to leave in values.yaml.
+  dataSource:
+    apiGroup: snapshot.storage.k8s.io
+    kind: VolumeSnapshot
+    name: {{ .Values.config.restoreFromSnapshot }}
+  {{- end }}

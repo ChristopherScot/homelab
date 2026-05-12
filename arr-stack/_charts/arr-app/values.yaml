@@ -13,11 +13,18 @@ port: 80                       # container port (== Service port == Ingress back
 config:
   size: 1Gi
   storageClass: longhorn
-  # restoreFromBackup: nfs://...?backup=...&volume=...
-  # When set, emits a dedicated StorageClass carrying Longhorn's fromBackup
-  # parameter so the PVC provisions a fresh volume pre-populated from the
-  # named backup. See arr-stack/apps/bazarr/values.yaml for an example.
-  restoreFromBackup: ""
+  # Optional one-time restore. Set to the name of a VolumeSnapshot CR
+  # (in the media namespace) and the PVC will provision a fresh volume
+  # pre-populated from that snapshot. Workflow:
+  #   1. Create a VolumeSnapshotContent CR referencing the Longhorn backup
+  #      URL + a sibling VolumeSnapshot CR that binds to it. Apply both.
+  #   2. Set restoreFromSnapshot here to the VolumeSnapshot name.
+  #   3. Argo provisions the PVC; Longhorn populates from the backup.
+  #   4. After bind verifies, delete the VolumeSnapshot + Content CRs
+  #      (the PVC's dataSource becomes a dead pointer — harmless).
+  # The PVC stays on the normal `longhorn` storageClass throughout, so
+  # there's no rebind dance needed afterward.
+  restoreFromSnapshot: ""
 
 # Extra volumes to mount. Each entry creates a volumeMount + volume from an
 # existing PVC (this chart doesn't create extra PVCs — they're shared).
