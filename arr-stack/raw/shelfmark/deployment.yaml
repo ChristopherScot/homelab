@@ -21,13 +21,12 @@ spec:
     spec:
       enableServiceLinks: false
       initContainers:
-        # Merge GitOps-managed settings (qbit + prowlarr config) into the
-        # app's settings.json on every pod start. UI-managed cosmetic keys
-        # (theme, language, etc.) are preserved by the deep merge — only
-        # the keys we explicitly manage are overwritten.
-        # alpine + apk (~5MB pulled once, cached). The jqlang/jq image is
-        # FROM scratch and has no shell — we need sh for the conditional
-        # default-empty + atomic replace.
+        # Shelfmark stores per-tab settings as separate JSON files under
+        # /config/plugins/. For each managed JSON in /managed/ (rendered
+        # from Vault by the shelfmark-settings ExternalSecret), deep-merge
+        # it into the matching /config/plugins/<name>.json. UI-managed
+        # keys in those files are preserved — only the keys we explicitly
+        # set are overwritten.
         - name: merge-settings
           image: alpine:3.20
           command:
@@ -36,11 +35,14 @@ spec:
             - |
               set -eu
               apk add --no-cache jq >/dev/null
-              CFG=/config/settings.json
-              IN=/managed/settings.json
-              [ -f "$CFG" ] || echo '{}' > "$CFG"
-              jq -s '.[0] * .[1]' "$CFG" "$IN" > "$CFG.new"
-              mv "$CFG.new" "$CFG"
+              mkdir -p /config/plugins
+              for src in /managed/*.json; do
+                name=$(basename "$src")
+                dst="/config/plugins/$name"
+                [ -f "$dst" ] || echo '{}' > "$dst"
+                jq -s '.[0] * .[1]' "$dst" "$src" > "$dst.new"
+                mv "$dst.new" "$dst"
+              done
           volumeMounts:
             - name: config
               mountPath: /config
