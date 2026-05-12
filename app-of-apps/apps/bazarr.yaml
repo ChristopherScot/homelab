@@ -26,6 +26,7 @@ spec:
     server: 'https://kubernetes.default.svc'
     namespace: media
   syncPolicy:
-    automated:
-      prune: true
-      selfHeal: true
+    # automated sync disabled temporarily for data restore from backup —
+    # auto-sync recreates the empty PVC + scales up the deployment before
+    # we can swap in the restored Longhorn volume.
+    {}
