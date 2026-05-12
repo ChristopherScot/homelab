@@ -149,6 +149,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: kavita-config-longhorn
   namespace: media
+  annotations:
+    # Prune=false during chart migration. Remove once kavita's chart-based
+    # Application owns the resource.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: longhorn

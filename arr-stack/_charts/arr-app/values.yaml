@@ -9,12 +9,15 @@ name: ""                       # e.g. bazarr — used for resource names + selec
 image: ""                      # full image ref including tag, e.g. lscr.io/linuxserver/bazarr:1.5.6
 port: 80                       # container port (== Service port == Ingress backend port)
 
-# Persistence. Default is one config PVC on Longhorn. Stateless apps
-# (flaresolverr et al.) can opt out by setting config.enabled: false.
+# Persistence. Default is one config PVC on Longhorn at /config. Stateless
+# apps (flaresolverr et al.) can opt out via config.enabled: false. Apps
+# that look for their state somewhere else (kavita → /kavita/config) override
+# config.mountPath.
 config:
   enabled: true
   size: 1Gi
   storageClass: longhorn
+  mountPath: /config
   # Optional one-time restore. Set to the name of a VolumeSnapshot CR
   # (in the media namespace) and the PVC will provision a fresh volume
   # pre-populated from that snapshot. Workflow:

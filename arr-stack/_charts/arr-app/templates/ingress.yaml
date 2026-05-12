@@ -8,14 +8,18 @@ metadata:
     cert-manager.io/cluster-issuer: letsencrypt-prod
     {{- if and .Values.ingress.homepage .Values.ingress.homepage.enabled }}
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/widget.type: "{{ .Values.ingress.homepage.widgetType }}"
-    gethomepage.dev/widget.url: "http://{{ .Values.name }}.media.svc.cluster.local:{{ .Values.port }}"
-    gethomepage.dev/widget.key: "{{ printf "{{HOMEPAGE_VAR_%s}}" .Values.ingress.homepage.widgetKeyVar }}"
     gethomepage.dev/pod-selector: "app={{ .Values.name }}"
     gethomepage.dev/name: "{{ .Values.ingress.homepage.displayName }}"
     gethomepage.dev/description: "{{ .Values.ingress.homepage.description }}"
     gethomepage.dev/group: "Media"
     gethomepage.dev/icon: "{{ .Values.ingress.homepage.icon }}"
+    {{- if .Values.ingress.homepage.widgetType }}
+    gethomepage.dev/widget.type: "{{ .Values.ingress.homepage.widgetType }}"
+    gethomepage.dev/widget.url: "http://{{ .Values.name }}.media.svc.cluster.local:{{ .Values.port }}"
+    gethomepage.dev/widget.key: "{{ printf "{{HOMEPAGE_VAR_%s}}" .Values.ingress.homepage.widgetKeyVar }}"
+    {{- else }}
+    gethomepage.dev/href: "https://{{ .Values.ingress.host }}"
+    {{- end }}
     {{- end }}
     {{- if ne .Values.ingress.authelia "none" }}
     nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"

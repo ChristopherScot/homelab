@@ -57,11 +57,14 @@ spec:
           volumeMounts:
             {{- if .Values.config.enabled }}
             - name: config
-              mountPath: /config
+              mountPath: {{ .Values.config.mountPath }}
             {{- end }}
             {{- range .Values.extraVolumes }}
             - name: {{ .name }}
               mountPath: {{ .mountPath }}
+              {{- if .readOnly }}
+              readOnly: true
+              {{- end }}
             {{- end }}
           {{- end }}
           resources:

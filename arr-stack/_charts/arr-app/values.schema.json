@@ -11,6 +11,9 @@
                 "enabled": {
                     "type": "boolean"
                 },
+                "mountPath": {
+                    "type": "string"
+                },
                 "restoreFromSnapshot": {
                     "type": "string"
                 },
