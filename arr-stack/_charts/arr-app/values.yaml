@@ -1,0 +1,44 @@
+# Defaults for an arr app. Per-app values.yaml files (in arr-stack/apps/<name>/)
+# override these. Keep this file conservative — every field listed here is one
+# more thing each app has to think about.
+
+# Identity. `name` is required.
+name: ""                       # e.g. bazarr — used for resource names + selectors
+
+# Container
+image: ""                      # full image ref including tag, e.g. lscr.io/linuxserver/bazarr:1.5.6
+port: 80                       # container port (== Service port == Ingress backend port)
+
+# Persistence — one config PVC always; extra PVCs (e.g. media, books) optional.
+config:
+  size: 1Gi
+  storageClass: longhorn
+
+# Extra volumes to mount. Each entry creates a volumeMount + volume from an
+# existing PVC (this chart doesn't create extra PVCs — they're shared).
+extraVolumes: []
+# Example:
+# extraVolumes:
+#   - name: media
+#     mountPath: /media
+#     claimName: media-data
+
+# Ingress
+ingress:
+  host: ""                     # e.g. radarr.home.chrisscotmartin.com
+  authelia: "two_factor"       # "two_factor" | "one_factor" | "none"
+  homepage:                    # gethomepage.dev annotations; omit block to disable
+    enabled: true
+    widgetType: ""             # e.g. radarr — matches gethomepage widget type
+    widgetKeyVar: ""           # HOMEPAGE_VAR_*  env-var name without the wrapper
+    displayName: ""            # e.g. Radarr
+    description: ""
+    icon: ""                   # e.g. radarr.png
+
+# Resources
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    memory: 512Mi

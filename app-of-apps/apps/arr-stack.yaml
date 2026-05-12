@@ -13,6 +13,10 @@ spec:
     path: arr-stack
     directory:
       recurse: true
+      # _charts/ holds Helm templates with Go templating, not raw manifests.
+      # values.yaml files under apps/ are inputs to those templates, also not
+      # raw manifests. Per-app chart-driven Argo Applications consume them.
+      exclude: '{_charts/**,apps/**/values.yaml}'
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: media

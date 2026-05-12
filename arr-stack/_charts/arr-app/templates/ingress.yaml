@@ -1,0 +1,50 @@
+{{- if .Values.ingress.host }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Values.name }}
+  namespace: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    {{- if and .Values.ingress.homepage .Values.ingress.homepage.enabled }}
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/widget.type: "{{ .Values.ingress.homepage.widgetType }}"
+    gethomepage.dev/widget.url: "http://{{ .Values.name }}.media.svc.cluster.local:{{ .Values.port }}"
+    gethomepage.dev/widget.key: "{{ printf "{{HOMEPAGE_VAR_%s}}" .Values.ingress.homepage.widgetKeyVar }}"
+    gethomepage.dev/pod-selector: "app={{ .Values.name }}"
+    gethomepage.dev/name: "{{ .Values.ingress.homepage.displayName }}"
+    gethomepage.dev/description: "{{ .Values.ingress.homepage.description }}"
+    gethomepage.dev/group: "Media"
+    gethomepage.dev/icon: "{{ .Values.ingress.homepage.icon }}"
+    {{- end }}
+    {{- if ne .Values.ingress.authelia "none" }}
+    nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
+    # NOTE: requires `allow-snippet-annotations: "true"` and
+    # `annotations-risk-level: Critical` in the ingress-nginx ConfigMap.
+    # Set out-of-band via kubectl patch; ingress-nginx isn't in git yet.
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Forwarded-Method $request_method;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Uri $request_uri;
+      proxy_set_header X-Forwarded-For $remote_addr;
+    nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+    {{- end }}
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [{{ .Values.ingress.host }}]
+      secretName: {{ .Values.name }}-tls
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Values.name }}
+                port:
+                  number: {{ .Values.port }}
+{{- end }}

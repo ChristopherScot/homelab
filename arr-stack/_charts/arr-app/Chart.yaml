@@ -1,0 +1,5 @@
+apiVersion: v2
+name: arr-app
+description: Minimal chart for the cookie-cutter arr apps (bazarr, radarr, sonarr, readarr, prowlarr-public). Generates Deployment + Service + Ingress + config PVC. Designed for the common shape only — apps with init containers, custom probes, or special networking stay in arr-stack/raw/ as plain manifests.
+type: application
+version: 0.1.0

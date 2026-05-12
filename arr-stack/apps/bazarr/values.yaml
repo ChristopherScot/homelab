@@ -1,0 +1,22 @@
+name: bazarr
+image: lscr.io/linuxserver/bazarr:1.5.6
+port: 6767
+
+config:
+  size: 2Gi
+
+extraVolumes:
+  - name: media
+    mountPath: /media
+    claimName: media-data
+
+ingress:
+  host: bazarr.home.chrisscotmartin.com
+  authelia: two_factor
+  homepage:
+    enabled: true
+    widgetType: bazarr
+    widgetKeyVar: BAZARR_KEY
+    displayName: Bazarr
+    description: Subtitle downloader
+    icon: bazarr.png
