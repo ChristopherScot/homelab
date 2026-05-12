@@ -26,8 +26,6 @@ spec:
     server: 'https://kubernetes.default.svc'
     namespace: media
   syncPolicy:
-    # Temporary: selfHeal + prune disabled while migrating bazarr's PVC
-    # off the bazarr-restore-sc StorageClass onto the default longhorn SC.
-    # Need kubectl-driven scale-to-0 + PVC delete + PV re-bind to stick
-    # without Argo undoing them. Re-enable after migration completes.
-    {}
+    automated:
+      prune: true
+      selfHeal: true

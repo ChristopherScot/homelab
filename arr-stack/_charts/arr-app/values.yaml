@@ -13,6 +13,11 @@ port: 80                       # container port (== Service port == Ingress back
 config:
   size: 1Gi
   storageClass: longhorn
+  # restoreFromBackup: nfs://...?backup=...&volume=...
+  # When set, emits a dedicated StorageClass carrying Longhorn's fromBackup
+  # parameter so the PVC provisions a fresh volume pre-populated from the
+  # named backup. See arr-stack/apps/bazarr/values.yaml for an example.
+  restoreFromBackup: ""
 
 # Extra volumes to mount. Each entry creates a volumeMount + volume from an
 # existing PVC (this chart doesn't create extra PVCs — they're shared).

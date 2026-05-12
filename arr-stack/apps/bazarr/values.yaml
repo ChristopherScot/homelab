@@ -4,11 +4,6 @@ port: 6767
 
 config:
   size: 2Gi
-  # Restored from Longhorn backup backup-382aa5531af74d12 (May 10). Don't
-  # remove this without first migrating the PVC off bazarr-restore-sc —
-  # changing storageClassName on a bound PVC is forbidden; would force
-  # recreate + data loss.
-  restoreFromBackup: 'nfs://192.168.50.77:/media/chris/node2-hdd?backup=backup-382aa5531af74d12&volume=pvc-baf27fef-ebd7-49b3-8a21-be8d5c65762d'
 
 extraVolumes:
   - name: media
