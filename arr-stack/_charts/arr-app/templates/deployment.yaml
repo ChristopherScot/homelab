@@ -16,6 +16,10 @@ spec:
         app: {{ .Values.name }}
     spec:
       enableServiceLinks: false
+      {{- with .Values.affinity }}
+      affinity:
+{{ toYaml . | indent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Values.name }}
           image: {{ .Values.image }}

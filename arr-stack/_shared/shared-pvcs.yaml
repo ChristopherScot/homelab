@@ -101,6 +101,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: readarr-config-longhorn
   namespace: media
+  annotations:
+    # Prune=false during chart migration. Remove once readarr's chart-based
+    # Application owns the resource.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: longhorn

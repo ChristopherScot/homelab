@@ -40,6 +40,15 @@ ingress:
     description: ""
     icon: ""                   # e.g. radarr.png
 
+# Optional scheduling hint. Passed straight through to spec.template.spec.affinity.
+# Example (colocate with another app's pods):
+# affinity:
+#   podAffinity:
+#     requiredDuringSchedulingIgnoredDuringExecution:
+#       - labelSelector: { matchLabels: { app: autocaliweb } }
+#         topologyKey: kubernetes.io/hostname
+affinity: {}
+
 # Resources
 resources:
   requests:
