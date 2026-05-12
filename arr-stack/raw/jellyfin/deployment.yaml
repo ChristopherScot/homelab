@@ -14,15 +14,6 @@ spec:
     metadata:
       labels:
         app: jellyfin
-      annotations:
-        # Disable AppArmor confinement for this container so ffmpeg can open
-        # /dev/dri/renderD128 for VAAPI/QSV hardware transcoding. The
-        # containerd default AppArmor profile (cri-containerd.apparmor.d)
-        # blocks the open even though cgroups + supplementalGroups [44, 110]
-        # would otherwise permit it. Scoped to the jellyfin container only;
-        # seccomp + cgroup device whitelist + capabilities all remain in
-        # force. Smaller blast radius than securityContext.privileged: true.
-        container.apparmor.security.beta.kubernetes.io/jellyfin: unconfined
     spec:
       enableServiceLinks: false
       # hostNetwork so the TV's UDP broadcast on 7359 (and SSDP 1900) reach
@@ -45,6 +36,19 @@ spec:
       containers:
         - name: jellyfin
           image: jellyfin/jellyfin:10.11.8
+          # privileged: true is required for ffmpeg to open /dev/dri/renderD128
+          # for VAAPI/QSV hardware transcoding under containerd's default
+          # security profile. Narrower alternatives tested + ruled out:
+          # - container.apparmor.security.beta.kubernetes.io: unconfined alone
+          #   doesn't fix it (open still EPERM)
+          # - supplementalGroups [44, 110] alone doesn't fix it
+          # The "clean" path is the Intel GPU device plugin (gpu.intel.com/i915
+          # resource request) — leaves privileged off, but adds a cluster-wide
+          # plugin. Skip until/unless there's a second GPU-needing workload.
+          # Blast radius: jellyfin pod is already pinned to pop-os via
+          # nodeSelector, so privileged here doesn't reach other nodes.
+          securityContext:
+            privileged: true
           env:
             - name: TZ
               value: America/New_York
