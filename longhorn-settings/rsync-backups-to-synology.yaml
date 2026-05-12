@@ -42,7 +42,13 @@ spec:
                     exit 1
                   fi
                   mkdir -p /dst/longhorn-backups
-                  rsync -aH --delete --stats \
+                  # -rltD instead of -a: skip preserving owner/group/perms.
+                  # Synology's NFS export squashes root → chown/chmod calls
+                  # fail "Operation not permitted" with -a, spamming logs
+                  # and ultimately failing the job even though data lands.
+                  # Backup blocks are content-addressable; ownership doesn't
+                  # matter, only contents.
+                  rsync -rltDH --delete --stats \
                     /src/ /dst/longhorn-backups/
               volumeMounts:
                 - name: source-node2
