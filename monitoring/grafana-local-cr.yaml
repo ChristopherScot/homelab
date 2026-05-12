@@ -42,6 +42,14 @@ spec:
     spec:
       template:
         spec:
+          # Operator creates local-pvc from the persistentVolumeClaim block
+          # below, but doesn't auto-bind it to the grafana-data volume mount.
+          # Override the volume here so SQLite data (users, dashboards,
+          # service accounts) survives pod restarts.
+          volumes:
+            - name: grafana-data
+              persistentVolumeClaim:
+                claimName: local-pvc
           containers:
             - name: grafana
               env:
