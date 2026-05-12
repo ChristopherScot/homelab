@@ -1,0 +1,27 @@
+# Intel GPU device plugin — exposes /dev/dri/renderD128 to pods that
+# request gpu.intel.com/i915. Lets Jellyfin (and anything else needing
+# VAAPI/QSV transcoding) use the iGPU without privileged: true.
+#
+# Standalone DaemonSet (no operator, no CRDs) — sized for homelab.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: intel-gpu-plugin
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ChristopherScot/homelab
+    targetRevision: HEAD
+    path: intel-gpu-plugin
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: intel-gpu-plugin
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -36,19 +36,6 @@ spec:
       containers:
         - name: jellyfin
           image: jellyfin/jellyfin:10.11.8
-          # privileged: true is required for ffmpeg to open /dev/dri/renderD128
-          # for VAAPI/QSV hardware transcoding under containerd's default
-          # security profile. Narrower alternatives tested + ruled out:
-          # - container.apparmor.security.beta.kubernetes.io: unconfined alone
-          #   doesn't fix it (open still EPERM)
-          # - supplementalGroups [44, 110] alone doesn't fix it
-          # The "clean" path is the Intel GPU device plugin (gpu.intel.com/i915
-          # resource request) — leaves privileged off, but adds a cluster-wide
-          # plugin. Skip until/unless there's a second GPU-needing workload.
-          # Blast radius: jellyfin pod is already pinned to pop-os via
-          # nodeSelector, so privileged here doesn't reach other nodes.
-          securityContext:
-            privileged: true
           env:
             - name: TZ
               value: America/New_York
@@ -77,8 +64,15 @@ spec:
             requests:
               cpu: 200m
               memory: 512Mi
+              # Intel GPU device plugin (intel-gpu-plugin namespace)
+              # whitelists /dev/dri/* for this pod when the resource is
+              # requested. Required because containerd's default device
+              # cgroup blocks /dev/dri/renderD128 open() for non-privileged
+              # hostPath mounts.
+              gpu.intel.com/i915: "1"
             limits:
               memory: 4Gi
+              gpu.intel.com/i915: "1"
           # Jellyfin is heavy on first start (DB init); generous probe delays.
           # `timeoutSeconds: 10` because the default of 1s is too tight: when
           # the NFS-backed media volume gets slow (e.g. syncthing rescanning
