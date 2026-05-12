@@ -1,0 +1,31 @@
+# Bazarr — first Pattern D chart-driven Application.
+#
+# Multi-source: one ref points at the chart, the other carries the values
+# file as a separate source. Argo 2.6+ resolves the $values reference at
+# render time.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bazarr
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: 'https://github.com/ChristopherScot/homelab'
+      targetRevision: HEAD
+      path: arr-stack/_charts/arr-app
+      helm:
+        valueFiles:
+          - $values/arr-stack/apps/bazarr/values.yaml
+    - repoURL: 'https://github.com/ChristopherScot/homelab'
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: media
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

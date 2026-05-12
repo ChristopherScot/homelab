@@ -81,18 +81,9 @@ spec:
 # previously-NFS-backed PVCs were retired after migration; underlying
 # NAS shares are still on the Synology (reclaim=Retain) until manually
 # deleted in DSM.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: bazarr-config-longhorn
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 2Gi
----
+#
+# bazarr-config-longhorn moved into the arr-app Helm chart — it's created
+# by the chart's PVC template per the values.yaml in arr-stack/apps/bazarr/.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
