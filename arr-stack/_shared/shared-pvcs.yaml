@@ -227,6 +227,10 @@ kind: PersistentVolumeClaim
 metadata:
   name: prowlarr-public-config-longhorn
   namespace: media
+  annotations:
+    # Prune=false during chart migration. Remove once prowlarr-public's
+    # chart-based Application owns the resource.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: longhorn
