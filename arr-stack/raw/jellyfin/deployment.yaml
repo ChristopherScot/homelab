@@ -14,6 +14,15 @@ spec:
     metadata:
       labels:
         app: jellyfin
+      annotations:
+        # Disable AppArmor confinement for this container so ffmpeg can open
+        # /dev/dri/renderD128 for VAAPI/QSV hardware transcoding. The
+        # containerd default AppArmor profile (cri-containerd.apparmor.d)
+        # blocks the open even though cgroups + supplementalGroups [44, 110]
+        # would otherwise permit it. Scoped to the jellyfin container only;
+        # seccomp + cgroup device whitelist + capabilities all remain in
+        # force. Smaller blast radius than securityContext.privileged: true.
+        container.apparmor.security.beta.kubernetes.io/jellyfin: unconfined
     spec:
       enableServiceLinks: false
       # hostNetwork so the TV's UDP broadcast on 7359 (and SSDP 1900) reach
