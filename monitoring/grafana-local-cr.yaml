@@ -46,6 +46,10 @@ spec:
           # below, but doesn't auto-bind it to the grafana-data volume mount.
           # Override the volume here so SQLite data (users, dashboards,
           # service accounts) survives pod restarts.
+          # fsGroup chowns the mount to Grafana's runtime UID (472) — without
+          # it, Longhorn mounts as root:root and Grafana can't write.
+          securityContext:
+            fsGroup: 472
           volumes:
             - name: grafana-data
               persistentVolumeClaim:
