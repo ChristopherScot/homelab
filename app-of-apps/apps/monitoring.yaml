@@ -75,6 +75,20 @@ spec:
             excludeNamespaces:
               - ingress-nginx
               - kube-system
+            # Redact common credential shapes before logs reach Loki. The
+            # *arr apps log full URLs including ?apikey=... (upstream bug,
+            # tracked for years); Grafana SA tokens (glsa_...) sometimes
+            # appear in error messages. Pattern: match query-param style
+            # apikey=hex and arbitrary glsa_ tokens.
+            extraLogProcessingStages: |-
+              stage.replace {
+                expression = "apikey=[a-fA-F0-9]{32}"
+                replace    = "apikey=REDACTED"
+              }
+              stage.replace {
+                expression = "glsa_[A-Za-z0-9_]{40,}"
+                replace    = "glsa_REDACTED"
+              }
 
           # Pick up any ServiceMonitor/PodMonitor/Probe CR in any namespace.
           # Apps express their own scrape config rather than us hand-rolling
