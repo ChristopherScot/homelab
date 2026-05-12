@@ -4,6 +4,11 @@ port: 6767
 
 config:
   size: 2Gi
+  # One-time restore from Longhorn backup (Backup CR backup-382aa5531af74d12,
+  # taken 2026-05-10). The Pattern D pilot migration accidentally pruned the
+  # old PVC; this restores May 10 state. Remove this line after restore
+  # completes (volume binds; chart switches back to the plain longhorn SC).
+  restoreFromBackup: 'nfs://192.168.50.77:/media/chris/node2-hdd?backup=backup-382aa5531af74d12&volume=pvc-baf27fef-ebd7-49b3-8a21-be8d5c65762d'
 
 extraVolumes:
   - name: media
