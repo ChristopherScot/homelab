@@ -82,6 +82,23 @@ path "kv/data/ses/*"               { capabilities = ["read"] }
 path "kv/metadata/ses/*"           { capabilities = ["read", "list"] }
 EOF
 
+# Monitoring reads grafana-cloud + grafana-local creds, plus shared SES
+# SMTP so Grafana can send alert emails. mcp-grafana and Alloy collectors
+# all bind to the same role via external-secrets-sa in the monitoring ns.
+vault policy write monitoring - <<EOF
+path "kv/data/grafana-cloud"     { capabilities = ["read"] }
+path "kv/metadata/grafana-cloud" { capabilities = ["read", "list"] }
+path "kv/data/grafana-local"     { capabilities = ["read"] }
+path "kv/metadata/grafana-local" { capabilities = ["read", "list"] }
+path "kv/data/ses/*"             { capabilities = ["read"] }
+path "kv/metadata/ses/*"         { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/monitoring \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="monitoring" \
+  policies="monitoring" \
+  ttl=1h
+
 # homepage reads keys for every app it shows widgets for. Distinct from
 # the per-app roles above because it spans namespaces.
 vault policy write homepage - <<EOF

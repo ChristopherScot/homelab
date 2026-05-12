@@ -55,6 +55,12 @@ spec:
                     secretKeyRef:
                       name: grafana-local-admin
                       key: GF_SECURITY_ADMIN_PASSWORD
+              # SMTP via SES — sender + host + creds injected as GF_SMTP_*
+              # env vars from the ExternalSecret-managed Secret. Grafana's
+              # config maps these to the [smtp] section.
+              envFrom:
+                - secretRef:
+                    name: grafana-smtp
               resources:
                 requests:
                   cpu: 50m
