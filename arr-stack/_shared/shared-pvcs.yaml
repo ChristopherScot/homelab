@@ -235,20 +235,6 @@ spec:
     requests:
       storage: 50Gi
 ---
-# Old RWX volume — retained while consumers cut over; remove once
-# verified.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: books-longhorn
-  namespace: media
-spec:
-  accessModes: [ReadWriteMany]
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 50Gi
----
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
