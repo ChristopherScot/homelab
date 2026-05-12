@@ -1,0 +1,65 @@
+# Mirror Longhorn's NFS backup target (node2-hdd) to the Synology
+# /volume1/media/longhorn-backups/ so we have two physical copies of
+# every backup. Longhorn 1.8 doesn't yet let a single RecurringJob
+# write to multiple targets natively — track upstream
+# https://github.com/longhorn/longhorn/issues/11421 and rip this out
+# once the feature lands.
+#
+# Runs Sunday at 5am, two hours after Longhorn's weekly auto-backup
+# (cron `0 3 * * 0` in this same directory). Two hours is generous —
+# typical homelab backup volume is <10 GB and rsync is incremental, so
+# this usually finishes in seconds.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: longhorn-backup-mirror
+  namespace: longhorn-system
+spec:
+  schedule: "0 5 * * 0"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: rsync
+              image: alpine:3.20
+              command:
+                - sh
+                - -ec
+                - |
+                  apk add -q rsync
+                  # Sanity: source must have content. If node2-hdd is
+                  # mounted but the disk vanished (or fstab failed open
+                  # to an empty mountpoint), rsync --delete would wipe
+                  # the Synology copy. Abort instead.
+                  if [ -z "$(find /src -mindepth 1 -maxdepth 2 -print -quit)" ]; then
+                    echo "FATAL: /src is empty; refusing to mirror to avoid wiping /dst"
+                    exit 1
+                  fi
+                  mkdir -p /dst/longhorn-backups
+                  rsync -aH --delete --stats \
+                    /src/ /dst/longhorn-backups/
+              volumeMounts:
+                - name: source-node2
+                  mountPath: /src
+                  readOnly: true
+                - name: dest-synology
+                  mountPath: /dst
+              resources:
+                requests: { cpu: 10m, memory: 32Mi }
+                limits:   { memory: 256Mi }
+          volumes:
+            - name: source-node2
+              nfs:
+                server: 192.168.50.77
+                path: /media/chris/node2-hdd
+                readOnly: true
+            - name: dest-synology
+              nfs:
+                server: 192.168.50.220
+                path: /volume1/media
