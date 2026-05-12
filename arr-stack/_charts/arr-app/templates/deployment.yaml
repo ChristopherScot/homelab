@@ -19,6 +19,11 @@ spec:
       containers:
         - name: {{ .Values.name }}
           image: {{ .Values.image }}
+          # Run as root because Synology NFS squashes all writes to 'admin'
+          # on the server side; trying to be PUID 1000 inside the container
+          # makes app writes fail when the directory is admin-owned on the
+          # NAS. With PUID=0 the container also writes as root, both sides
+          # end up as the squashed admin user, and writes succeed.
           env:
             - name: PUID
               value: "0"

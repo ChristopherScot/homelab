@@ -113,6 +113,12 @@ kind: PersistentVolumeClaim
 metadata:
   name: sonarr-config-longhorn
   namespace: media
+  annotations:
+    # Prevent arr-stack from pruning this PVC while it migrates to a
+    # chart-driven Application — adoption race would dynamically
+    # reprovision an empty PVC otherwise. Remove once the new Application
+    # owns the resource.
+    argocd.argoproj.io/sync-options: Prune=false
 spec:
   accessModes: [ReadWriteOnce]
   storageClassName: longhorn
