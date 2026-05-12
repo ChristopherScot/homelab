@@ -34,7 +34,9 @@ spec:
           image: registry.k8s.io/sig-storage/snapshot-controller:v8.4.0
           args:
             - "--v=2"
-            - "--leader-election=true"
+            # Single replica — leader election is dead weight (Lease churn,
+            # slower startup). Re-enable if bumping replicas for HA.
+            - "--leader-election=false"
           imagePullPolicy: IfNotPresent
           resources:
             requests:
