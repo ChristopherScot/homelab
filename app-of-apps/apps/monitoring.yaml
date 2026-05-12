@@ -81,12 +81,14 @@ spec:
           # Alloy stanzas per app. CRDs are already installed cluster-wide.
           prometheusOperatorObjects:
             enabled: true
+            collector: alloy-metrics
 
           # Also scrape pods/services that opt in with the legacy
           # prometheus.io/scrape annotation set. Covers the arr-stack apps
           # that don't ship Prometheus Operator CRs.
           annotationAutodiscovery:
             enabled: true
+            collector: alloy-metrics
 
           # OTLP receiver (gRPC :4317, HTTP :4318) for push-based telemetry.
           # Nothing pushes today; left enabled so future OTEL-instrumented
