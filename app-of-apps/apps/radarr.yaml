@@ -1,0 +1,27 @@
+# Radarr — chart-driven Application via arr-app Helm chart.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: radarr
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    - repoURL: 'https://github.com/ChristopherScot/homelab'
+      targetRevision: HEAD
+      path: arr-stack/_charts/arr-app
+      helm:
+        valueFiles:
+          - $values/arr-stack/apps/radarr/values.yaml
+    - repoURL: 'https://github.com/ChristopherScot/homelab'
+      targetRevision: HEAD
+      ref: values
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: media
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

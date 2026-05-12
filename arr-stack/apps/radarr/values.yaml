@@ -1,0 +1,29 @@
+name: radarr
+image: lscr.io/linuxserver/radarr:6.1.1
+port: 7878
+
+config:
+  size: 5Gi
+
+extraVolumes:
+  - name: media
+    mountPath: /media
+    claimName: media-data
+
+ingress:
+  host: radarr.home.chrisscotmartin.com
+  authelia: two_factor
+  homepage:
+    enabled: true
+    widgetType: radarr
+    widgetKeyVar: RADARR_KEY
+    displayName: Radarr
+    description: Movie library manager
+    icon: radarr.png
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
