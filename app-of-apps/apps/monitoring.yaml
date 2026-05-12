@@ -90,12 +90,12 @@ spec:
             enabled: true
             collector: alloy-metrics
 
-          # OTLP receiver (gRPC :4317, HTTP :4318) for push-based telemetry.
-          # Nothing pushes today; left enabled so future OTEL-instrumented
-          # apps can send traces/metrics without another commit. Receivers
-          # are cluster-internal — no ingress, no LAN surface.
+          # OTLP receiver disabled — chart validation requires a traces
+          # destination once enabled, and we have no local Tempo to receive
+          # them after cutting Grafana Cloud. Re-enable + add a Tempo
+          # destination if/when we instrument apps with OpenTelemetry.
           applicationObservability:
-            enabled: true
+            enabled: false
           autoInstrumentation:
             enabled: false
           profiling:
