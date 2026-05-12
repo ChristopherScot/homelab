@@ -1,0 +1,56 @@
+# yaml-language-server: $schema=../../_charts/arr-app/values.schema.json
+name: kavita
+image: jvmilazz0/kavita:latest
+port: 5000
+
+config:
+  size: 2Gi
+  # Kavita expects state at /kavita/config, not the default /config.
+  mountPath: /kavita/config
+
+# Read-only mount of the shared books library.
+extraVolumes:
+  - name: books
+    mountPath: /books
+    claimName: books-longhorn-rwo
+    readOnly: true
+
+# Colocate with autocaliweb so we share the same node as the
+# books-longhorn-rwo volume Longhorn attaches there.
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: autocaliweb
+        topologyKey: kubernetes.io/hostname
+
+probes:
+  readiness:
+    httpGet: { path: /, port: 5000 }
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  liveness:
+    httpGet: { path: /, port: 5000 }
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    failureThreshold: 6
+
+ingress:
+  host: kavita.home.chrisscotmartin.com
+  authelia: one_factor
+  homepage:
+    enabled: true
+    # No widgetType → chart emits gethomepage.dev/href instead of widget
+    # annotations (would otherwise need kavita user/pass plumbed through
+    # Vault + homepage-vars secret).
+    displayName: Kavita
+    description: Read and download books
+    icon: kavita.png
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    memory: 1Gi

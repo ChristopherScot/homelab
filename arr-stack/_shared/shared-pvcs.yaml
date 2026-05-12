@@ -144,22 +144,7 @@ spec:
 ---
 # Kavita config + DB. RWO because Kavita uses SQLite internally and
 # benefits from local-disk performance.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: kavita-config-longhorn
-  namespace: media
-  annotations:
-    # Prune=false during chart migration. Remove once kavita's chart-based
-    # Application owns the resource.
-    argocd.argoproj.io/sync-options: Prune=false
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 2Gi
----
+# kavita-config-longhorn moved into the arr-app Helm chart.
 # Ingest folder shared between Shelfmark (writes downloads here) and
 # autocaliweb (watches and imports). RWX so both pods can mount it.
 # Longhorn (block + share-manager) instead of synology-nfs because the
