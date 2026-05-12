@@ -96,22 +96,7 @@ spec:
     requests:
       storage: 2Gi
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: readarr-config-longhorn
-  namespace: media
-  annotations:
-    # Prune=false during chart migration. Remove once readarr's chart-based
-    # Application owns the resource.
-    argocd.argoproj.io/sync-options: Prune=false
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 5Gi
----
+# readarr-config-longhorn moved into the arr-app Helm chart.
 # sonarr-config-longhorn moved into the arr-app Helm chart.
 # radarr-config-longhorn moved into the arr-app Helm chart.
 apiVersion: v1

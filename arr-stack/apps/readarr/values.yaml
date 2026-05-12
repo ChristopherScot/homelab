@@ -1,0 +1,39 @@
+# No 'latest'/stable tag exists — upstream stable branch has been frozen for
+# years. Develop branch is the de-facto stable.
+name: readarr
+image: lscr.io/linuxserver/readarr:0.4.18-develop
+port: 8787
+
+config:
+  size: 5Gi
+
+extraVolumes:
+  - name: media
+    mountPath: /media
+    claimName: media-data
+  # Books library — overlay-mounted at /media/books so Readarr's existing
+  # rootfolder config keeps working unchanged.
+  - name: books
+    mountPath: /media/books
+    claimName: books-longhorn-rwo
+
+# Colocate with autocaliweb so we share the same node as the
+# books-longhorn-rwo volume Longhorn attaches there.
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: autocaliweb
+        topologyKey: kubernetes.io/hostname
+
+ingress:
+  host: readarr.home.chrisscotmartin.com
+  authelia: one_factor
+  homepage:
+    enabled: true
+    widgetType: readarr
+    widgetKeyVar: READARR_KEY
+    displayName: Readarr
+    description: Book / audiobook manager
+    icon: readarr.png
