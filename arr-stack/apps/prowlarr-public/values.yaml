@@ -1,0 +1,29 @@
+# Second Prowlarr instance dedicated to public indexers.
+#
+# Why two: Cloudflare blocks NordVPN datacenter-exit IPs (error 1006) on
+# many public indexers (1337x, extratorrent, torrentio, etc), so queries
+# from inside gluetun fail with 403 regardless of FlareSolverr. This pod
+# runs OUTSIDE gluetun — indexer queries egress via the home WAN, which
+# Cloudflare doesn't blanket-block. qBit downloads still go through the
+# original gluetun pod, so torrent traffic remains VPN-protected.
+#
+# The original Prowlarr (in raw/gluetun-qbit-prowlarr/) keeps MAM and any
+# other private/IP-locked indexers — those expect a stable VPN IP and
+# would break if moved.
+name: prowlarr-public
+image: lscr.io/linuxserver/prowlarr:2.3.5
+port: 9696
+
+config:
+  size: 2Gi
+
+ingress:
+  host: prowlarr-public.home.chrisscotmartin.com
+  authelia: two_factor
+  homepage:
+    enabled: true
+    widgetType: prowlarr
+    widgetKeyVar: PROWLARR_PUBLIC_KEY
+    displayName: Prowlarr (public)
+    description: Indexer manager (public trackers, direct WAN)
+    icon: prowlarr.png
