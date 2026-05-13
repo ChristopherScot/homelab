@@ -158,6 +158,7 @@ data:
             redirect_uris:
               - https://vault.home.chrisscotmartin.com/ui/vault/auth/oidc/oidc/callback
               - https://vault.home.chrisscotmartin.com/oidc/callback
+              - http://localhost:8250/oidc/callback
             scopes:
               - openid
               - profile
