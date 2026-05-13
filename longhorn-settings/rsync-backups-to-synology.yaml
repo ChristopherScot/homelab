@@ -48,7 +48,12 @@ spec:
                   # and ultimately failing the job even though data lands.
                   # Backup blocks are content-addressable; ownership doesn't
                   # matter, only contents.
+                  # Exclude lost+found: ext4 reserves it owned by root with
+                  # restricted perms, so rsync running as non-root gets
+                  # EACCES trying to opendir() it and exits 23 even though
+                  # all other data transferred fine.
                   rsync -rltDH --delete --stats \
+                    --exclude='lost+found' \
                     /src/ /dst/longhorn-backups/
               volumeMounts:
                 - name: source-node2
