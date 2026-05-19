@@ -79,6 +79,20 @@ spec:
                   memory: 256Mi
                 limits:
                   memory: 512Mi
+              # Matches the upstream grafana helm chart defaults. The
+              # operator only sets a readinessProbe by default, which
+              # removes the pod from Service endpoints on failure but
+              # never restarts it — so a wedged process (e.g. sqlite
+              # stuck replaying a journal after a node flap) can sit
+              # broken indefinitely. Liveness with a generous threshold
+              # only trips on truly hung processes, not transient blips.
+              livenessProbe:
+                httpGet:
+                  path: /api/health
+                  port: 3000
+                initialDelaySeconds: 60
+                timeoutSeconds: 30
+                failureThreshold: 10
   persistentVolumeClaim:
     spec:
       accessModes: [ReadWriteOnce]
