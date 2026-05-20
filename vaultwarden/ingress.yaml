@@ -43,6 +43,12 @@ spec:
           - path: /events
             pathType: Prefix
             backend: { service: { name: vaultwarden, port: { number: 80 } } }
+          # Reachability/health probe the mobile + browser clients hit
+          # before login — must bypass Authelia or the client gets a 302
+          # to the login page (HTML) instead of a clean response and errors.
+          - path: /alive
+            pathType: Prefix
+            backend: { service: { name: vaultwarden, port: { number: 80 } } }
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
