@@ -22,3 +22,31 @@ spec:
     initdb:
       database: vaultwarden
       owner: vaultwarden
+  # Continuous backup to S3 (Barman) — offsite copy of the password vault.
+  # s3://cscot-homelab-pg-backups/vaultwarden. Creds from the
+  # vaultwarden-db-backup-s3 secret (ExternalSecret ← kv/cnpg-backups/s3).
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://cscot-homelab-pg-backups/vaultwarden"
+      s3Credentials:
+        accessKeyId:
+          name: vaultwarden-db-backup-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: vaultwarden-db-backup-s3
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+    retentionPolicy: "30d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: vaultwarden-db-daily
+  namespace: vaultwarden
+spec:
+  # CNPG 6-field cron (sec min hour dom mon dow) — 04:30 daily.
+  schedule: "0 30 4 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: vaultwarden-db

@@ -169,11 +169,15 @@ vault write auth/kubernetes/role/autocaliweb \
 # Paperless share/notify). Re-write here (not in the APPS loop) because the
 # loop only grants a single path; sender addresses are hardcoded per-app in
 # each SMTP ExternalSecret, not in Vault.
+# vaultwarden + paperless also read kv/cnpg-backups/* — the shared S3
+# creds their CNPG clusters use for continuous backup to S3 (Barman).
 vault policy write vaultwarden - <<EOF
 path "kv/data/vaultwarden/*"     { capabilities = ["read"] }
 path "kv/metadata/vaultwarden/*" { capabilities = ["read", "list"] }
 path "kv/data/ses/*"             { capabilities = ["read"] }
 path "kv/metadata/ses/*"         { capabilities = ["read", "list"] }
+path "kv/data/cnpg-backups/*"     { capabilities = ["read"] }
+path "kv/metadata/cnpg-backups/*" { capabilities = ["read", "list"] }
 EOF
 vault write auth/kubernetes/role/vaultwarden \
   bound_service_account_names="external-secrets-sa" \
@@ -186,6 +190,8 @@ path "kv/data/paperless/*"     { capabilities = ["read"] }
 path "kv/metadata/paperless/*" { capabilities = ["read", "list"] }
 path "kv/data/ses/*"           { capabilities = ["read"] }
 path "kv/metadata/ses/*"       { capabilities = ["read", "list"] }
+path "kv/data/cnpg-backups/*"     { capabilities = ["read"] }
+path "kv/metadata/cnpg-backups/*" { capabilities = ["read", "list"] }
 EOF
 vault write auth/kubernetes/role/paperless \
   bound_service_account_names="external-secrets-sa" \

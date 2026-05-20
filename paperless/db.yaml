@@ -22,3 +22,35 @@ spec:
     initdb:
       database: paperless
       owner: paperless
+  # Continuous backup to S3 (Barman): WAL archiving + base backups to
+  # s3://cscot-homelab-pg-backups/paperless. Creds from the
+  # paperless-db-backup-s3 secret (ExternalSecret ← kv/cnpg-backups/s3).
+  # This is the offsite copy of the document *metadata* (the media files
+  # are backed up at the Longhorn layer). Restore via a `recovery`
+  # bootstrap pointing at this objectStore.
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://cscot-homelab-pg-backups/paperless"
+      s3Credentials:
+        accessKeyId:
+          name: paperless-db-backup-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: paperless-db-backup-s3
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+    retentionPolicy: "30d"
+---
+# Daily base backup (WAL is archived continuously between these).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: paperless-db-daily
+  namespace: paperless
+spec:
+  # CNPG uses a 6-field cron (sec min hour dom mon dow) — 04:00 daily.
+  schedule: "0 0 4 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: paperless-db
