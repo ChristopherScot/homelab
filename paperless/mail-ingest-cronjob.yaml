@@ -1,0 +1,41 @@
+# Polls S3 every 5 min for emails SES delivered to docs.chrisscotmartin.com,
+# extracts attachments, and POSTs them to Paperless with owner set by
+# recipient address. The AWS creds are bucket-scoped; the Paperless API
+# token is admin-scoped (so it can set arbitrary owners).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: paperless-mail-ingest
+  namespace: paperless
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid          # never overlap runs
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 240      # kill a run that hangs
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: ingest
+              image: python:3.12-slim
+              command:
+                - sh
+                - -c
+                - 'pip install --quiet --no-cache-dir boto3 requests && exec python /script/ingest.py'
+              envFrom:
+                - secretRef:
+                    name: paperless-s3-inbound
+              volumeMounts:
+                - name: script
+                  mountPath: /script
+              resources:
+                requests: { cpu: 25m, memory: 64Mi }
+                limits: { memory: 256Mi }
+          volumes:
+            - name: script
+              configMap:
+                name: paperless-mail-ingest-script

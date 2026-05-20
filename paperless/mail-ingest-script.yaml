@@ -1,0 +1,101 @@
+# Poller script for paperless-mail-ingest. Reads raw emails SES delivered
+# to S3, extracts attachments, POSTs them to the Paperless API with the
+# owner derived from the recipient address, then deletes the processed
+# object. Idempotent: only deletes after a successful upload.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperless-mail-ingest-script
+  namespace: paperless
+data:
+  ingest.py: |
+    #!/usr/bin/env python3
+    import email, os, re, sys
+    from email import policy
+    import boto3, requests
+
+    BUCKET = os.environ["S3_BUCKET"]
+    PREFIX = os.environ.get("S3_PREFIX", "inbound/")
+    PAPERLESS = "http://paperless-paperless-ngx:8000"
+    TOKEN = os.environ["PAPERLESS_API_TOKEN"]
+    HDRS = {"Authorization": f"Token {TOKEN}"}
+
+    # Recipient localpart -> Paperless username. Matches docs+chris@,
+    # chris@docs..., etc. Default owner if nothing matches.
+    OWNER_MAP = {"chris": "chris", "vanessa": "vanessa"}
+    DEFAULT_OWNER = "chris"
+
+    s3 = boto3.client("s3")
+
+    def owner_for(msg):
+        # Check To/Cc/Delivered-To for a known localpart or +tag.
+        addrs = []
+        for h in ("delivered-to", "to", "cc", "x-original-to"):
+            addrs += msg.get_all(h, [])
+        blob = " ".join(addrs).lower()
+        for key, user in OWNER_MAP.items():
+            # match key as +tag (docs+chris@) or as localpart (chris@docs)
+            if re.search(rf"(\+{key}@|\b{key}@)", blob):
+                return user
+        return DEFAULT_OWNER
+
+    _uid_cache = {}
+    def user_id(username):
+        if username in _uid_cache:
+            return _uid_cache[username]
+        r = requests.get(f"{PAPERLESS}/api/users/?username__iexact={username}",
+                         headers=HDRS, timeout=30)
+        r.raise_for_status()
+        results = r.json().get("results", [])
+        uid = results[0]["id"] if results else None
+        _uid_cache[username] = uid
+        return uid
+
+    def post_document(content, filename, owner_username):
+        uid = user_id(owner_username)
+        data = {}
+        if uid is not None:
+            data["owner"] = uid
+        files = {"document": (filename, content)}
+        r = requests.post(f"{PAPERLESS}/api/documents/post_document/",
+                          headers=HDRS, data=data, files=files, timeout=120)
+        r.raise_for_status()
+        return r.text.strip()
+
+    def process(key):
+        obj = s3.get_object(Bucket=BUCKET, Key=key)
+        raw = obj["Body"].read()
+        msg = email.message_from_bytes(raw, policy=policy.default)
+        owner = owner_for(msg)
+        n = 0
+        for part in msg.iter_attachments():
+            fn = part.get_filename() or "attachment.bin"
+            payload = part.get_payload(decode=True)
+            if not payload:
+                continue
+            post_document(payload, fn, owner)
+            print(f"  posted {fn} -> owner={owner}", flush=True)
+            n += 1
+        return n
+
+    def main():
+        paginator = s3.get_paginator("list_objects_v2")
+        total_objs = total_docs = 0
+        for page in paginator.paginate(Bucket=BUCKET, Prefix=PREFIX):
+            for o in page.get("Contents", []):
+                key = o["Key"]
+                if key.endswith("/"):
+                    continue
+                try:
+                    docs = process(key)
+                    s3.delete_object(Bucket=BUCKET, Key=key)
+                    total_objs += 1
+                    total_docs += docs
+                    print(f"processed {key}: {docs} doc(s), deleted", flush=True)
+                except Exception as e:
+                    # leave the object in place for the next run; log + continue
+                    print(f"ERROR {key}: {e}", file=sys.stderr, flush=True)
+        print(f"done: {total_objs} email(s), {total_docs} document(s)", flush=True)
+
+    if __name__ == "__main__":
+        main()
