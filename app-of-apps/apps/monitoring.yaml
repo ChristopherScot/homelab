@@ -127,6 +127,12 @@ spec:
           hostMetrics:
             enabled: true
             collector: alloy-metrics
+            # linuxHosts is the switch that actually wires Alloy to
+            # discover + scrape the node-exporter DaemonSet. hostMetrics.enabled
+            # alone only renders an empty feature stub; without this the
+            # DaemonSet runs but nothing scrapes it (verified via helm template).
+            linuxHosts:
+              enabled: true
 
           # ---- Collectors ----
           # alloy-metrics: single-replica deployment avoids the clustering
