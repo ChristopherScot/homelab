@@ -45,10 +45,15 @@ spec:
             externalTrafficPolicy: Local
             annotations:
               metallb.universe.tf/loadBalancerIPs: "192.168.50.231"
+          # Admission webhook disabled: its kube-webhook-certgen Helm hook
+          # job repeatedly wedged Argo's hook tracking (job Completed but
+          # Argo stayed "waiting for completion of hook" forever, so the
+          # controller resources never applied). For a single-purpose
+          # public controller serving one hand-written ingress, the
+          # submission-time ingress validation it provides isn't worth the
+          # sync fragility.
           admissionWebhooks:
-            enabled: true
-            patch:
-              enabled: true
+            enabled: false
           watchNamespaces: ""
           resources:
             requests:
