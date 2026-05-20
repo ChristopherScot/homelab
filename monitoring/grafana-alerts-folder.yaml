@@ -10,4 +10,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: local
+  # Pin to the pre-existing folder UID so the operator adopts it in place
+  # rather than minting a new folder (which orphaned the rule groups).
+  uid: afml6cskiwdtsc
   title: monitoring

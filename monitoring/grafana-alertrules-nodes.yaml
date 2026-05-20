@@ -9,7 +9,7 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: local
-  folderRef: monitoring
+  folderUID: afml6cskiwdtsc
   interval: 60s
   rules:
     - uid: bfmla7jjzcdtsa
