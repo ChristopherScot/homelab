@@ -1,0 +1,32 @@
+# PUBLIC ingress — class "public" routes via the dedicated public
+# controller (192.168.50.231), the only IP the router forwards 443 to.
+# No Authelia: ntfy enforces its own token auth (deny-all), and the phone
+# app / Grafana / HA can't follow a forward-auth redirect anyway.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ntfy
+  namespace: ntfy
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # ntfy needs large bodies for attachments + long-lived connections for
+    # the streaming subscribe endpoint.
+    nginx.ingress.kubernetes.io/proxy-body-size: "15m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+spec:
+  ingressClassName: public
+  tls:
+    - hosts: [ntfy.chrisscotmartin.com]
+      secretName: ntfy-tls
+  rules:
+    - host: ntfy.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ntfy
+                port:
+                  number: 80
