@@ -101,15 +101,6 @@ spec:
                 initialDelaySeconds: 60
                 timeoutSeconds: 30
                 failureThreshold: 10
-  # Retained for rollback only — Grafana no longer mounts this (state is
-  # in Postgres). Delete once the PG backend is proven stable.
-  persistentVolumeClaim:
-    spec:
-      accessModes: [ReadWriteOnce]
-      storageClassName: longhorn
-      resources:
-        requests:
-          storage: 1Gi
   service:
     spec:
       type: ClusterIP
