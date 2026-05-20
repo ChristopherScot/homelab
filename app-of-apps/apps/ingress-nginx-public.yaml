@@ -1,0 +1,66 @@
+# Second, dedicated ingress-nginx controller for PUBLIC (internet-facing)
+# exposure. Isolation is the whole point:
+#   - its own MetalLB IP (192.168.50.231) — the ONLY IP the router forwards
+#     443 to. The private controller (.225, all the *.home services) is
+#     never internet-reachable.
+#   - its own ingressClass "public"; watchIngressWithoutClass=false, so it
+#     serves ONLY ingresses that explicitly opt in with class "public".
+#     Right now that's ntfy and nothing else. A request to .231 with
+#     Host: grafana.home... 404s here (no such ingress on this controller).
+#   - separate namespace + election/webhook names so it doesn't collide
+#     with the existing ingress-nginx release.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx-public
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://kubernetes.github.io/ingress-nginx
+    chart: ingress-nginx
+    targetRevision: 4.15.1
+    helm:
+      releaseName: ingress-nginx-public
+      values: |
+        controller:
+          ingressClassResource:
+            default: false
+            name: public
+            controllerValue: "k8s.io/ingress-nginx-public"
+          ingressClass: public
+          # Only serve ingresses explicitly in the "public" class.
+          watchIngressWithoutClass: false
+          electionID: ingress-nginx-public-leader
+          config:
+            # Public-facing hardening.
+            hsts: "true"
+            hsts-include-subdomains: "false"
+            server-tokens: "false"
+            # Drop unknown-host requests instead of serving a default backend,
+            # so probing the IP with a random Host gets nothing useful.
+            ssl-reject-handshake: "true"
+          service:
+            type: LoadBalancer
+            externalTrafficPolicy: Local
+            annotations:
+              metallb.universe.tf/loadBalancerIPs: "192.168.50.231"
+          admissionWebhooks:
+            enabled: true
+            patch:
+              enabled: true
+          watchNamespaces: ""
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ingress-nginx-public
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

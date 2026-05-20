@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ntfy-server-config
+  namespace: ntfy
+data:
+  server.yml: |
+    # Public base URL — must match the public DNS name + be https.
+    base-url: "https://ntfy.chrisscotmartin.com"
+
+    # Listen plain HTTP on 80; TLS is terminated at the public ingress.
+    listen-http: ":80"
+
+    # Auth: closed by default. Nothing reads or publishes without a token
+    # grant, even though the server is internet-reachable. Topic ACLs are
+    # managed via `ntfy access` (set up out-of-band, stored in Vault).
+    auth-file: "/var/lib/ntfy/user.db"
+    auth-default-access: "deny-all"
+
+    # Message + attachment store.
+    cache-file: "/var/lib/ntfy/cache.db"
+    cache-duration: "12h"
+    attachment-cache-dir: "/var/lib/ntfy/attachments"
+    attachment-total-size-limit: "1G"
+    attachment-file-size-limit: "15M"
+
+    # FCM/APNS push via ntfy.sh's upstream relay — this is what makes phone
+    # delivery work in deep sleep without the app holding an open socket.
+    # The phone subscribes through ntfy.sh's Firebase; only a poll token is
+    # shared upstream, not message content for restricted topics.
+    upstream-base-url: "https://ntfy.sh"
+
+    # Don't let randoms self-register on a public instance.
+    enable-signup: false
+    enable-login: true
+    # Web UI app is fine; reservations let chris own topic names.
+    enable-reset: false
+
+    # Rate limits — defend the public endpoint from abuse.
+    visitor-request-limit-burst: 60
+    visitor-request-limit-replenish: "10s"
+    visitor-message-daily-limit: 0
+    visitor-subscription-limit: 30
+
+    behind-proxy: true
+    log-level: "info"
