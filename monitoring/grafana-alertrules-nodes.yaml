@@ -9,10 +9,10 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: local
-  folderUID: afml6cskiwdtsc
+  folderRef: monitoring
   interval: 60s
   rules:
-    - uid: bfmla7jjzcdtsa
+    - uid: bfmla7jjzcdtsacr
       title: Node root disk almost full
       condition: B
       for: 10m
@@ -38,7 +38,7 @@ spec:
             maxDataPoints: 43200
             conditions:
               - evaluator: { type: gt, params: [85] }
-    - uid: cfmld7mw9c5j4e
+    - uid: cfmld7mw9c5j4ecr
       title: Pod container crash looping
       condition: B
       for: 15m

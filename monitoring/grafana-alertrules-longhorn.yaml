@@ -11,10 +11,10 @@ spec:
   instanceSelector:
     matchLabels:
       dashboards: local
-  folderUID: afml6cskiwdtsc
+  folderRef: monitoring
   interval: 60s
   rules:
-    - uid: dfml6mxpjk8owe
+    - uid: dfml6mxpjk8owecr
       title: Longhorn volume not healthy
       condition: B
       for: 10m
@@ -40,7 +40,7 @@ spec:
             maxDataPoints: 43200
             conditions:
               - evaluator: { type: gt, params: [0] }
-    - uid: cfml6nlv6pmgwd
+    - uid: cfml6nlv6pmgwdcr
       title: Longhorn backup in error state
       condition: B
       for: 10m
@@ -66,7 +66,7 @@ spec:
             maxDataPoints: 43200
             conditions:
               - evaluator: { type: gt, params: [0] }
-    - uid: dfml6o97a28zkc
+    - uid: dfml6o97a28zkccr
       title: Longhorn auto-backup hasn't succeeded in >8 days
       condition: B
       for: 10m
@@ -92,7 +92,7 @@ spec:
             maxDataPoints: 43200
             conditions:
               - evaluator: { type: gt, params: [691200] }
-    - uid: bfml6ovsgi9dsb
+    - uid: bfml6ovsgi9dsbcr
       title: Backup mirror to Synology hasn't succeeded in >8 days
       condition: B
       for: 10m
