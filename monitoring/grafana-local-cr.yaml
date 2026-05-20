@@ -16,6 +16,19 @@ spec:
     log:
       mode: "console"
       level: "warn"
+    # Postgres backend (CNPG cluster grafana-db) instead of SQLite. SQLite
+    # on Longhorn wedged on 2026-05-19 when a network blip stalled a write
+    # and corrupted the journal. Postgres survives storage/network blips
+    # (retried connections, WAL recovery, CNPG failover) and makes the
+    # Grafana pod stateless. Host grafana-db-rw always points at the
+    # current primary. User/name from the CNPG-generated grafana-db-app
+    # secret; password injected as GF_DATABASE_PASSWORD env below.
+    database:
+      type: "postgres"
+      host: "grafana-db-rw.monitoring.svc:5432"
+      name: "grafana"
+      user: "grafana"
+      ssl_mode: "require"
     server:
       root_url: "https://grafana.home.chrisscotmartin.com"
       enforce_domain: "false"
@@ -42,18 +55,9 @@ spec:
     spec:
       template:
         spec:
-          # Operator creates local-pvc from the persistentVolumeClaim block
-          # below, but doesn't auto-bind it to the grafana-data volume mount.
-          # Override the volume here so SQLite data (users, dashboards,
-          # service accounts) survives pod restarts.
-          # fsGroup chowns the mount to Grafana's runtime UID (472) — without
-          # it, Longhorn mounts as root:root and Grafana can't write.
-          securityContext:
-            fsGroup: 472
-          volumes:
-            - name: grafana-data
-              persistentVolumeClaim:
-                claimName: local-pvc
+          # Grafana is now stateless — state lives in the grafana-db
+          # Postgres cluster, not on a PVC. No volume override needed; the
+          # operator's default emptyDir for /var/lib/grafana is fine.
           containers:
             - name: grafana
               env:
@@ -67,6 +71,12 @@ spec:
                     secretKeyRef:
                       name: grafana-local-admin
                       key: GF_SECURITY_ADMIN_PASSWORD
+                # Postgres password from the CNPG-generated app secret.
+                - name: GF_DATABASE_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: grafana-db-app
+                      key: password
               # SMTP via SES — sender + host + creds injected as GF_SMTP_*
               # env vars from the ExternalSecret-managed Secret. Grafana's
               # config maps these to the [smtp] section.
@@ -79,6 +89,20 @@ spec:
                   memory: 256Mi
                 limits:
                   memory: 512Mi
+              # Safe now that Grafana is stateless (Postgres backend, no
+              # PVC) — a restart can't fight an old pod for an RWO volume.
+              # Matches upstream grafana helm chart defaults. /api/health
+              # is shallow but a genuinely hung process still fails it;
+              # generous threshold avoids flapping on transient blips.
+              livenessProbe:
+                httpGet:
+                  path: /api/health
+                  port: 3000
+                initialDelaySeconds: 60
+                timeoutSeconds: 30
+                failureThreshold: 10
+  # Retained for rollback only — Grafana no longer mounts this (state is
+  # in Postgres). Delete once the PG backend is proven stable.
   persistentVolumeClaim:
     spec:
       accessModes: [ReadWriteOnce]
