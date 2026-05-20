@@ -39,6 +39,7 @@ APPS=(
   "vaultwarden|kv/data/vaultwarden/*|vaultwarden|external-secrets-sa"
   "paperless|kv/data/paperless/*|paperless|external-secrets-sa"
   "dead-mans-switch|kv/data/dead-mans-switch/*|dead-mans-switch|external-secrets-sa"
+  "longhorn|kv/data/longhorn/*|longhorn-system|external-secrets-sa"
 )
 
 for entry in "${APPS[@]}"; do

@@ -1,0 +1,66 @@
+# Second Longhorn backup target: S3 (offsite), alongside the existing NFS
+# target on node2-hdd. Requires Longhorn >= 1.9 (multiple BackupTarget CRs).
+# Gives document media volumes a true offsite copy — the 3rd leg of 3-2-1
+# (live replicas + NFS backup + S3 offsite).
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-sa
+  namespace: longhorn-system
+---
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: vault-longhorn
+  namespace: longhorn-system
+spec:
+  provider:
+    vault:
+      server: http://vault.default.svc.cluster.local:8200
+      path: kv
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: longhorn
+          serviceAccountRef:
+            name: external-secrets-sa
+---
+# Longhorn's S3 backup secret needs these exact keys. AWS_ENDPOINTS is the
+# regional S3 endpoint; the s3:// URL on the BackupTarget carries the
+# bucket + region suffix.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: longhorn-s3-backup
+  namespace: longhorn-system
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-longhorn
+    kind: SecretStore
+  target:
+    name: longhorn-s3-backup
+    template:
+      type: Opaque
+      data:
+        AWS_ACCESS_KEY_ID: "{{ .access_key_id }}"
+        AWS_SECRET_ACCESS_KEY: "{{ .secret_access_key }}"
+        AWS_ENDPOINTS: "https://s3.us-east-1.amazonaws.com"
+  data:
+    - secretKey: access_key_id
+      remoteRef: { key: longhorn/s3-backup, property: access_key_id }
+    - secretKey: secret_access_key
+      remoteRef: { key: longhorn/s3-backup, property: secret_access_key }
+---
+# The S3 backup target. URL form: s3://<bucket>@<region>/<optional-prefix>
+apiVersion: longhorn.io/v1beta2
+kind: BackupTarget
+metadata:
+  name: s3-offsite
+  namespace: longhorn-system
+spec:
+  backupTargetURL: "s3://cscot-longhorn-backups@us-east-1/"
+  credentialSecret: longhorn-s3-backup
+  pollInterval: 5m0s
