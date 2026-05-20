@@ -64,10 +64,20 @@ data:
             - qbit.home.chrisscotmartin.com
             - grafana.home.chrisscotmartin.com
             - bitwarden.home.chrisscotmartin.com
-            - paperless.home.chrisscotmartin.com
           policy: two_factor
           subject:
             - "group:admins"
+
+        # Paperless: household members (users group) with 2FA. Authelia only
+        # gates *reaching* the app; per-document ownership inside Paperless
+        # keeps each person's docs private from the other (non-superuser
+        # users only see docs they own). Kept 2FA since it holds sensitive
+        # documents, unlike the one_factor media apps.
+        - domain:
+            - paperless.home.chrisscotmartin.com
+          policy: two_factor
+          subject:
+            - "group:users"
 
     session:
       # session.secret comes from AUTHELIA_SESSION_SECRET env (Authelia maps
