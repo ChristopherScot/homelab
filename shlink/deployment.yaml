@@ -35,6 +35,10 @@ spec:
               # Links are generated as https://go/... — the ingress
               # terminates TLS for go.home.chrisscotmartin.com.
               value: "true"
+            # Hitting the domain root (go/ with no slug) lands on the
+            # management UI instead of a 404, so `go/` = "view/add links".
+            - name: DEFAULT_BASE_URL_REDIRECT
+              value: "https://shlink.home.chrisscotmartin.com"
             - name: DB_DRIVER
               value: "postgres"
             - name: DB_HOST

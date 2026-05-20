@@ -1,0 +1,86 @@
+# Shlink web client — the management UI (view/add links). Pre-connected
+# to the Shlink API so it opens straight to our server. The API key is the
+# same one from Vault (shlink-api secret) — note this is a CLIENT-SIDE app,
+# so the key ends up in browser-reachable config; acceptable for an
+# internal-only, Authelia-gateable UI.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shlink-web
+  namespace: shlink
+  labels:
+    app: shlink-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shlink-web
+  template:
+    metadata:
+      labels:
+        app: shlink-web
+    spec:
+      containers:
+        - name: shlink-web
+          image: ghcr.io/shlinkio/shlink-web-client:4
+          ports:
+            - containerPort: 8080
+          env:
+            - name: SHLINK_SERVER_NAME
+              value: "homelab"
+            - name: SHLINK_SERVER_URL
+              value: "https://go.home.chrisscotmartin.com"
+            - name: SHLINK_SERVER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: shlink-api
+                  key: api-key
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 15
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shlink-web
+  namespace: shlink
+spec:
+  selector:
+    app: shlink-web
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shlink-web
+  namespace: shlink
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: external
+  tls:
+    - hosts:
+        - shlink.home.chrisscotmartin.com
+      secretName: shlink-web-tls
+  rules:
+    - host: shlink.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shlink-web
+                port:
+                  number: 8080
