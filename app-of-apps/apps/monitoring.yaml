@@ -118,8 +118,15 @@ spec:
             enabled: false
           costMetrics:
             enabled: false
+          # Host-level metrics from node-exporter (CPU/mem breakdown, disk
+          # space + I/O, filesystem, network, load average). The cluster
+          # previously had only kubelet/cAdvisor node_* metrics (cpu usage
+          # + working-set mem) — no disk-fill or load visibility. Pairs with
+          # telemetryServices.node-exporter.deploy below (deploy = run the
+          # DaemonSet; hostMetrics = scrape it).
           hostMetrics:
-            enabled: false
+            enabled: true
+            collector: alloy-metrics
 
           # ---- Collectors ----
           # alloy-metrics: single-replica deployment avoids the clustering
@@ -145,7 +152,7 @@ spec:
             kube-state-metrics:
               deploy: true
             node-exporter:
-              deploy: false
+              deploy: true
             windows-exporter:
               deploy: false
             kepler:
