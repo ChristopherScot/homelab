@@ -1,9 +1,16 @@
+# NFS backup target. In Longhorn >=1.9 the legacy `backup-target` Setting
+# is rejected ("not supported") — backup targets are now BackupTarget CRs.
+# This `default` CR replaces the old Setting (Argo was looping on the
+# rejected Setting every reconcile, spamming the webhook). The S3 offsite
+# target lives in s3-backup-target.yaml.
 apiVersion: longhorn.io/v1beta2
-kind: Setting
+kind: BackupTarget
 metadata:
-  name: backup-target
+  name: default
   namespace: longhorn-system
-value: nfs://192.168.50.77:/media/chris/node2-hdd
+spec:
+  backupTargetURL: nfs://192.168.50.77:/media/chris/node2-hdd
+  pollInterval: 5m0s
 ---
 apiVersion: longhorn.io/v1beta2
 kind: Setting
