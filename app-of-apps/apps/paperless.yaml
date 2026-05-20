@@ -42,17 +42,10 @@ spec:
                   key: password
             PAPERLESS_ADMIN_USER:
               value: admin
-            # --- Redis (standalone redis:7-alpine, see paperless/redis.yaml) ---
-            # REDIS_PW pulled from the secret, then interpolated into the URL
-            # via k8s $(VAR) expansion — no plaintext password in the manifest.
-            REDIS_PW:
-              valueFrom:
-                secretKeyRef:
-                  name: paperless-redis
-                  key: redis-password
-            PAPERLESS_REDIS:
-              value: "redis://:$(REDIS_PW)@paperless-redis:6379"
-          # PAPERLESS_SECRET_KEY + PAPERLESS_ADMIN_PASSWORD from Vault secret.
+          # PAPERLESS_SECRET_KEY, PAPERLESS_ADMIN_PASSWORD, and the full
+          # PAPERLESS_REDIS URL (redis://:pw@paperless-redis:6379) all come
+          # from the Vault-backed paperless-secrets secret — no in-manifest
+          # password and no fragile $(VAR) interpolation.
           envFrom:
             - secretRef:
                 name: paperless-secrets
