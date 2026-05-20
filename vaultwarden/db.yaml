@@ -1,0 +1,24 @@
+# Postgres backend for Vaultwarden. 2 instances for failover (same
+# rationale as grafana-db — avoid single-point SQLite-on-Longhorn).
+# CNPG generates a `vaultwarden-db-app` secret in the vaultwarden ns with
+# connection creds (host/port/dbname/user/password/uri).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: vaultwarden-db
+  namespace: vaultwarden
+spec:
+  instances: 2
+  storage:
+    size: 2Gi
+    storageClass: longhorn
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  bootstrap:
+    initdb:
+      database: vaultwarden
+      owner: vaultwarden
