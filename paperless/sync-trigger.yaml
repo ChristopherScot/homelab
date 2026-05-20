@@ -1,0 +1,190 @@
+# "Sync now" button for Paperless email ingestion. A tiny webhook: GET /
+# creates a Job from the paperless-mail-ingest CronJob (immediate run),
+# and returns a confirmation page. Linked from a Homepage bookmark.
+# Authelia-gated so only logged-in users can fire it. The ServiceAccount
+# can ONLY get that CronJob + create/list Jobs in this namespace — least
+# privilege; a compromised pod can do nothing else.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+rules:
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["create", "get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+subjects:
+  - kind: ServiceAccount
+    name: paperless-sync-trigger
+    namespace: paperless
+roleRef:
+  kind: Role
+  name: paperless-sync-trigger
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperless-sync-trigger-script
+  namespace: paperless
+data:
+  trigger.py: |
+    #!/usr/bin/env python3
+    # GET / -> clone paperless-mail-ingest CronJob's jobTemplate into a new
+    # Job (same logic as `kubectl create job --from=cronjob`). Talks to the
+    # in-cluster API with the mounted SA token. Stdlib only.
+    import json, os, ssl, time, urllib.request
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+
+    NS = "paperless"
+    CRONJOB = "paperless-mail-ingest"
+    API = "https://kubernetes.default.svc"
+    TOKEN = open("/var/run/secrets/kubernetes.io/serviceaccount/token").read().strip()
+    CTX = ssl.create_default_context(cafile="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt")
+
+    def api(method, path, body=None):
+        data = json.dumps(body).encode() if body is not None else None
+        req = urllib.request.Request(API + path, data=data, method=method,
+            headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, context=CTX, timeout=30) as r:
+            return json.loads(r.read())
+
+    def trigger():
+        cj = api("GET", f"/apis/batch/v1/namespaces/{NS}/cronjobs/{CRONJOB}")
+        name = f"{CRONJOB}-manual-{int(time.time())}"
+        job = {"apiVersion": "batch/v1", "kind": "Job",
+               "metadata": {"name": name, "namespace": NS,
+                            "annotations": {"triggered-by": "sync-button"},
+                            "labels": {"app": "paperless-mail-ingest", "trigger": "manual"}},
+               "spec": cj["spec"]["jobTemplate"]["spec"]}
+        api("POST", f"/apis/batch/v1/namespaces/{NS}/jobs", job)
+        return name
+
+    PAGE = """<!doctype html><html><head><title>Paperless Sync</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <style>body{{font-family:system-ui,sans-serif;max-width:34rem;margin:4rem auto;padding:0 1rem;color:#222}}
+    .ok{{color:#1a7f37}} .err{{color:#b00}} code{{background:#f3f3f3;padding:.1rem .3rem;border-radius:3px}}</style>
+    </head><body><h1>{title}</h1><p>{body}</p>
+    <p><a href="https://paperless.home.chrisscotmartin.com">Open Paperless &rarr;</a></p></body></html>"""
+
+    class H(BaseHTTPRequestHandler):
+        def _send(self, code, html):
+            self.send_response(code); self.send_header("Content-Type","text/html"); self.end_headers()
+            self.wfile.write(html.encode())
+        def do_GET(self):
+            if self.path.startswith("/healthz"):
+                return self._send(200, "ok")
+            try:
+                name = trigger()
+                self._send(200, PAGE.format(title='<span class="ok">&#10003; Sync triggered</span>',
+                    body=f"Job <code>{name}</code> is running. Documents emailed to "
+                         f"<code>*@docs.chrisscotmartin.com</code> will be imported into Paperless shortly."))
+            except Exception as e:
+                self._send(500, PAGE.format(title='<span class="err">Sync failed</span>',
+                    body=f"<code>{e}</code>"))
+        def log_message(self, *a): pass
+
+    HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: paperless-sync-trigger }
+  template:
+    metadata:
+      labels: { app: paperless-sync-trigger }
+    spec:
+      serviceAccountName: paperless-sync-trigger
+      containers:
+        - name: trigger
+          image: python:3.12-slim
+          command: ["python", "/script/trigger.py"]
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /script
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits: { memory: 64Mi }
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            initialDelaySeconds: 3
+      volumes:
+        - name: script
+          configMap:
+            name: paperless-sync-trigger-script
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+spec:
+  selector: { app: paperless-sync-trigger }
+  ports:
+    - port: 80
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Authelia-gated — a GET fires a job, so only logged-in users.
+    nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Forwarded-Method $request_method;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Uri $request_uri;
+      proxy_set_header X-Forwarded-For $remote_addr;
+    nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+    # Homepage bookmark tile under Productivity.
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Paperless Sync"
+    gethomepage.dev/description: "Trigger email document import"
+    gethomepage.dev/group: "Productivity"
+    gethomepage.dev/icon: "mdi-cloud-sync"
+    gethomepage.dev/pod-selector: "app=paperless-sync-trigger"
+  labels:
+    app: paperless-sync-trigger
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [paperless-sync.home.chrisscotmartin.com]
+      secretName: paperless-sync-trigger-tls
+  rules:
+    - host: paperless-sync.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: paperless-sync-trigger
+                port: { number: 80 }

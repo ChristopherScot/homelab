@@ -76,6 +76,7 @@ data:
         - domain:
             - paperless.home.chrisscotmartin.com
             - send.home.chrisscotmartin.com
+            - paperless-sync.home.chrisscotmartin.com
           policy: two_factor
           subject:
             - "group:users"
