@@ -15,8 +15,10 @@ spec:
       targetRevision: HEAD
       path: paperless
     # wrenix chart — tracks current Paperless (gabe565 was stuck at 2.14.7;
-    # the mobile app rejected that API version). OCI registry.
-    - repoURL: oci://codeberg.org/wrenix/helm-charts
+    # the mobile app rejected that API version). OCI registry: Argo v2.13
+    # wants the registry host WITHOUT the oci:// scheme prefix (same as the
+    # ghcr.io/grafana/helm-charts grafana-operator source).
+    - repoURL: codeberg.org/wrenix/helm-charts
       chart: paperless-ngx
       targetRevision: 0.3.19   # appVersion 2.20.15
       helm:
