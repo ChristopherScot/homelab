@@ -118,6 +118,26 @@ spec:
                 - secretName: paperless-tls
                   hosts:
                     - paperless.home.chrisscotmartin.com
+            # Auth-exempt ingress for /api on the same host so the mobile app
+            # can authenticate with a Paperless API token (Django REST Token)
+            # instead of Authelia's browser redirect, which the app can't do.
+            # No auth-url here; the API is protected by Paperless's own
+            # per-user revocable tokens and is only reachable on the tailnet.
+            # cert issuance stays owned by the `main` ingress (shares paperless-tls).
+            api:
+              enabled: true
+              annotations:
+                nginx.ingress.kubernetes.io/proxy-body-size: 64m
+              ingressClassName: external
+              hosts:
+                - host: paperless.home.chrisscotmartin.com
+                  paths:
+                    - path: /api
+                      pathType: Prefix
+              tls:
+                - secretName: paperless-tls
+                  hosts:
+                    - paperless.home.chrisscotmartin.com
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: paperless
