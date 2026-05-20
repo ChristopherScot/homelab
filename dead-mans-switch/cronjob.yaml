@@ -1,0 +1,98 @@
+# Dead man's switch: pings healthchecks.io every 5 min to prove the
+# homelab can run a pod AND reach the internet. When pings STOP (power
+# loss, internet down, cluster/control-plane dead), healthchecks.io
+# detects the silence and pages the ntfy.sh topic
+# homelab-down-76c272978f25cb30a58d.
+#
+# Why external: a total homelab outage takes Grafana down too, so Grafana
+# can't report its own death. This detector + alerting live entirely off
+# the homelab — silence is the signal.
+#
+# Configure in the healthchecks.io UI: period 5m, grace 10m (pages after
+# ~15m of silence), integration -> ntfy.sh topic above.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dead-mans-switch
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-sa
+  namespace: dead-mans-switch
+---
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: vault-dead-mans-switch
+  namespace: dead-mans-switch
+spec:
+  provider:
+    vault:
+      server: http://vault.default.svc.cluster.local:8200
+      path: kv
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: dead-mans-switch
+          serviceAccountRef:
+            name: external-secrets-sa
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: dead-mans-switch-secrets
+  namespace: dead-mans-switch
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-dead-mans-switch
+    kind: SecretStore
+  target:
+    name: dead-mans-switch-secrets
+  data:
+    - secretKey: PING_URL
+      remoteRef:
+        key: dead-mans-switch/config
+        property: ping_url
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: heartbeat
+  namespace: dead-mans-switch
+spec:
+  schedule: "*/5 * * * *"          # every 5 minutes
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 60
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: ping
+              image: curlimages/curl:8.11.1
+              command:
+                - sh
+                - -c
+                # Fail-safe: -m timeout, retry a couple times. If the ping
+                # itself can't reach hc-ping (no internet), that's exactly
+                # the condition we WANT to surface as silence -> page.
+                - 'curl -fsS -m 10 --retry 2 "$PING_URL" >/dev/null && echo "ping ok" || echo "ping failed (this is fine — missed pings page via healthchecks.io)"'
+              env:
+                - name: PING_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: dead-mans-switch-secrets
+                      key: PING_URL
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 16Mi
+                limits:
+                  memory: 32Mi
