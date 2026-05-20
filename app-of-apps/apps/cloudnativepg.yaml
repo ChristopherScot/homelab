@@ -10,7 +10,7 @@ spec:
   source:
     repoURL: https://cloudnative-pg.github.io/charts
     chart: cloudnative-pg
-    targetRevision: 0.22.1 # operator 1.24.1 (step 1 of 1.23→1.24→1.25)
+    targetRevision: 0.24.0 # operator 1.25.1 (step 2 of 1.23→1.24→1.25; adds Database CRD)
   destination:
     server: https://kubernetes.default.svc
     namespace: cnpg-system
