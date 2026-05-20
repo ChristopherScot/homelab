@@ -42,6 +42,16 @@ spec:
                   key: password
             PAPERLESS_ADMIN_USER:
               value: admin
+            # --- Redis (standalone redis:7-alpine, see paperless/redis.yaml) ---
+            # REDIS_PW pulled from the secret, then interpolated into the URL
+            # via k8s $(VAR) expansion — no plaintext password in the manifest.
+            REDIS_PW:
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-redis
+                  key: redis-password
+            PAPERLESS_REDIS:
+              value: "redis://:$(REDIS_PW)@paperless-redis:6379"
           # PAPERLESS_SECRET_KEY + PAPERLESS_ADMIN_PASSWORD from Vault secret.
           envFrom:
             - secretRef:
@@ -67,21 +77,12 @@ spec:
               storageClass: longhorn
               accessMode: ReadWriteOnce
               size: 2Gi
+          # Bundled bitnami redis disabled — replaced with a standalone
+          # redis:7-alpine (paperless/redis.yaml) because bitnami removed
+          # versioned image tags from docker.io. PAPERLESS_REDIS above
+          # points at that Service.
           redis:
-            enabled: true
-            # Bitnami removed versioned tags from docker.io/bitnami in 2024
-            # and relocated them to docker.io/bitnamilegacy. The chart's
-            # pinned redis tag 404s on the original repo; point at the
-            # legacy namespace so the exact version still pulls.
-            image:
-              repository: bitnamilegacy/redis
-            auth:
-              enabled: true
-              existingSecret: paperless-redis
-              existingSecretPasswordKey: redis-password
-            master:
-              persistence:
-                enabled: false      # broker/cache only — ephemeral
+            enabled: false
           postgresql:
             enabled: false          # using CNPG instead
           ingress:

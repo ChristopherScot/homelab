@@ -1,0 +1,65 @@
+# Standalone Redis broker for Paperless, replacing the chart's bundled
+# bitnami redis subchart — Bitnami removed versioned image tags from
+# docker.io/bitnami in 2024, breaking the subchart. Official redis:7-alpine
+# is stable, tiny, and has no such supply-chain churn. Broker/cache only
+# (Paperless task queue) so no persistence — state is rebuildable.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperless-redis
+  namespace: paperless
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: paperless-redis
+  template:
+    metadata:
+      labels:
+        app: paperless-redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          # Require auth using the same secret the app reads (redis-password).
+          command:
+            - sh
+            - -c
+            - 'exec redis-server --requirepass "$REDIS_PASSWORD"'
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-redis
+                  key: redis-password
+          ports:
+            - containerPort: 6379
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          livenessProbe:
+            tcpSocket: { port: 6379 }
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command: ["sh", "-c", "redis-cli -a \"$REDIS_PASSWORD\" ping | grep -q PONG"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless-redis
+  namespace: paperless
+spec:
+  selector:
+    app: paperless-redis
+  ports:
+    - port: 6379
+      targetPort: 6379
