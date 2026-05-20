@@ -1,22 +1,20 @@
-# Shlink ingress. Two hosts:
-#   go                            — short form; resolves where the OS
-#                                   handles single-label names (macOS needs
-#                                   an /etc/hosts entry).
-#   go.home.chrisscotmartin.com   — works in every browser via pihole;
-#                                   this is the host that gets the TLS cert.
+# Two ingresses because the bare `go` host and the FQDN need different
+# TLS behavior, and nginx annotations apply per-Ingress-resource.
+#
+# go (bare): plain HTTP only. ssl-redirect disabled so http://go/x works
+# with just an /etc/hosts entry and no cert mismatch (there's no valid
+# cert for the single-label name `go`). Shlink generates https:// links
+# but typing http://go/x — or following a link and clicking through —
+# resolves here over HTTP.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: shlink
+  name: shlink-go
   namespace: shlink
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
 spec:
   ingressClassName: external
-  tls:
-    - hosts:
-        - go.home.chrisscotmartin.com
-      secretName: shlink-tls
   rules:
     - host: go
       http:
@@ -28,6 +26,23 @@ spec:
                 name: shlink
                 port:
                   number: 8080
+---
+# go.home.chrisscotmartin.com: full HTTPS with a real cert-manager cert,
+# like every other homelab service. Works in any browser via pihole.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shlink-fqdn
+  namespace: shlink
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: external
+  tls:
+    - hosts:
+        - go.home.chrisscotmartin.com
+      secretName: shlink-tls
+  rules:
     - host: go.home.chrisscotmartin.com
       http:
         paths:
