@@ -14,6 +14,7 @@ metadata:
   namespace: picoshare
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/use-regex: "true"
   labels:
     app: picoshare
 spec:
@@ -25,35 +26,15 @@ spec:
     - host: send.home.chrisscotmartin.com
       http:
         paths:
-          # public download links: /-{id} (current) and /!{id} (legacy)
-          - path: /-
-            pathType: Prefix
-            backend: { service: { name: picoshare, port: { number: 80 } } }
-          - path: /!
-            pathType: Prefix
-            backend: { service: { name: picoshare, port: { number: 80 } } }
-          # guest-upload links: /g/{id} — lets a non-Authelia person upload
-          # a file to us via a one-off link. Must be public.
-          - path: /g/
-            pathType: Prefix
-            backend: { service: { name: picoshare, port: { number: 80 } } }
-          # Static assets the public download/upload pages load. Without
-          # these on the public ingress, Authelia blocks them for
-          # unauthenticated recipients → broken logo/CSS on share pages.
-          - path: /css/
-            pathType: Prefix
-            backend: { service: { name: picoshare, port: { number: 80 } } }
-          - path: /js/
-            pathType: Prefix
-            backend: { service: { name: picoshare, port: { number: 80 } } }
-          - path: /third-party/
-            pathType: Prefix
-            backend: { service: { name: picoshare, port: { number: 80 } } }
-          - path: /favicon.ico
-            pathType: Exact
-            backend: { service: { name: picoshare, port: { number: 80 } } }
-          - path: /site.webmanifest
-            pathType: Exact
+          # All public paths in one ImplementationSpecific regex (nginx
+          # rejects pathType=Prefix for "/!"). Covers:
+          #   /-{id}, /!{id}  download links (current + legacy)
+          #   /g/{id}         guest-upload links
+          #   /css /js /third-party  static assets the share pages load
+          #   favicon/manifest/touch-icon root assets (broken logo otherwise)
+          # nginx needs use-regex=true for a regex path.
+          - path: "/(-|!|g/|css/|js/|third-party/|favicon|apple-touch-icon|safari-pinned-tab|android-chrome|mstile|browserconfig|site\\.webmanifest).*"
+            pathType: ImplementationSpecific
             backend: { service: { name: picoshare, port: { number: 80 } } }
 ---
 # Everything else (admin UI, upload, /api) — Authelia-gated.
