@@ -163,6 +163,35 @@ vault write auth/kubernetes/role/autocaliweb \
   policies="autocaliweb" \
   ttl=1h
 
+# Vaultwarden + Paperless: their own kv path PLUS shared SES SMTP transport
+# (kv/ses/*) so they can send mail (Vaultwarden invites/password resets,
+# Paperless share/notify). Re-write here (not in the APPS loop) because the
+# loop only grants a single path; sender addresses are hardcoded per-app in
+# each SMTP ExternalSecret, not in Vault.
+vault policy write vaultwarden - <<EOF
+path "kv/data/vaultwarden/*"     { capabilities = ["read"] }
+path "kv/metadata/vaultwarden/*" { capabilities = ["read", "list"] }
+path "kv/data/ses/*"             { capabilities = ["read"] }
+path "kv/metadata/ses/*"         { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/vaultwarden \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="vaultwarden" \
+  policies="vaultwarden" \
+  ttl=1h
+
+vault policy write paperless - <<EOF
+path "kv/data/paperless/*"     { capabilities = ["read"] }
+path "kv/metadata/paperless/*" { capabilities = ["read", "list"] }
+path "kv/data/ses/*"           { capabilities = ["read"] }
+path "kv/metadata/ses/*"       { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/paperless \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="paperless" \
+  policies="paperless" \
+  ttl=1h
+
 # Human auth: OIDC via Authelia (below). Userpass was a stepping-stone;
 # the root token + unseal keys are the break-glass. Disable userpass if
 # previously enabled.
@@ -204,7 +233,8 @@ if [ -n "$OIDC_CLIENT_SECRET" ]; then
   "bound_claims": {"preferred_username": "chris"},
   "allowed_redirect_uris": [
     "https://vault.home.chrisscotmartin.com/ui/vault/auth/oidc/oidc/callback",
-    "https://vault.home.chrisscotmartin.com/oidc/callback"
+    "https://vault.home.chrisscotmartin.com/oidc/callback",
+    "http://localhost:8250/oidc/callback"
   ],
   "policies": ["admin"],
   "ttl": "1h"

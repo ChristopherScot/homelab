@@ -49,6 +49,9 @@ spec:
           envFrom:
             - secretRef:
                 name: paperless-secrets
+            # SES SMTP (PAPERLESS_EMAIL_*) from the paperless-smtp secret.
+            - secretRef:
+                name: paperless-smtp
           persistence:
             data:
               enabled: true

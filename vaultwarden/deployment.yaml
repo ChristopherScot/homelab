@@ -62,6 +62,12 @@ spec:
               value: "true"
             # WebSocket notifications served on the same port in modern
             # Vaultwarden — no separate port needed.
+          # SES SMTP (SMTP_HOST/PORT/SECURITY/USERNAME/PASSWORD/FROM) from
+          # the vaultwarden-smtp secret — enables invite + password-reset
+          # email. Without this, /admin invites silently no-op.
+          envFrom:
+            - secretRef:
+                name: vaultwarden-smtp
           volumeMounts:
             - name: data
               mountPath: /data
