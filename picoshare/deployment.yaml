@@ -39,6 +39,10 @@ spec:
               value: "4001"
             - name: PS_BEHIND_PROXY
               value: "true"        # correct client IPs in logs (behind ingress)
+            # Litestream needs the S3 endpoint explicitly (entrypoint errors
+            # on unbound LITESTREAM_ENDPOINT). Static AWS regional endpoint.
+            - name: LITESTREAM_ENDPOINT
+              value: "https://s3.us-east-1.amazonaws.com"
             # Admin shared secret + Litestream S3 creds from Vault.
             - name: PS_SHARED_SECRET
               valueFrom: { secretKeyRef: { name: picoshare-secrets, key: PS_SHARED_SECRET } }
