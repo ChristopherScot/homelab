@@ -36,6 +36,8 @@ APPS=(
   "qbittorrent|kv/data/qbittorrent/*|media|external-secrets-sa"
   "jellyfin|kv/data/jellyfin/*|media|external-secrets-sa"
   "jellyseerr|kv/data/jellyseerr/*|media|external-secrets-sa"
+  "vaultwarden|kv/data/vaultwarden/*|vaultwarden|external-secrets-sa"
+  "paperless|kv/data/paperless/*|paperless|external-secrets-sa"
 )
 
 for entry in "${APPS[@]}"; do
