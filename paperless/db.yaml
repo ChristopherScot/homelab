@@ -9,6 +9,12 @@ metadata:
   namespace: paperless
 spec:
   instances: 2
+  postgresql:
+    parameters:
+      # Low-write DB + daily base backups → no need to ship WAL every 5 min
+      # (the CNPG default). Force a WAL switch at most hourly so S3 PUT churn
+      # is ~12x lower. Recovery granularity becomes ~1h, which is fine here.
+      archive_timeout: "3600s"
   storage:
     size: 5Gi
     storageClass: longhorn

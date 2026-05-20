@@ -9,6 +9,12 @@ metadata:
   namespace: vaultwarden
 spec:
   instances: 2
+  postgresql:
+    parameters:
+      # Low-write vault + daily base backups → ship WAL at most hourly
+      # (vs the 5-min default) to cut S3 PUT churn ~12x. ~1h recovery
+      # granularity is fine for a password store.
+      archive_timeout: "3600s"
   storage:
     size: 2Gi
     storageClass: longhorn
