@@ -44,7 +44,20 @@ metadata:
 spec:
   ingressClassName: external
   rules:
+  # Bare `go` works from clients whose resolver handles single-label names
+  # (e.g. dig, /etc/hosts). macOS getaddrinfo refuses dotless names, so the
+  # FQDN below is what actually resolves in browsers network-wide.
   - host: go
+    http:
+      paths:
+      - pathType: Prefix
+        path: /
+        backend:
+          service:
+            name: go-redirect
+            port:
+              number: 80
+  - host: go.home.chrisscotmartin.com
     http:
       paths:
       - pathType: Prefix
