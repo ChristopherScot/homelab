@@ -1,18 +1,18 @@
-apiVersion: longhorn.io/v1beta1
+apiVersion: longhorn.io/v1beta2
 kind: Setting
 metadata:
   name: backup-target
   namespace: longhorn-system
 value: nfs://192.168.50.77:/media/chris/node2-hdd
 ---
-apiVersion: longhorn.io/v1beta1
+apiVersion: longhorn.io/v1beta2
 kind: Setting
 metadata:
   name: default-replica-count
   namespace: longhorn-system
 value: "2"
 ---
-apiVersion: longhorn.io/v1beta1
+apiVersion: longhorn.io/v1beta2
 kind: RecurringJob
 metadata:
   name: auto-snapshot
@@ -28,7 +28,7 @@ spec:
     app: longhorn
     type: auto-snapshot
 ---
-apiVersion: longhorn.io/v1beta1
+apiVersion: longhorn.io/v1beta2
 kind: RecurringJob
 metadata:
   name: auto-backup
