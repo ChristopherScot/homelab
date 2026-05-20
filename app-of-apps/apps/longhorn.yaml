@@ -7,6 +7,20 @@ spec:
   syncPolicy:
     syncOptions:
     - CreateNamespace=true
+  # longhorn-manager re-asserts the default StorageClass from the
+  # longhorn-storageclass ConfigMap (it only *creates* the SC if absent, never
+  # updates it — longhorn/longhorn#3821) and forces reclaimPolicy: Delete, which
+  # is immutable. Argo's reapply then fails and the app sits OutOfSync forever
+  # (longhorn/longhorn#9391). Ignore the manager-owned SC fields so the app can
+  # report Synced. To actually change numberOfReplicas: edit the ConfigMap and
+  # delete the SC so the manager recreates it.
+  ignoreDifferences:
+  - group: storage.k8s.io
+    kind: StorageClass
+    name: longhorn
+    jsonPointers:
+    - /parameters
+    - /reclaimPolicy
   project: default
   sources:
   - chart: longhorn
