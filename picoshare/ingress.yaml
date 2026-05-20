@@ -1,0 +1,76 @@
+# Split-auth, like Vaultwarden:
+#   - the admin/upload UI is gated by Authelia (any logged-in user:
+#     group:users — chris, vanessa, scot, and anyone with a homelab login)
+#   - download links (/-<id>) are PUBLIC so recipients need no login
+# PicoShare's own PS_SHARED_SECRET is satisfied uniformly behind Authelia
+# (it has no per-user accounts; Authelia is the real gate on who's in).
+---
+# Public download links — NO Authelia. PicoShare serves shared files at
+# /-<id> (and the embedded /-<id>/... asset paths).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: picoshare-public
+  namespace: picoshare
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  labels:
+    app: picoshare
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [send.home.chrisscotmartin.com]
+      secretName: picoshare-tls
+  rules:
+    - host: send.home.chrisscotmartin.com
+      http:
+        paths:
+          # public download links: /-{id} (current) and /!{id} (legacy)
+          - path: /-
+            pathType: Prefix
+            backend: { service: { name: picoshare, port: { number: 80 } } }
+          - path: /!
+            pathType: Prefix
+            backend: { service: { name: picoshare, port: { number: 80 } } }
+          # guest-upload links: /g/{id} — lets a non-Authelia person upload
+          # a file to us via a one-off link. Must be public.
+          - path: /g/
+            pathType: Prefix
+            backend: { service: { name: picoshare, port: { number: 80 } } }
+---
+# Everything else (admin UI, upload, /api) — Authelia-gated.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: picoshare-admin
+  namespace: picoshare
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Forwarded-Method $request_method;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Uri $request_uri;
+      proxy_set_header X-Forwarded-For $remote_addr;
+    nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Send"
+    gethomepage.dev/description: "Upload files & make share links"
+    gethomepage.dev/group: "Productivity"
+    gethomepage.dev/icon: "picoshare.png"
+  labels:
+    app: picoshare
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [send.home.chrisscotmartin.com]
+      secretName: picoshare-tls
+  rules:
+    - host: send.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: picoshare, port: { number: 80 } } }
