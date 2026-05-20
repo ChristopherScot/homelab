@@ -68,13 +68,14 @@ data:
           subject:
             - "group:admins"
 
-        # Paperless: household members (users group) with 2FA. Authelia only
-        # gates *reaching* the app; per-document ownership inside Paperless
-        # keeps each person's docs private from the other (non-superuser
-        # users only see docs they own). Kept 2FA since it holds sensitive
-        # documents, unlike the one_factor media apps.
+        # Paperless + PicoShare ("send"): household members (users group)
+        # with 2FA. Authelia only gates the admin/upload UI; PicoShare's
+        # public download/guest-upload links bypass Authelia via a separate
+        # ungated ingress, so recipients need no login. Without a rule here
+        # the default deny → hard 403 (no login redirect).
         - domain:
             - paperless.home.chrisscotmartin.com
+            - send.home.chrisscotmartin.com
           policy: two_factor
           subject:
             - "group:users"
