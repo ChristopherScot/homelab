@@ -31,7 +31,7 @@ spec:
     spec:
       containers:
         - name: picoshare
-          image: mtlynch/picoshare:1.5.4
+          image: mtlynch/picoshare:1.5.1
           ports:
             - containerPort: 4001
           env:

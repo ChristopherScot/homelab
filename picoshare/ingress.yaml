@@ -37,6 +37,24 @@ spec:
           - path: /g/
             pathType: Prefix
             backend: { service: { name: picoshare, port: { number: 80 } } }
+          # Static assets the public download/upload pages load. Without
+          # these on the public ingress, Authelia blocks them for
+          # unauthenticated recipients → broken logo/CSS on share pages.
+          - path: /css/
+            pathType: Prefix
+            backend: { service: { name: picoshare, port: { number: 80 } } }
+          - path: /js/
+            pathType: Prefix
+            backend: { service: { name: picoshare, port: { number: 80 } } }
+          - path: /third-party/
+            pathType: Prefix
+            backend: { service: { name: picoshare, port: { number: 80 } } }
+          - path: /favicon.ico
+            pathType: Exact
+            backend: { service: { name: picoshare, port: { number: 80 } } }
+          - path: /site.webmanifest
+            pathType: Exact
+            backend: { service: { name: picoshare, port: { number: 80 } } }
 ---
 # Everything else (admin UI, upload, /api) — Authelia-gated.
 apiVersion: networking.k8s.io/v1
@@ -59,7 +77,7 @@ metadata:
     gethomepage.dev/name: "Send"
     gethomepage.dev/description: "Upload files & make share links"
     gethomepage.dev/group: "Productivity"
-    gethomepage.dev/icon: "picoshare.png"
+    gethomepage.dev/icon: "mdi-file-send-outline"
   labels:
     app: picoshare
 spec:
