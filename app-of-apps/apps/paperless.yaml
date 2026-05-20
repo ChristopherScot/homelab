@@ -69,6 +69,12 @@ spec:
               size: 2Gi
           redis:
             enabled: true
+            # Bitnami removed versioned tags from docker.io/bitnami in 2024
+            # and relocated them to docker.io/bitnamilegacy. The chart's
+            # pinned redis tag 404s on the original repo; point at the
+            # legacy namespace so the exact version still pulls.
+            image:
+              repository: bitnamilegacy/redis
             auth:
               enabled: true
               existingSecret: paperless-redis
