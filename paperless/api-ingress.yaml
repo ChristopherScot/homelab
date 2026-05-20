@@ -1,0 +1,33 @@
+# Auth-exempt ingress for /api on paperless.home, so the mobile app can
+# authenticate with a Paperless API token (Django REST Token) instead of
+# Authelia's browser redirect (which mobile clients can't follow).
+# No auth-url here — the API is protected by Paperless's own per-user
+# revocable tokens and is only reachable on the tailnet. The chart's main
+# ingress owns cert issuance; this shares the paperless-tls secret.
+# The wrenix chart only renders ONE ingress, so this is hand-written.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: paperless-api
+  namespace: paperless
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 64m
+  labels:
+    app: paperless-api
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [paperless.home.chrisscotmartin.com]
+      secretName: paperless-tls
+  rules:
+    - host: paperless.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                # wrenix chart names the service after the release: paperless-paperless-ngx
+                name: paperless-paperless-ngx
+                port:
+                  number: 80
