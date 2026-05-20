@@ -16,6 +16,13 @@ spec:
       valuesObject:
         preUpgradeChecker:
           jobEnabled: false
+        # Bake numberOfReplicas=2 into the longhorn StorageClass. The global
+        # default-replica-count Setting (=2) is overridden by the SC's own
+        # parameter, which defaults to 3 — so PVCs using storageClassName:
+        # longhorn were silently getting 3 replicas and sitting degraded
+        # (the 3rd can't place). This aligns the SC with the global setting.
+        persistence:
+          defaultClassReplicaCount: 2
         # The csi-snapshotter sidecar spams ~200 forbidden-CRD errors per
         # cycle because external-snapshotter CRDs aren't installed on this
         # cluster (we don't use VolumeSnapshot). Setting replicas to 0 stops
