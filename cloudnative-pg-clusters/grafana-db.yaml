@@ -1,0 +1,25 @@
+# Postgres backend for the local Grafana, replacing the fragile
+# SQLite-on-Longhorn setup. 2 instances so a node/storage blip fails over
+# instead of wedging (the SQLite failure mode on 2026-05-19). CNPG
+# generates a `grafana-db-app` secret with connection creds in the
+# monitoring namespace.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: grafana-db
+  namespace: monitoring
+spec:
+  instances: 2
+  storage:
+    size: 2Gi
+    storageClass: longhorn
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  bootstrap:
+    initdb:
+      database: grafana
+      owner: grafana
