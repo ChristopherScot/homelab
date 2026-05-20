@@ -84,6 +84,15 @@ spec:
               annotations:
                 cert-manager.io/cluster-issuer: letsencrypt-prod
                 nginx.ingress.kubernetes.io/proxy-body-size: 64m
+                # Homepage dashboard tile (https://home.chrisscotmartin.com).
+                # A `paperless` widget (doc/inbox counts) can be added later
+                # via gethomepage.dev/widget.* once a Paperless API token is
+                # stored in the homepage env — left off for now.
+                gethomepage.dev/enabled: "true"
+                gethomepage.dev/name: "Paperless"
+                gethomepage.dev/description: "Document management & OCR"
+                gethomepage.dev/group: "Productivity"
+                gethomepage.dev/icon: "paperless-ngx.png"
                 nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
                 nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
                 nginx.ingress.kubernetes.io/auth-snippet: |

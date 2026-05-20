@@ -51,6 +51,12 @@ metadata:
   namespace: vaultwarden
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Homepage dashboard tile (https://home.chrisscotmartin.com)
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Vaultwarden"
+    gethomepage.dev/description: "Password manager (Bitwarden-compatible)"
+    gethomepage.dev/group: "Productivity"
+    gethomepage.dev/icon: "vaultwarden.png"
     # Authelia forward-auth — gates the web vault UI and /admin.
     nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
     nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
