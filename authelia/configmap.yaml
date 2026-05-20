@@ -51,6 +51,10 @@ data:
             - "group:users"
 
         # Admin tools: admins only, with 2FA.
+        # Note: bitwarden.home only the web-vault UI ingress forwards to
+        # Authelia — the vaultwarden-clients ingress (/api,/identity,...)
+        # has no auth annotation so browser extensions / mobile clients
+        # authenticate against Vaultwarden directly and bypass this rule.
         - domain:
             - sonarr.home.chrisscotmartin.com
             - radarr.home.chrisscotmartin.com
@@ -59,6 +63,8 @@ data:
             - bazarr.home.chrisscotmartin.com
             - qbit.home.chrisscotmartin.com
             - grafana.home.chrisscotmartin.com
+            - bitwarden.home.chrisscotmartin.com
+            - paperless.home.chrisscotmartin.com
           policy: two_factor
           subject:
             - "group:admins"
