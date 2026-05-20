@@ -8,7 +8,11 @@ metadata:
   name: paperless-mail-ingest
   namespace: paperless
 spec:
-  schedule: "*/5 * * * *"
+  # Daily at 08:00 (UTC). Document ingestion isn't time-sensitive; trigger
+  # an immediate run on demand with:
+  #   kubectl create job -n paperless --from=cronjob/paperless-mail-ingest \
+  #     paperless-mail-ingest-manual-$(date +%s)
+  schedule: "0 8 * * *"
   concurrencyPolicy: Forbid          # never overlap runs
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
