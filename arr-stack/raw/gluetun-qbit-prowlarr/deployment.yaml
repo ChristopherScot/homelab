@@ -176,7 +176,8 @@ spec:
               cpu: 50m
               memory: 64Mi
             limits:
-              memory: 256Mi
+              # 512Mi: gluetun's DoT block lists OOM'd it at 256Mi.
+              memory: 512Mi
           livenessProbe:
             exec:
               # If gluetun's healthcheck server isn't responding the tunnel is

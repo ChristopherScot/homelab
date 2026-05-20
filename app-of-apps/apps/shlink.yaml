@@ -1,0 +1,25 @@
+# Shlink URL shortener — API + redirect engine + web UI, backed by the
+# shlink-db CNPG Postgres cluster. Replaces the old Lambda/DynamoDB/S3/
+# nginx-shim shortener.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: shlink
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ChristopherScot/homelab
+    targetRevision: HEAD
+    path: shlink
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: shlink
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,40 @@
+# Shlink ingress. Two hosts:
+#   go                            — short form; resolves where the OS
+#                                   handles single-label names (macOS needs
+#                                   an /etc/hosts entry).
+#   go.home.chrisscotmartin.com   — works in every browser via pihole;
+#                                   this is the host that gets the TLS cert.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shlink
+  namespace: shlink
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: external
+  tls:
+    - hosts:
+        - go.home.chrisscotmartin.com
+      secretName: shlink-tls
+  rules:
+    - host: go
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shlink
+                port:
+                  number: 8080
+    - host: go.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shlink
+                port:
+                  number: 8080

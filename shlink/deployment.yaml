@@ -1,0 +1,96 @@
+# Shlink — self-hosted URL shortener (API + redirect engine), replacing
+# the old Lambda/DynamoDB/S3/nginx-shim contraption. Backed by the
+# shlink-db CNPG Postgres cluster.
+#
+# DEFAULT_DOMAIN=go so generated links read `go/abc`. Bare `go` only
+# resolves in browsers whose OS handles single-label names (macOS needs
+# an /etc/hosts entry); go.home.chrisscotmartin.com works everywhere via
+# pihole. Both are ingress hosts below.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shlink
+  namespace: shlink
+  labels:
+    app: shlink
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shlink
+  template:
+    metadata:
+      labels:
+        app: shlink
+    spec:
+      containers:
+        - name: shlink
+          image: shlinkio/shlink:4
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DEFAULT_DOMAIN
+              value: "go"
+            - name: IS_HTTPS_ENABLED
+              # Links are generated as https://go/... — the ingress
+              # terminates TLS for go.home.chrisscotmartin.com.
+              value: "true"
+            - name: DB_DRIVER
+              value: "postgres"
+            - name: DB_HOST
+              value: "shlink-db-rw.shlink.svc"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "shlink"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: shlink-db-app
+                  key: user
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: shlink-db-app
+                  key: password
+            # Initial API key seeded from Vault (ESO -> shlink-api secret).
+            # Lets the web client + API authenticate without a manual
+            # post-deploy api-key:generate step.
+            - name: INITIAL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: shlink-api
+                  key: api-key
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /rest/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: /rest/health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shlink
+  namespace: shlink
+spec:
+  selector:
+    app: shlink
+  ports:
+    - port: 8080
+      targetPort: 8080
