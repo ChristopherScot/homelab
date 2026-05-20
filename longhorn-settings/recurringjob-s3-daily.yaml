@@ -1,0 +1,20 @@
+# Daily backup RecurringJob for volumes in the "s3-daily" group. Volumes
+# join by label recurring-job-group.longhorn.io/s3-daily=enabled and must
+# have spec.backupTargetName=s3-offsite so the backup lands in S3.
+# Used for the Paperless document media volume (offsite copy of scanned
+# documents — the 3rd leg of 3-2-1).
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: s3-daily-backup
+  namespace: longhorn-system
+spec:
+  cron: "0 4 * * *"          # 04:00 daily
+  task: backup
+  groups:
+    - s3-daily
+  retain: 14                  # keep 14 daily backups
+  concurrency: 1
+  labels:
+    app: longhorn
+    type: s3-daily-backup
