@@ -1,0 +1,83 @@
+# Vaultwarden ingress, split in two because its native clients (browser
+# extensions, mobile apps, CLI) authenticate against the API directly and
+# CANNOT follow Authelia's forward-auth redirect. So:
+#   - the web vault UI + /admin are gated by Authelia (human browser access)
+#   - the client API paths (/api, /identity, /notifications, /icons, /events)
+#     are exposed WITHOUT forward-auth — Vaultwarden's own auth protects them.
+# Same split-auth idea as Jellyfin's discovery exemption.
+#
+# Vaultwarden has its own strong account auth + 2FA, so the unauthed API
+# paths are not "open" — they require Vaultwarden login.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vaultwarden-clients
+  namespace: vaultwarden
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # NO auth-url here — client API paths must bypass Authelia.
+  labels:
+    app: vaultwarden
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [bitwarden.home.chrisscotmartin.com]
+      secretName: vaultwarden-tls
+  rules:
+    - host: bitwarden.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend: { service: { name: vaultwarden, port: { number: 80 } } }
+          - path: /identity
+            pathType: Prefix
+            backend: { service: { name: vaultwarden, port: { number: 80 } } }
+          - path: /notifications
+            pathType: Prefix
+            backend: { service: { name: vaultwarden, port: { number: 80 } } }
+          - path: /icons
+            pathType: Prefix
+            backend: { service: { name: vaultwarden, port: { number: 80 } } }
+          - path: /events
+            pathType: Prefix
+            backend: { service: { name: vaultwarden, port: { number: 80 } } }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vaultwarden-ui
+  namespace: vaultwarden
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    # Homepage dashboard tile (https://home.chrisscotmartin.com)
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: "Vaultwarden"
+    gethomepage.dev/description: "Password manager (Bitwarden-compatible)"
+    gethomepage.dev/group: "Productivity"
+    gethomepage.dev/icon: "vaultwarden.png"
+    # Authelia forward-auth — gates the web vault UI and /admin.
+    nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+    nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
+    nginx.ingress.kubernetes.io/auth-snippet: |
+      proxy_set_header X-Forwarded-Method $request_method;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $http_host;
+      proxy_set_header X-Forwarded-Uri $request_uri;
+      proxy_set_header X-Forwarded-For $remote_addr;
+    nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+  labels:
+    app: vaultwarden
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [bitwarden.home.chrisscotmartin.com]
+      secretName: vaultwarden-tls
+  rules:
+    - host: bitwarden.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend: { service: { name: vaultwarden, port: { number: 80 } } }

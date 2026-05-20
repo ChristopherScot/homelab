@@ -1,0 +1,98 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vaultwarden-data
+  namespace: vaultwarden
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vaultwarden
+  namespace: vaultwarden
+  annotations:
+    # Roll the pod when the DB or admin-token secret changes.
+    reloader.stakater.com/auto: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # RWO volume — never two pods mounting at once
+  selector:
+    matchLabels:
+      app: vaultwarden
+  template:
+    metadata:
+      labels:
+        app: vaultwarden
+    spec:
+      containers:
+        - name: vaultwarden
+          image: vaultwarden/server:1.32.7-alpine
+          ports:
+            - containerPort: 80   # web vault + API
+          env:
+            # Postgres backend (CNPG). DATABASE_URL assembled from the
+            # vaultwarden-db-app secret fields.
+            - name: DB_HOST
+              valueFrom: { secretKeyRef: { name: vaultwarden-db-app, key: host } }
+            - name: DB_PORT
+              valueFrom: { secretKeyRef: { name: vaultwarden-db-app, key: port } }
+            - name: DB_NAME
+              valueFrom: { secretKeyRef: { name: vaultwarden-db-app, key: dbname } }
+            - name: DB_USER
+              valueFrom: { secretKeyRef: { name: vaultwarden-db-app, key: user } }
+            - name: DB_PASS
+              valueFrom: { secretKeyRef: { name: vaultwarden-db-app, key: password } }
+            - name: DATABASE_URL
+              value: "postgresql://$(DB_USER):$(DB_PASS)@$(DB_HOST):$(DB_PORT)/$(DB_NAME)"
+            # Admin panel token (argon2 hash) from Vault.
+            - name: ADMIN_TOKEN
+              valueFrom: { secretKeyRef: { name: vaultwarden-secrets, key: ADMIN_TOKEN } }
+            - name: DOMAIN
+              value: "https://bitwarden.home.chrisscotmartin.com"
+            # Lock it down: no open signups (invite-only via /admin).
+            - name: SIGNUPS_ALLOWED
+              value: "false"
+            - name: INVITATIONS_ALLOWED
+              value: "true"
+            # WebSocket notifications served on the same port in modern
+            # Vaultwarden — no separate port needed.
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          livenessProbe:
+            httpGet: { path: /alive, port: 80 }
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet: { path: /alive, port: 80 }
+            initialDelaySeconds: 10
+            periodSeconds: 15
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: vaultwarden-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vaultwarden
+  namespace: vaultwarden
+spec:
+  selector:
+    app: vaultwarden
+  ports:
+    - port: 80
+      targetPort: 80

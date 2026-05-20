@@ -1,0 +1,127 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: paperless
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  sources:
+    # Supporting manifests (CNPG cluster, SecretStores, ExternalSecrets)
+    # live in the repo path; the app itself comes from the Helm chart.
+    - repoURL: 'https://github.com/ChristopherScot/homelab'
+      targetRevision: HEAD
+      path: paperless
+    - repoURL: https://charts.gabe565.com
+      chart: paperless-ngx
+      targetRevision: 0.24.1   # appVersion 2.14.7
+      helm:
+        valuesObject:
+          image:
+            tag: "2.14.7"
+          env:
+            TZ: America/New_York
+            PAPERLESS_URL: "https://paperless.home.chrisscotmartin.com"
+            # OCR languages — add more as needed (eng default).
+            PAPERLESS_OCR_LANGUAGE: eng
+            # Trust the forward-auth header from Authelia for SSO login.
+            PAPERLESS_ENABLE_HTTP_REMOTE_USER: "true"
+            PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME: HTTP_REMOTE_USER
+            # --- Postgres (CNPG paperless-db) ---
+            PAPERLESS_DBENGINE: postgresql
+            PAPERLESS_DBHOST: paperless-db-rw
+            PAPERLESS_DBPORT: "5432"
+            PAPERLESS_DBNAME: paperless
+            PAPERLESS_DBUSER: paperless
+            # CNPG db password — valueFrom nested in env (bjw-s common chart).
+            PAPERLESS_DBPASS:
+              valueFrom:
+                secretKeyRef:
+                  name: paperless-db-app
+                  key: password
+            PAPERLESS_ADMIN_USER:
+              value: admin
+          # PAPERLESS_SECRET_KEY + PAPERLESS_ADMIN_PASSWORD from Vault secret.
+          envFrom:
+            - secretRef:
+                name: paperless-secrets
+          persistence:
+            data:
+              enabled: true
+              storageClass: longhorn
+              accessMode: ReadWriteOnce
+              size: 2Gi
+            media:
+              enabled: true
+              storageClass: longhorn
+              accessMode: ReadWriteOnce
+              size: 20Gi          # scanned docs live here — size generously
+            consume:
+              enabled: true
+              storageClass: longhorn
+              accessMode: ReadWriteOnce
+              size: 4Gi
+            export:
+              enabled: true
+              storageClass: longhorn
+              accessMode: ReadWriteOnce
+              size: 2Gi
+          redis:
+            enabled: true
+            auth:
+              enabled: true
+              existingSecret: paperless-redis
+              existingSecretPasswordKey: redis-password
+            master:
+              persistence:
+                enabled: false      # broker/cache only — ephemeral
+          postgresql:
+            enabled: false          # using CNPG instead
+          ingress:
+            main:
+              enabled: true
+              annotations:
+                cert-manager.io/cluster-issuer: letsencrypt-prod
+                nginx.ingress.kubernetes.io/proxy-body-size: 64m
+                # Homepage dashboard tile (https://home.chrisscotmartin.com).
+                # A `paperless` widget (doc/inbox counts) can be added later
+                # via gethomepage.dev/widget.* once a Paperless API token is
+                # stored in the homepage env — left off for now.
+                gethomepage.dev/enabled: "true"
+                gethomepage.dev/name: "Paperless"
+                gethomepage.dev/description: "Document management & OCR"
+                gethomepage.dev/group: "Productivity"
+                gethomepage.dev/icon: "paperless-ngx.png"
+                nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
+                nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
+                nginx.ingress.kubernetes.io/auth-snippet: |
+                  proxy_set_header X-Forwarded-Method $request_method;
+                  proxy_set_header X-Forwarded-Proto $scheme;
+                  proxy_set_header X-Forwarded-Host $http_host;
+                  proxy_set_header X-Forwarded-Uri $request_uri;
+                  proxy_set_header X-Forwarded-For $remote_addr;
+                nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+                # Authelia passes the user via Remote-User; the auth-snippet
+                # above must also forward it as HTTP_REMOTE_USER for
+                # PAPERLESS_ENABLE_HTTP_REMOTE_USER to consume.
+              ingressClassName: external
+              hosts:
+                - host: paperless.home.chrisscotmartin.com
+                  paths:
+                    - path: /
+                      pathType: Prefix
+              tls:
+                - secretName: paperless-tls
+                  hosts:
+                    - paperless.home.chrisscotmartin.com
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: paperless
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
