@@ -1,0 +1,73 @@
+# Alerting contact points, provisioned as code (the originals were UI-only and
+# lost in the SQLite->Postgres migration; see GRAFANA_POSTGRES_MIGRATION.md).
+#   - email-chris  : SES SMTP email to chris@chrisscotmartin.com
+#   - ntfy-warning : webhook -> in-cluster ntfy /homelab-warning topic
+#   - ntfy-critical: webhook -> in-cluster ntfy /homelab-critical topic
+# ntfy Bearer token comes from the grafana-ntfy Secret (Vault kv/ntfy/config),
+# injected via valuesFrom so no secret lands in git.
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaContactPoint
+metadata:
+  name: email-chris
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  name: email-chris
+  receivers:
+    - type: email
+      settings:
+        addresses: chris@chrisscotmartin.com
+        singleEmail: true
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaContactPoint
+metadata:
+  name: ntfy-warning
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  name: ntfy-warning
+  receivers:
+    - type: webhook
+      settings:
+        url: http://ntfy.ntfy.svc.cluster.local/homelab-warning
+        httpMethod: POST
+        authorization_scheme: Bearer
+        title: '{{ .CommonLabels.alertname }}'
+        message: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+      valuesFrom:
+        - targetPath: authorization_credentials
+          valueFrom:
+            secretKeyRef:
+              name: grafana-ntfy
+              key: token
+---
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaContactPoint
+metadata:
+  name: ntfy-critical
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  name: ntfy-critical
+  receivers:
+    - type: webhook
+      settings:
+        url: http://ntfy.ntfy.svc.cluster.local/homelab-critical
+        httpMethod: POST
+        authorization_scheme: Bearer
+        title: '{{ .CommonLabels.alertname }}'
+        message: "{{ range .Alerts }}{{ .Annotations.summary }}\n{{ end }}"
+      valuesFrom:
+        - targetPath: authorization_credentials
+          valueFrom:
+            secretKeyRef:
+              name: grafana-ntfy
+              key: token

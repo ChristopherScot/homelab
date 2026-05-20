@@ -1,0 +1,66 @@
+# Node / workload alert rules (provisioned as code; were UI-only before the
+# SQLite->Postgres migration). UIDs preserved from the originals.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: nodes
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  folderRef: monitoring
+  interval: 60s
+  rules:
+    - uid: bfmla7jjzcdtsa
+      title: Node root disk almost full
+      condition: B
+      for: 10m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: nodes, severity: warning }
+      annotations:
+        summary: 'Node {{ $labels.instance }} root disk is {{ printf "%.0f" $values.A.Value }}% full'
+        description: "The root filesystem (/) on node {{ $labels.instance }} has been over 85% full for 10m. A full root disk causes kubelet DiskPressure evictions and can wedge the node. Free space or expand. Check `df -h /` on the node. Note: pop-os runs warmer (it is also a desktop)."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: '100 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} * 100)', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [85] }
+    - uid: cfmld7mw9c5j4e
+      title: Pod container crash looping
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: workloads, severity: warning }
+      annotations:
+        summary: '{{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is crash looping ({{ printf "%.0f" $values.A.Value }} restarts in 15m)'
+        description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} restarted more than 3 times in 15 minutes — it is crash looping, not just recovering. Check `kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }} --previous` and the container's last terminated state (OOMKilled, exit code, etc.)."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 900, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'max by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total[15m]))', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [3] }

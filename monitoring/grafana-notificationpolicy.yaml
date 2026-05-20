@@ -1,0 +1,34 @@
+# Notification routing tree (provisioned as code; was UI-only before).
+#   default            -> ntfy-warning
+#   severity=critical  -> ntfy-critical  (continue) -> also email-chris
+# The two critical routes are siblings both matching severity=critical; the
+# first sets continue:true so a critical alert fans out to BOTH ntfy-critical
+# and email (Grafana evaluates one receiver per matched route node).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaNotificationPolicy
+metadata:
+  name: local
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  route:
+    receiver: ntfy-warning
+    group_by:
+      - grafana_folder
+      - alertname
+    routes:
+      - receiver: ntfy-critical
+        continue: true
+        group_by:
+          - grafana_folder
+          - alertname
+        object_matchers:
+          - ["severity", "=", "critical"]
+      - receiver: email-chris
+        group_by:
+          - grafana_folder
+          - alertname
+        object_matchers:
+          - ["severity", "=", "critical"]

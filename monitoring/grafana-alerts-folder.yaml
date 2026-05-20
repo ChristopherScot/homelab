@@ -1,0 +1,13 @@
+# Codifies the existing 'monitoring' alerting folder as a CR so the alert-rule
+# groups below have a managed parent. Title matches the pre-existing UI folder
+# to avoid moving rules / churning their permalinks.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaFolder
+metadata:
+  name: monitoring
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  title: monitoring

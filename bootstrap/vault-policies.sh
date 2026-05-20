@@ -71,14 +71,16 @@ path "kv/data/ses/*"               { capabilities = ["read"] }
 path "kv/metadata/ses/*"           { capabilities = ["read", "list"] }
 EOF
 
-# Monitoring reads grafana-local creds and shared SES SMTP so Grafana can
-# send alert emails. mcp-grafana and Alloy collectors bind to the same
-# role via external-secrets-sa in the monitoring ns.
+# Monitoring reads grafana-local creds, shared SES SMTP (alert emails), and the
+# ntfy grafana_token (webhook contact points for ntfy alerts). mcp-grafana and
+# Alloy collectors bind to the same role via external-secrets-sa in monitoring.
 vault policy write monitoring - <<EOF
 path "kv/data/grafana-local"     { capabilities = ["read"] }
 path "kv/metadata/grafana-local" { capabilities = ["read", "list"] }
 path "kv/data/ses/*"             { capabilities = ["read"] }
 path "kv/metadata/ses/*"         { capabilities = ["read", "list"] }
+path "kv/data/ntfy/*"            { capabilities = ["read"] }
+path "kv/metadata/ntfy/*"        { capabilities = ["read", "list"] }
 EOF
 vault write auth/kubernetes/role/monitoring \
   bound_service_account_names="external-secrets-sa" \

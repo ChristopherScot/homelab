@@ -1,0 +1,120 @@
+# Longhorn alert rules (provisioned as code; were UI-only before the
+# SQLite->Postgres migration). UIDs preserved from the originals so existing
+# silences/links stay valid. Query A hits the VictoriaMetrics datasource
+# (uid grafanacloud-prom); B is a threshold expression.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: longhorn
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  folderRef: monitoring
+  interval: 60s
+  rules:
+    - uid: dfml6mxpjk8owe
+      title: Longhorn volume not healthy
+      condition: B
+      for: 10m
+      noDataState: OK
+      execErrState: OK
+      labels: { app: longhorn, severity: warning }
+      annotations:
+        summary: "Longhorn volume {{ $labels.pvc_namespace }}/{{ $labels.pvc }} is not healthy (robustness code {{ $values.A }}: 0=unknown, 2=degraded, 3=faulted) on node {{ $labels.node }}"
+        description: "The Longhorn volume backing {{ $labels.pvc_namespace }}/{{ $labels.pvc }} has been in a non-healthy robustness state for over 10m. Check the Longhorn UI or `kubectl get volumes.longhorn.io -n longhorn-system`. Degraded usually self-heals via replica rebuild; faulted needs attention."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: "longhorn_volume_robustness != 1", instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
+    - uid: cfml6nlv6pmgwd
+      title: Longhorn backup in error state
+      condition: B
+      for: 10m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: backups, severity: warning }
+      annotations:
+        summary: "One or more Longhorn backups are in an error state"
+        description: "At least one Longhorn Backup CR is in error state (state=4) for over 10m. Identify which: `kubectl get backups.longhorn.io -n longhorn-system` (look for state=Error) or the Longhorn UI Backup tab. Common causes: NFS target unreachable mid-backup, disk full, network blip during the weekly backup job."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: "count(longhorn_backup_state == 4)", instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
+    - uid: dfml6o97a28zkc
+      title: Longhorn auto-backup hasn't succeeded in >8 days
+      condition: B
+      for: 10m
+      noDataState: Alerting
+      execErrState: OK
+      labels: { component: backups, severity: critical }
+      annotations:
+        summary: "Longhorn auto-backup hasn't succeeded in >8 days"
+        description: "The Longhorn auto-backup CronJob (weekly Sundays 3am, writes to node2-hdd) has not succeeded in >8 days. PVCs have lost backup coverage. Check `kubectl get jobs -n longhorn-system` and the Longhorn UI Backup tab."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'time() - kube_cronjob_status_last_successful_time{namespace="longhorn-system", cronjob="auto-backup"}', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [691200] }
+    - uid: bfml6ovsgi9dsb
+      title: Backup mirror to Synology hasn't succeeded in >8 days
+      condition: B
+      for: 10m
+      noDataState: Alerting
+      execErrState: OK
+      labels: { component: backups, severity: warning }
+      annotations:
+        summary: "Backup mirror to Synology hasn't succeeded in >8 days"
+        description: "The longhorn-backup-mirror CronJob (rsync node2-hdd -> Synology /volume1/media, weekly Sundays 5am) has not succeeded in >8 days. Primary backups on node2 are fine; the second copy on Synology is stale."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'time() - kube_cronjob_status_last_successful_time{namespace="longhorn-system", cronjob="longhorn-backup-mirror"}', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [691200] }
