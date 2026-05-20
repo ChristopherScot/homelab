@@ -35,7 +35,7 @@ spec:
   receivers:
     - type: webhook
       settings:
-        url: http://ntfy.ntfy.svc.cluster.local/homelab-warning
+        url: http://ntfy.ntfy.svc.cluster.local/homelab-warning?template=grafana
         httpMethod: POST
         authorization_scheme: Bearer
         title: '{{ .CommonLabels.alertname }}'
@@ -60,7 +60,7 @@ spec:
   receivers:
     - type: webhook
       settings:
-        url: http://ntfy.ntfy.svc.cluster.local/homelab-critical
+        url: http://ntfy.ntfy.svc.cluster.local/homelab-critical?template=grafana
         httpMethod: POST
         authorization_scheme: Bearer
         title: '{{ .CommonLabels.alertname }}'
