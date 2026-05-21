@@ -42,11 +42,6 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
-      # Kubernetes injects <SVCNAME>_PORT env for every service; the
-      # `paperless` Service would set PAPERLESS_PORT=tcp://<ip>:80, which
-      # collides with the port int granian expects. Disable service-link
-      # env injection (we don't rely on it) to avoid the whole class.
-      enableServiceLinks: false
       containers:
         - name: paperless
           image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
@@ -105,23 +100,31 @@ spec:
           startupProbe:
             httpGet: { path: /accounts/login/, port: 8000 }
             periodSeconds: 10
-            failureThreshold: 30      # OCR image + DB migrations can be slow
+            timeoutSeconds: 10        # web answers slowly under boot load
+            failureThreshold: 60      # OCR image + DB migrations can be slow
           livenessProbe:
             httpGet: { path: /accounts/login/, port: 8000 }
             periodSeconds: 30
+            timeoutSeconds: 10
             failureThreshold: 5
           readinessProbe:
             httpGet: { path: /accounts/login/, port: 8000 }
             periodSeconds: 15
+            timeoutSeconds: 10
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: paperless-data
 ---
+# Named paperless-web (not paperless) on purpose: Kubernetes injects a
+# <SVCNAME>_PORT env var into pods in the namespace, and a Service named
+# `paperless` would inject PAPERLESS_PORT=tcp://<ip>:80, shadowing
+# Paperless's own PAPERLESS_PORT integer setting and crashing granian.
+# `paperless-web` injects the harmless PAPERLESS_WEB_PORT instead.
 apiVersion: v1
 kind: Service
 metadata:
-  name: paperless
+  name: paperless-web
   namespace: paperless
 spec:
   selector:
