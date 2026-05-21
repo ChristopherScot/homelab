@@ -1,0 +1,27 @@
+# The Claude session pods operate the cluster the same way the human-driven
+# session does (cluster-admin), since they ARE interactive sessions you drive
+# via /remote-control — not unattended agents. A person is always in the loop.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: claude-pods
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: claude-session
+  namespace: claude-pods
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: claude-session-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: claude-session
+    namespace: claude-pods
