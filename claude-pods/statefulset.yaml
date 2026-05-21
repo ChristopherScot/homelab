@@ -29,20 +29,43 @@ spec:
       containers:
         - name: claude
           image: ghcr.io/christopherscot/claude-pod:2.1.146
-          # Wire git HTTPS push creds, then idle. You exec in and clone the
-          # repo yourself (git clone https://github.com/ChristopherScot/homelab),
-          # start `claude`, then /remote-control.
+          # Wire git HTTPS push creds, pre-clone any repos listed in
+          # CLONE_REPOS, then idle. You exec in, start `claude`, then
+          # /remote-control.
           command:
             - bash
             - -lc
             - |
+              set +e
               git config --global credential.helper store
               cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
               chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
+              # CLONE_REPOS: space/comma/newline-separated. Accepts full URLs
+              # or owner/repo slugs (assumed github.com). Idempotent: skips a
+              # repo whose dir already exists in /workspace.
+              for r in $(echo "${CLONE_REPOS:-}" | tr ',\n' '  '); do
+                [ -z "$r" ] && continue
+                case "$r" in
+                  http*://*|git@*) url="$r" ;;
+                  */*)             url="https://github.com/$r.git" ;;
+                  *)               echo "skip unrecognized repo ref: $r"; continue ;;
+                esac
+                dir="/workspace/$(basename "$r" .git)"
+                if [ -d "$dir/.git" ]; then
+                  echo "repo present: $dir"
+                else
+                  echo "cloning $url -> $dir"
+                  git clone "$url" "$dir" || echo "WARN: clone failed: $url"
+                fi
+              done
               exec sleep infinity
           env:
             - name: HOME
               value: /home/node
+            # Repos to pre-clone into /workspace on startup (space/comma/
+            # newline-separated; full URLs or owner/repo slugs).
+            - name: CLONE_REPOS
+              value: "ChristopherScot/homelab"
             # Git identity for commits made from these sessions.
             - name: GIT_AUTHOR_NAME
               value: "Chris (claude-pod)"
