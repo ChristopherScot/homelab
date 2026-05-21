@@ -42,6 +42,11 @@ spec:
     spec:
       securityContext:
         fsGroup: 1000
+      # Kubernetes injects <SVCNAME>_PORT env for every service; the
+      # `paperless` Service would set PAPERLESS_PORT=tcp://<ip>:80, which
+      # collides with the port int granian expects. Disable service-link
+      # env injection (we don't rely on it) to avoid the whole class.
+      enableServiceLinks: false
       containers:
         - name: paperless
           image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
