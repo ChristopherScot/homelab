@@ -4,18 +4,26 @@
 FROM node:22-bookworm-slim
 
 ARG CLAUDE_CODE_VERSION=2.1.146
+# kubectl pinned near the cluster's k3s 1.30 (avoid large version skew).
 ARG KUBECTL_VERSION=v1.30.6
-ARG HELM_VERSION=v3.16.3
-ARG YQ_VERSION=v4.44.3
-ARG GO_VERSION=1.23.4
-ARG TOFU_VERSION=1.9.0
-ARG STARSHIP_VERSION=latest
+# helm kept on v3 (v4 is a breaking major; chart compat).
+ARG HELM_VERSION=v3.16.4
+ARG YQ_VERSION=v4.53.2
+ARG GO_VERSION=1.26.3
+ARG TOFU_VERSION=1.12.0
+ARG NVIM_VERSION=v0.12.2
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates jq openssh-client less vim ripgrep gnupg \
-      tmux neovim unzip build-essential \
+      tmux unzip build-essential \
       zsh fzf fd-find \
     && rm -rf /var/lib/apt/lists/*
+
+# Neovim — latest from the official release tarball (Debian's apt nvim is far
+# too old for modern lazy.nvim/treesitter/telescope).
+RUN curl -fsSL "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-x86_64.tar.gz" \
+      | tar -xz -C /opt \
+    && ln -s /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
 
 # eza (modern ls) — from the official apt repo
 RUN mkdir -p /etc/apt/keyrings \
@@ -104,6 +112,9 @@ RUN mkdir -p /home/node/.config/nvim \
     && chown -R 1000:1000 /home/node/.config
 
 # Shell: oh-my-zsh + starship + zoxide + eza aliases (nexxeln-style workflow).
+# Custom config goes in $ZSH_CUSTOM (sourced AFTER oh-my-zsh.sh, so our
+# aliases/inits win — appending to .zshrc loaded too early and OMZ clobbered
+# them). starship replaces the OMZ theme.
 RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended' \
     && printf '%s\n' \
       'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' \
@@ -116,9 +127,8 @@ RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/oh
       'alias cd="z"' \
       'alias vim="nvim"' \
       'alias fd="fdfind"' \
-      > /home/node/.zshrc.local \
-    && echo 'source $HOME/.zshrc.local' >> /home/node/.zshrc \
-    && chown -R 1000:1000 /home/node/.oh-my-zsh /home/node/.zshrc /home/node/.zshrc.local
+      > /home/node/.oh-my-zsh/custom/zz-workflow.zsh \
+    && chown -R 1000:1000 /home/node/.oh-my-zsh /home/node/.zshrc
 
 # Default the node user to zsh (the configured shell above).
 RUN chsh -s /usr/bin/zsh node
