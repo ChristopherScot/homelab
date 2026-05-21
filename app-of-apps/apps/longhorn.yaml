@@ -11,9 +11,12 @@ spec:
   # longhorn-storageclass ConfigMap (it only *creates* the SC if absent, never
   # updates it — longhorn/longhorn#3821) and forces reclaimPolicy: Delete, which
   # is immutable. Argo's reapply then fails and the app sits OutOfSync forever
-  # (longhorn/longhorn#9391). Ignore the manager-owned SC fields so the app can
-  # report Synced. To actually change numberOfReplicas: edit the ConfigMap and
-  # delete the SC so the manager recreates it.
+  # (longhorn/longhorn#9391). On top of that, Argo does byte-exact comparison of
+  # ConfigMap .data, so the block-scalar trailing newline in the rendered
+  # storageclass.yaml keeps the ConfigMap perpetually OutOfSync. Ignore the
+  # manager-owned SC fields AND the ConfigMap data so the app can report Synced.
+  # To actually change numberOfReplicas: edit the ConfigMap and delete the SC so
+  # the manager recreates it (the chart value alone can't update an existing SC).
   ignoreDifferences:
   - group: storage.k8s.io
     kind: StorageClass
@@ -21,6 +24,11 @@ spec:
     jsonPointers:
     - /parameters
     - /reclaimPolicy
+  - kind: ConfigMap
+    name: longhorn-storageclass
+    namespace: longhorn-system
+    jsonPointers:
+    - /data
   project: default
   sources:
   - chart: longhorn
