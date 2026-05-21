@@ -44,8 +44,8 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: paperless
-                port: { number: 80 }
+                name: paperless-web
+                port: {number: 80}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -69,5 +69,5 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: paperless
-                port: { number: 80 }
+                name: paperless-web
+                port: {number: 80}
