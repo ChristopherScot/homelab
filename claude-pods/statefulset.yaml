@@ -29,6 +29,9 @@ spec:
       containers:
         - name: claude
           image: ghcr.io/christopherscot/claude-pod:2.1.146
+          # The :2.1.146 tag is rebuilt as tooling evolves; always re-pull so
+          # rollouts pick up the new digest (otherwise IfNotPresent caches it).
+          imagePullPolicy: Always
           # Wire git HTTPS push creds, pre-clone any repos listed in
           # CLONE_REPOS, then idle. You exec in, start `claude`, then
           # /remote-control.
