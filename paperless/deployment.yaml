@@ -1,0 +1,126 @@
+# Paperless-ngx, hand-rolled (no Helm chart — gabe565 was stuck at 2.14.7
+# and the wrenix chart's existing-secret env handling is broken). Pinned to
+# the current Paperless so the mobile app's API-version check passes.
+#
+# Reuses everything already in this namespace:
+#   - CNPG paperless-db (PAPERLESS_DB* + password from paperless-db-app)
+#   - standalone redis (redis.yaml) via PAPERLESS_REDIS in paperless-secrets
+#   - paperless-secrets (REDIS url, SECRET_KEY, ADMIN_PASSWORD) + paperless-smtp
+#     (SES) via envFrom — same as the old chart did
+#   - single combined PVC with subPaths for data/media/consume/export
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: paperless-data
+  namespace: paperless
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 28Gi   # data + media (docs) + consume + export, all subPaths
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: paperless
+  namespace: paperless
+  annotations:
+    reloader.stakater.com/auto: "true"   # roll on secret/config change
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate            # RWO volume — one pod at a time
+  selector:
+    matchLabels:
+      app: paperless
+  template:
+    metadata:
+      labels:
+        app: paperless
+    spec:
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: paperless
+          image: ghcr.io/paperless-ngx/paperless-ngx:2.20.15
+          ports:
+            - containerPort: 8000
+          env:
+            - name: TZ
+              value: America/New_York
+            - name: PAPERLESS_URL
+              value: "https://paperless.home.chrisscotmartin.com"
+            - name: PAPERLESS_OCR_LANGUAGE
+              value: eng
+            # SSO: trust the Remote-User header forwarded by Authelia.
+            - name: PAPERLESS_ENABLE_HTTP_REMOTE_USER
+              value: "true"
+            - name: PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME
+              value: HTTP_REMOTE_USER
+            - name: PAPERLESS_USE_X_FORWARD_HOST
+              value: "true"
+            - name: PAPERLESS_ADMIN_USER
+              value: admin
+            # --- Postgres (CNPG paperless-db) ---
+            - name: PAPERLESS_DBENGINE
+              value: postgresql
+            - name: PAPERLESS_DBHOST
+              value: paperless-db-rw
+            - name: PAPERLESS_DBPORT
+              value: "5432"
+            - name: PAPERLESS_DBNAME
+              value: paperless
+            - name: PAPERLESS_DBUSER
+              value: paperless
+            - name: PAPERLESS_DBPASS
+              valueFrom:
+                secretKeyRef: { name: paperless-db-app, key: password }
+          # PAPERLESS_REDIS (full url), PAPERLESS_SECRET_KEY,
+          # PAPERLESS_ADMIN_PASSWORD from Vault-backed paperless-secrets;
+          # SES PAPERLESS_EMAIL_* from paperless-smtp. Same secrets the
+          # gabe565 chart consumed — nothing re-created.
+          envFrom:
+            - secretRef:
+                name: paperless-secrets
+            - secretRef:
+                name: paperless-smtp
+          volumeMounts:
+            - { name: data, mountPath: /usr/src/paperless/data,    subPath: data }
+            - { name: data, mountPath: /usr/src/paperless/media,   subPath: media }
+            - { name: data, mountPath: /usr/src/paperless/consume, subPath: consume }
+            - { name: data, mountPath: /usr/src/paperless/export,  subPath: export }
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          startupProbe:
+            httpGet: { path: /accounts/login/, port: 8000 }
+            periodSeconds: 10
+            failureThreshold: 30      # OCR image + DB migrations can be slow
+          livenessProbe:
+            httpGet: { path: /accounts/login/, port: 8000 }
+            periodSeconds: 30
+            failureThreshold: 5
+          readinessProbe:
+            httpGet: { path: /accounts/login/, port: 8000 }
+            periodSeconds: 15
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: paperless-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: paperless
+  namespace: paperless
+spec:
+  selector:
+    app: paperless
+  ports:
+    - port: 80
+      targetPort: 8000

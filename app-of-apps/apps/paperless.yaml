@@ -7,125 +7,16 @@ metadata:
     - resources-finalizer.argocd.argoproj.io
 spec:
   project: default
-  sources:
-    # Supporting manifests (CNPG cluster, SecretStores, ExternalSecrets,
-    # standalone redis, mail-ingest, sync button, the auth-exempt /api
-    # ingress) live in the repo path; the app itself comes from the chart.
-    - repoURL: 'https://github.com/ChristopherScot/homelab'
-      targetRevision: HEAD
-      path: paperless
-    # wrenix chart — tracks current Paperless (gabe565 was stuck at 2.14.7;
-    # the mobile app rejected that API version). OCI registry: Argo v2.13
-    # wants the registry host WITHOUT the oci:// scheme prefix (same as the
-    # ghcr.io/grafana/helm-charts grafana-operator source).
-    - repoURL: codeberg.org/wrenix/helm-charts
-      chart: paperless-ngx
-      targetRevision: 0.3.19   # appVersion 2.20.15
-      helm:
-        valuesObject:
-          # Single combined PVC with subPaths (data/media/consume/export) —
-          # this chart's layout. Fresh volume; the Longhorn s3-offsite backup
-          # binding is re-applied to it post-deploy (see runbook in repo).
-          persistence:
-            enabled: true
-            storageClass: longhorn
-            accessMode: ReadWriteOnce
-            size: 28Gi          # ~ sum of the old 4 (data2+media20+consume4+export2)
-
-          # Bundled postgres off — using CNPG (paperless-db).
-          postgresql:
-            enabled: false
-          # Bundled valkey (redis fork) off — using the standalone redis in
-          # paperless/redis.yaml. PAPERLESS_REDIS is set from Vault via env
-          # below, so config.redis.url stays empty (no password in git).
-          valkey:
-            internal: false
-
-          config:
-            url: "https://paperless.home.chrisscotmartin.com"
-            database:
-              engine: postgresql
-              host: paperless-db-rw
-              port: 5432
-              name: paperless
-              user: paperless
-              existingSecret:
-                name: paperless-db-app
-                passKey: password
-
-          # Paperless env. Secret-backed values (REDIS url, SECRET_KEY,
-          # ADMIN_PASSWORD, SES SMTP) come via valuesFrom against the same
-          # Vault-backed secrets used before — nothing re-created.
-          env:
-            TZ: America/New_York
-            PAPERLESS_OCR_LANGUAGE: eng
-            # SSO: trust Authelia's forwarded Remote-User header.
-            PAPERLESS_ENABLE_HTTP_REMOTE_USER: "true"
-            PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME: HTTP_REMOTE_USER
-            PAPERLESS_USE_X_FORWARD_HOST: "true"
-            PAPERLESS_ADMIN_USER: admin
-            PAPERLESS_REDIS:
-              valuesFrom:
-                secretKeyRef: { name: paperless-secrets, key: PAPERLESS_REDIS }
-            # PAPERLESS_SECRET_KEY is special-cased by the chart's
-            # secrets.yaml (it can't take a valuesFrom map there — chart bug).
-            # The chart generates+persists its own random key, which is fine:
-            # the DB is empty so nothing depends on the old key. Not from Vault.
-            PAPERLESS_ADMIN_PASSWORD:
-              valuesFrom:
-                secretKeyRef: { name: paperless-secrets, key: PAPERLESS_ADMIN_PASSWORD }
-            # SES SMTP (mirrors the old paperless-smtp envFrom).
-            PAPERLESS_EMAIL_HOST:
-              valuesFrom:
-                secretKeyRef: { name: paperless-smtp, key: PAPERLESS_EMAIL_HOST }
-            PAPERLESS_EMAIL_PORT:
-              valuesFrom:
-                secretKeyRef: { name: paperless-smtp, key: PAPERLESS_EMAIL_PORT }
-            PAPERLESS_EMAIL_HOST_USER:
-              valuesFrom:
-                secretKeyRef: { name: paperless-smtp, key: PAPERLESS_EMAIL_HOST_USER }
-            PAPERLESS_EMAIL_HOST_PASSWORD:
-              valuesFrom:
-                secretKeyRef: { name: paperless-smtp, key: PAPERLESS_EMAIL_HOST_PASSWORD }
-            PAPERLESS_EMAIL_USE_TLS:
-              valuesFrom:
-                secretKeyRef: { name: paperless-smtp, key: PAPERLESS_EMAIL_USE_TLS }
-            PAPERLESS_EMAIL_FROM:
-              valuesFrom:
-                secretKeyRef: { name: paperless-smtp, key: PAPERLESS_EMAIL_FROM }
-
-          # Authelia-gated main ingress (the /api auth-exempt one is a
-          # standalone manifest in paperless/api-ingress.yaml — this chart
-          # only renders a single ingress).
-          ingress:
-            enabled: true
-            className: external
-            annotations:
-              cert-manager.io/cluster-issuer: letsencrypt-prod
-              nginx.ingress.kubernetes.io/proxy-body-size: 64m
-              gethomepage.dev/enabled: "true"
-              gethomepage.dev/name: "Paperless"
-              gethomepage.dev/description: "Document management & OCR"
-              gethomepage.dev/group: "Productivity"
-              gethomepage.dev/icon: "paperless-ngx.png"
-              nginx.ingress.kubernetes.io/auth-url: "http://authelia.authelia.svc.cluster.local/api/verify"
-              nginx.ingress.kubernetes.io/auth-signin: "https://auth.home.chrisscotmartin.com/?rd=$scheme://$host$escaped_request_uri"
-              nginx.ingress.kubernetes.io/auth-snippet: |
-                proxy_set_header X-Forwarded-Method $request_method;
-                proxy_set_header X-Forwarded-Proto $scheme;
-                proxy_set_header X-Forwarded-Host $http_host;
-                proxy_set_header X-Forwarded-Uri $request_uri;
-                proxy_set_header X-Forwarded-For $remote_addr;
-              nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
-            hosts:
-              - host: paperless.home.chrisscotmartin.com
-                paths:
-                  - path: /
-                    pathType: Prefix
-            tls:
-              - secretName: paperless-tls
-                hosts:
-                  - paperless.home.chrisscotmartin.com
+  # Hand-rolled manifests (no Helm chart). gabe565 was stuck at Paperless
+  # 2.14.7 (mobile app rejected the API version) and the wrenix chart's
+  # existing-secret env handling is broken — so we own the manifests:
+  # deployment.yaml (image pinned to current), ingress.yaml, plus the
+  # existing db.yaml / redis.yaml / externalsecret*.yaml / mail-ingest /
+  # sync-trigger in the same path.
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: paperless
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: paperless
