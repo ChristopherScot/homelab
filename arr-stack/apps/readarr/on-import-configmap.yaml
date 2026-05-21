@@ -1,0 +1,65 @@
+# On-Import hook for Readarr: copies each successfully-imported book into
+# the CWA ingest folder (/cwa-book-ingest) so autocaliweb processes it into
+# the Calibre library -> Kavita. Without this, Readarr imports land as loose
+# files in /media/books and never reach Calibre (the Shelfmark path is the
+# only one that fed CWA before).
+#
+# Readarr fires this CustomScript ONLY on a complete import (eventType
+# Download), and CWA's own ingest readiness-check (file-stable timeout)
+# guards against partial files — so partial books cannot be ingested.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: readarr-on-import
+  namespace: media
+data:
+  on-import.sh: |
+    #!/bin/sh
+    # Readarr CustomScript. Relevant env on import (eventType=Download):
+    #   readarr_eventtype          = Test | Download | ...
+    #   readarr_author_path        = /media/books/<Author>
+    #   readarr_addedbookpaths     = newly imported file path(s), '|'-separated
+    set -eu
+    INGEST=/cwa-book-ingest
+    LOG() { echo "[readarr-on-import] $*"; }
+
+    # Connection test from the Readarr UI.
+    if [ "${readarr_eventtype:-}" = "Test" ]; then
+      LOG "test ok; ingest dir present: $([ -d "$INGEST" ] && echo yes || echo NO)"
+      exit 0
+    fi
+
+    # Only act on a completed import.
+    if [ "${readarr_eventtype:-}" != "Download" ]; then
+      LOG "eventType=${readarr_eventtype:-none}; nothing to do"
+      exit 0
+    fi
+
+    if [ ! -d "$INGEST" ]; then
+      LOG "ERROR: ingest dir $INGEST not mounted"; exit 1
+    fi
+
+    # readarr_addedbookpaths is a '|'-separated list of imported files.
+    paths="${readarr_addedbookpaths:-}"
+    if [ -z "$paths" ]; then
+      LOG "no readarr_addedbookpaths provided; nothing to copy"; exit 0
+    fi
+
+    IFS='|'
+    for f in $paths; do
+      [ -z "$f" ] && continue
+      if [ ! -f "$f" ]; then
+        LOG "skip (not a file): $f"; continue
+      fi
+      base=$(basename "$f")
+      tmp="$INGEST/.partial.$base"
+      dst="$INGEST/$base"
+      # Copy to a hidden temp name first, then atomic rename, so CWA's
+      # watcher never sees a half-copied file (belt-and-suspenders with
+      # CWA's own readiness check).
+      LOG "copying: $base"
+      cp "$f" "$tmp"
+      mv "$tmp" "$dst"
+      LOG "delivered to ingest: $dst"
+    done
+    LOG "done"

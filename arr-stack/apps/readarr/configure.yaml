@@ -100,6 +100,37 @@ spec:
                     curl -sf $H "$READARR/api/v1/downloadclient/$EXISTING" -X PUT -d "$UPDATED" >/dev/null
                   fi
 
+                  # On-Import CustomScript: deliver completed books to the CWA
+                  # ingest folder (mounted at /cwa-book-ingest, script at
+                  # /scripts/on-import.sh from the readarr-on-import ConfigMap)
+                  # so autocaliweb -> Calibre -> Kavita picks them up. Fires
+                  # only on a complete import (onReleaseImport).
+                  EXISTING=$(curl -sf $H "$READARR/api/v1/notification" | jq -r '.[] | select(.name=="CWA Ingest") | .id')
+                  HOOK=$(jq -n '{
+                    onGrab: false,
+                    onReleaseImport: true,
+                    onUpgrade: true,
+                    onRename: false,
+                    onHealthIssue: false,
+                    onBookDelete: false,
+                    onBookFileDelete: false,
+                    onBookFileDeleteForUpgrade: false,
+                    name: "CWA Ingest",
+                    fields: [ {name:"path", value:"/scripts/on-import.sh"} ],
+                    implementationName: "Custom Script",
+                    implementation: "CustomScript",
+                    configContract: "CustomScriptSettings",
+                    tags: []
+                  }')
+                  if [ -z "$EXISTING" ]; then
+                    echo "==> adding CWA Ingest custom script"
+                    curl -sf $H "$READARR/api/v1/notification" -d "$HOOK" >/dev/null
+                  else
+                    echo "==> updating CWA Ingest custom script (id=$EXISTING)"
+                    UPDATED=$(echo "$HOOK" | jq --argjson id "$EXISTING" '. + {id:$id}')
+                    curl -sf $H "$READARR/api/v1/notification/$EXISTING" -X PUT -d "$UPDATED" >/dev/null
+                  fi
+
                   echo "==> done"
               resources:
                 requests:

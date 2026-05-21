@@ -17,6 +17,16 @@ extraVolumes:
   - name: books
     mountPath: /media/books
     claimName: books-longhorn-rwo
+  # CWA ingest folder (RWX) so the on-import hook delivers completed books
+  # to autocaliweb -> Calibre -> Kavita (Readarr imports otherwise dead-end
+  # as loose files in /media/books, never reaching Calibre).
+  - name: cwa-ingest
+    mountPath: /cwa-book-ingest
+    claimName: acw-ingest-longhorn
+  # On-import CustomScript, mounted read-exec from a ConfigMap.
+  - name: on-import
+    mountPath: /scripts
+    configMap: readarr-on-import
 
 # Colocate with autocaliweb so we share the same node as the
 # books-longhorn-rwo volume Longhorn attaches there.

@@ -62,6 +62,9 @@ spec:
             {{- range .Values.extraVolumes }}
             - name: {{ .name }}
               mountPath: {{ .mountPath }}
+              {{- if .subPath }}
+              subPath: {{ .subPath }}
+              {{- end }}
               {{- if .readOnly }}
               readOnly: true
               {{- end }}
@@ -78,7 +81,13 @@ spec:
         {{- end }}
         {{- range .Values.extraVolumes }}
         - name: {{ .name }}
+          {{- if .configMap }}
+          configMap:
+            name: {{ .configMap }}
+            defaultMode: {{ .defaultMode | default 0755 }}
+          {{- else }}
           persistentVolumeClaim:
             claimName: {{ .claimName }}
+          {{- end }}
         {{- end }}
       {{- end }}
