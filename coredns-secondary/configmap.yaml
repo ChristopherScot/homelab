@@ -21,17 +21,12 @@ data:
         }
         template IN AAAA pihole.home.chrisscotmartin.com { rcode NOERROR }
     }
-    dns1.home.chrisscotmartin.com {
-        template IN A dns1.home.chrisscotmartin.com {
+    # The HA CoreDNS endpoint (single VIP, both pods behind it).
+    dns.home.chrisscotmartin.com {
+        template IN A dns.home.chrisscotmartin.com {
             answer "{{ .Name }} 60 IN A 192.168.50.232"
         }
-        template IN AAAA dns1.home.chrisscotmartin.com { rcode NOERROR }
-    }
-    dns2.home.chrisscotmartin.com {
-        template IN A dns2.home.chrisscotmartin.com {
-            answer "{{ .Name }} 60 IN A 192.168.50.233"
-        }
-        template IN AAAA dns2.home.chrisscotmartin.com { rcode NOERROR }
+        template IN AAAA dns.home.chrisscotmartin.com { rcode NOERROR }
     }
 
     # Everything else *.home (incl. bare apex) -> the nginx ingress LB.

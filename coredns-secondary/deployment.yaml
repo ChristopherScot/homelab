@@ -94,32 +94,22 @@ spec:
         - name: config
           configMap: { name: coredns-secondary }
 ---
+# Single HA endpoint (.232) backed by BOTH coredns pods. The router only
+# allows 2 DHCP DNS entries, so this is the second one (Pi-hole .230 is the
+# first). selector matches app=coredns-secondary (no instance label), so it
+# load-balances across dns1+dns2; kube-proxy drops unready endpoints, so a
+# dead pod stops getting traffic automatically — real redundancy in one IP.
 apiVersion: v1
 kind: Service
 metadata:
-  name: coredns-dns1
+  name: coredns-ha
   namespace: coredns-secondary
-  labels: { app: coredns-secondary, instance: dns1 }
+  labels: { app: coredns-secondary }
   annotations:
     metallb.universe.tf/loadBalancerIPs: 192.168.50.232
 spec:
   type: LoadBalancer
-  selector: { app: coredns-secondary, instance: dns1 }
-  ports:
-    - { name: dns-udp, port: 53, targetPort: 53, protocol: UDP }
-    - { name: dns-tcp, port: 53, targetPort: 53, protocol: TCP }
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: coredns-dns2
-  namespace: coredns-secondary
-  labels: { app: coredns-secondary, instance: dns2 }
-  annotations:
-    metallb.universe.tf/loadBalancerIPs: 192.168.50.233
-spec:
-  type: LoadBalancer
-  selector: { app: coredns-secondary, instance: dns2 }
+  selector: { app: coredns-secondary }
   ports:
     - { name: dns-udp, port: 53, targetPort: 53, protocol: UDP }
     - { name: dns-tcp, port: 53, targetPort: 53, protocol: TCP }
