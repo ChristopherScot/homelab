@@ -111,8 +111,12 @@ spec:
               # state is unambiguous). If `rc` already has claude running
               # (restored), leave it; else (re)start the RC loop. RC reconnects
               # to claude.ai/code / mobile on its own — no manual step.
-              rc_running=$(tmux list-panes -t rc -F '#{pane_current_command}' 2>/dev/null | grep -c claude)
-              if [ "${rc_running:-0}" -eq 0 ]; then
+              # Detect a live RC by the pane CONTENT ("Connected"/"Remote
+              # Control"), NOT pane_current_command — RC runs under a wrapper
+              # shell so the command shows as "zsh" even when RC is up, which
+              # made the old check always think it was down.
+              rc_up=$(tmux capture-pane -t rc -p 2>/dev/null | grep -cE 'Connected|Remote Control|QR code')
+              if [ "${rc_up:-0}" -eq 0 ]; then
                 tmux kill-session -t rc 2>/dev/null
                 tmux new-session -d -s rc -c /workspace \
                   'while true; do claude remote-control; echo "RC exited; restart 5s"; sleep 5; done'
