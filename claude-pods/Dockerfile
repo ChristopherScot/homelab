@@ -272,7 +272,9 @@ RUN cp -a /home/node /opt/home-skel && chown -R 1000:1000 /opt/home-skel
 COPY rclaude-layout.sh /usr/local/bin/rclaude-layout
 # tmux-sessionizer: fzf-jump to a per-repo tmux session (<prefix>f).
 COPY tmux-sessionizer.sh /usr/local/bin/tmux-sessionizer
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer
+# dp: deploy-ephemeral wrapper (deploy to webapp--$OWNER or an explicit env).
+COPY dp.sh /usr/local/bin/dp
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the

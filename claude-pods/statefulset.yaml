@@ -50,6 +50,12 @@ spec:
                 cp -an /opt/home-skel/. "$HOME/" 2>/dev/null
                 touch "$HOME/.home-seeded"
               fi
+              # Image-managed config files always track the image (not frozen
+              # at first-seed): a stale persisted .tmux.conf with continuum
+              # auto-restore once kept resurrecting dead rc/work sessions and
+              # broke RC auto-start. Re-sync these on every boot. (User-editable
+              # state like nvim plugins, shell history, repos is NOT touched.)
+              cp -f /opt/home-skel/.tmux.conf "$HOME/.tmux.conf" 2>/dev/null || true
               git config --global credential.helper store
               cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
               chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
@@ -113,6 +119,11 @@ spec:
           env:
             - name: HOME
               value: /home/node
+            # Engineer who owns these pods — used by `dp <tag>` to deploy to
+            # webapp--$OWNER. Per-employee envs would set this per-pod (e.g.
+            # from the per-ordinal Vault secret) in the multi-user future.
+            - name: OWNER
+              value: "chris"
             # Per-pod repo lists come from the Vault-backed claude-repos secret
             # (mounted at /run/secrets/repos/pod<ordinal>), not env, so repo
             # names stay out of this repo.
