@@ -79,42 +79,58 @@ RUN curl -fsSLo /tmp/tofu.zip \
       "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" \
     && unzip -o /tmp/tofu.zip tofu -d /usr/local/bin && rm /tmp/tofu.zip
 
+# Dev-experience CLI tools:
+#   lazygit  — git TUI (heavy git workflow in these pods)
+#   delta    — syntax-highlighted git diffs/pager
+#   direnv   — per-repo env via .envrc
+ARG LAZYGIT_VERSION=0.44.1
+ARG DELTA_VERSION=0.18.2
+ARG DIRENV_VERSION=2.35.0
+RUN curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LAZYGIT_VERSION}/lazygit_${LAZYGIT_VERSION}_Linux_x86_64.tar.gz" \
+      | tar -xz -C /usr/local/bin lazygit \
+    && curl -fsSL "https://github.com/dandavison/delta/releases/download/${DELTA_VERSION}/delta-${DELTA_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+      | tar -xz -C /tmp \
+    && mv "/tmp/delta-${DELTA_VERSION}-x86_64-unknown-linux-gnu/delta" /usr/local/bin/ \
+    && rm -rf "/tmp/delta-${DELTA_VERSION}-x86_64-unknown-linux-gnu" \
+    && curl -fsSLo /usr/local/bin/direnv \
+      "https://github.com/direnv/direnv/releases/download/v${DIRENV_VERSION}/direnv.linux-amd64" \
+    && chmod +x /usr/local/bin/direnv
+
+# Go debugger (delve) for in-editor DAP debugging of Go.
+RUN GOBIN=/usr/local/bin /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@latest
+
 # Claude Code CLI + TypeScript toolchain (node base already present)
 RUN npm install -g \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
       typescript ts-node tsx
 
-# Neovim config: treesitter syntax highlighting + sensible defaults, via
-# lazy.nvim. Bootstrapped at first `nvim` launch (plugins install on demand).
-RUN mkdir -p /home/node/.config/nvim \
+# Neovim: LazyVim distribution — full IDE-grade setup (LSP, autocomplete via
+# mason, treesitter, telescope, lazygit integration, formatters, DAP debugging,
+# neotest) preconfigured + maintained. We enable language + tooling EXTRAS via
+# lazyvim.json: Go (gopls + delve DAP + neotest-go), TypeScript (ts LSP +
+# js-debug DAP + vitest), Terraform, plus the dap, neotest, and formatting
+# extras. Plugins themselves install on first `nvim` launch (network needed).
+RUN git clone --depth 1 https://github.com/LazyVim/starter /home/node/.config/nvim \
+    && rm -rf /home/node/.config/nvim/.git \
     && printf '%s\n' \
-      'local lazypath = vim.fn.stdpath("data") .. "/lazy/lazy.nvim"' \
-      'if not vim.loop.fs_stat(lazypath) then' \
-      '  vim.fn.system({"git","clone","--filter=blob:none","https://github.com/folke/lazy.nvim.git","--branch=stable",lazypath})' \
-      'end' \
-      'vim.opt.rtp:prepend(lazypath)' \
-      'vim.g.mapleader = " "' \
-      'vim.opt.number = true' \
-      'vim.opt.expandtab = true' \
-      'vim.opt.shiftwidth = 2' \
-      'vim.opt.termguicolors = true' \
-      'require("lazy").setup({' \
-      '  { "nvim-treesitter/nvim-treesitter", branch = "master", build = ":TSUpdate",' \
-      '    config = function() require("nvim-treesitter.configs").setup({' \
-      '      ensure_installed = {"go","typescript","javascript","tsx","hcl","terraform","yaml","json","bash","lua","dockerfile","markdown"},' \
-      '      auto_install = true, highlight = { enable = true } }) end },' \
-      '  { "neovim/nvim-lspconfig" },' \
-      '  { "nvim-telescope/telescope.nvim", branch = "0.1.x",' \
-      '    dependencies = { "nvim-lua/plenary.nvim" },' \
-      '    config = function()' \
-      '      vim.keymap.set("n", "<leader>ff", require("telescope.builtin").find_files)' \
-      '      vim.keymap.set("n", "<leader>fg", require("telescope.builtin").live_grep)' \
-      '    end },' \
-      '  { "nvim-tree/nvim-tree.lua", config = function() require("nvim-tree").setup() end },' \
-      '  { "catppuccin/nvim", name = "catppuccin", priority = 1000,' \
-      '    config = function() vim.cmd.colorscheme("catppuccin") end },' \
-      '})' \
-      > /home/node/.config/nvim/init.lua \
+      '{' \
+      '  "extras": [' \
+      '    "lazyvim.plugins.extras.coding.yanky",' \
+      '    "lazyvim.plugins.extras.dap.core",' \
+      '    "lazyvim.plugins.extras.test.core",' \
+      '    "lazyvim.plugins.extras.editor.telescope",' \
+      '    "lazyvim.plugins.extras.formatting.prettier",' \
+      '    "lazyvim.plugins.extras.lang.go",' \
+      '    "lazyvim.plugins.extras.lang.typescript",' \
+      '    "lazyvim.plugins.extras.lang.terraform",' \
+      '    "lazyvim.plugins.extras.lang.json",' \
+      '    "lazyvim.plugins.extras.lang.docker",' \
+      '    "lazyvim.plugins.extras.lang.markdown"' \
+      '  ],' \
+      '  "news": { "NEWS.md": "10000" },' \
+      '  "version": 8' \
+      '}' \
+      > /home/node/.config/nvim/lazyvim.json \
     && chown -R 1000:1000 /home/node/.config
 
 # Shell: oh-my-zsh + starship + zoxide + eza aliases (nexxeln-style workflow).
@@ -127,14 +143,23 @@ RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/oh
       'export GOPATH=$HOME/go' \
       'eval "$(starship init zsh)"' \
       'eval "$(zoxide init zsh)"' \
+      'eval "$(direnv hook zsh)"' \
       'alias ls="eza --icons --git"' \
       'alias ll="eza -l -g --icons --git"' \
       'alias la="eza -la -g --icons --git"' \
       'alias cd="z"' \
       'alias vim="nvim"' \
       'alias fd="fdfind"' \
+      'alias lg="lazygit"' \
       > /home/node/.oh-my-zsh/custom/zz-workflow.zsh \
     && chown -R 1000:1000 /home/node/.oh-my-zsh /home/node/.zshrc
+
+# Global git config: delta as pager + diff highlighter (nice colored diffs).
+RUN git config --system core.pager delta \
+    && git config --system interactive.diffFilter "delta --color-only" \
+    && git config --system delta.navigate true \
+    && git config --system delta.line-numbers true \
+    && git config --system merge.conflictStyle zdiff3
 
 # tmux config: focus-events (Claude Code wants it), UTF-8, mouse, big
 # scrollback, sane keybindings, a clean status bar, and tmux-resurrect/
@@ -162,6 +187,8 @@ RUN git clone --depth 1 https://github.com/tmux-plugins/tpm /home/node/.tmux/plu
       'bind j select-pane -D' \
       'bind k select-pane -U' \
       'bind l select-pane -R' \
+      '# tmux-sessionizer: fzf-jump to a per-repo session (prefix f):' \
+      'bind f run-shell "tmux neww tmux-sessionizer"' \
       '# reload config:' \
       'bind r source-file ~/.tmux.conf \; display "reloaded"' \
       '' \
@@ -216,7 +243,9 @@ RUN cp -a /home/node /opt/home-skel && chown -R 1000:1000 /opt/home-skel
 
 # Work-layout script for the `rclaude N` command (nvim + claude + shell).
 COPY rclaude-layout.sh /usr/local/bin/rclaude-layout
-RUN chmod +x /usr/local/bin/rclaude-layout
+# tmux-sessionizer: fzf-jump to a per-repo tmux session (<prefix>f).
+COPY tmux-sessionizer.sh /usr/local/bin/tmux-sessionizer
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the
