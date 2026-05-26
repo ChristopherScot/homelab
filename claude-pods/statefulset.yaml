@@ -115,24 +115,23 @@ spec:
             - name: GIT_COMMITTER_EMAIL
               value: "christopher.scot.martin@gmail.com"
           volumeMounts:
-            # Per-pod PVC (volumeClaimTemplate -> workspace-claude-session-N),
-            # split into two subPaths so BOTH survive restarts:
-            #   home/ -> /home/node  (Claude login, shell/nvim state, dotfiles)
-            #   ws/   -> /workspace  (cloned repos + any changes)
-            - name: workspace
+            # $HOME on the SSD tier — latency-sensitive (interactive shell,
+            # zsh history fsyncs, nvim state, Claude login). On the HDD tier
+            # this caused severe typing lag (~41s for 50 synced writes).
+            - name: home
               mountPath: /home/node
-              subPath: home
+            # /workspace on the HDD capacity tier — bulk, re-clonable repos,
+            # not latency-sensitive.
             - name: workspace
               mountPath: /workspace
-              subPath: ws
             # GitHub token for push (mounted from secret) — sessions source it.
             - name: git-creds
               mountPath: /run/secrets/git
               readOnly: true
           resources:
             requests:
-              cpu: 100m
-              memory: 256Mi
+              cpu: 500m
+              memory: 512Mi
             limits:
               memory: 2Gi
       volumes:
@@ -140,13 +139,21 @@ spec:
           secret:
             secretName: claude-git-creds
   volumeClaimTemplates:
+    # $HOME — SSD (1 replica). Small + latency-sensitive; the interactive
+    # experience lives here. Single replica keeps SSD usage modest.
+    - metadata:
+        name: home
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-single-ssd
+        resources:
+          requests:
+            storage: 5Gi
+    # /workspace — HDD capacity tier (1 replica). Bulk, re-clonable repos.
     - metadata:
         name: workspace
       spec:
         accessModes: [ReadWriteOnce]
-        # hdd capacity tier (1 replica): workspaces are re-clonable and
-        # non-latency-sensitive, so they belong on the 1.6TB-free hdd disk,
-        # not the near-full SSD tier.
         storageClassName: longhorn-hdd-single
         resources:
           requests:

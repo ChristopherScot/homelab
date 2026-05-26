@@ -18,3 +18,22 @@ parameters:
   dataLocality: best-effort
   # Pin replicas to the hdd-tagged disk (the 1.6TB-free capacity tier).
   diskSelector: "hdd"
+---
+# Fast SSD StorageClass (1 replica) for small, latency-sensitive volumes —
+# e.g. the Claude pods' $HOME (interactive shell, zsh history fsyncs, nvim
+# state, Claude login). The default (untagged) SSD disks on node1/node2/pop-os
+# are ~20-40x faster than the HDD tier for the small synced writes a shell
+# does. dataLocality=best-effort keeps a copy on the pod's node for low latency.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-single-ssd
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "1"
+  staleReplicaTimeout: "30"
+  dataLocality: best-effort
+  # No diskSelector -> uses the default (untagged) SSD disks, NOT the hdd tag.
