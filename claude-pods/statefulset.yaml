@@ -104,7 +104,9 @@ spec:
         name: workspace
       spec:
         accessModes: [ReadWriteOnce]
-        storageClassName: longhorn
+        # 1-replica SC: workspaces are re-clonable; avoids the unschedulable
+        # 2nd replica (node2 SSD full) + saves scarce SSD capacity.
+        storageClassName: longhorn-single
         resources:
           requests:
             storage: 10Gi
