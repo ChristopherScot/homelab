@@ -102,13 +102,20 @@ spec:
                 "$HOME/.tmux/plugins/tpm/bin/install_plugins" >/dev/null 2>&1 || true
                 tmux kill-session -t _tpm 2>/dev/null
               fi
-              # Clean boot (no continuum auto-restore, so no stale sessions to
-              # race): start a fresh tmux server + the Remote Control bridge in
-              # a dedicated `rc` session. RC reconnects to claude.ai/code /
-              # mobile on its own — no manual step after a restart.
+              # Clean boot (no continuum auto-restore): fresh tmux server + the
+              # Remote Control bridge in a dedicated `rc` session.
+              # - Give RC a STABLE, distinct --name per pod so the two show up
+              #   identifiably on claude.ai/code (not both "workspace") and so
+              #   restarts reconnect to the SAME named environment instead of
+              #   minting a new one each time (which piled up stale sessions).
+              # - Root RC in the pod's primary repo so the env is labeled by it.
+              RC_NAME="$(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)")"
+              RC_DIR="$(cat /workspace/.primary-repo 2>/dev/null || echo /workspace)"
+              [ -d "$RC_DIR" ] || RC_DIR=/workspace
+              export CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX="$RC_NAME"
               tmux kill-server 2>/dev/null
-              tmux new-session -d -s rc -c /workspace \
-                'while true; do claude remote-control; echo "RC exited; restart 5s"; sleep 5; done'
+              tmux new-session -d -s rc -c "$RC_DIR" \
+                "while true; do claude remote-control --name '$RC_NAME'; echo 'RC exited; restart 5s'; sleep 5; done"
               # The `work` layout (nvim + claude + shell) is NOT built at boot:
               # nvim/claude need an attached TTY, which doesn't exist here, so
               # launching them detached just exits to a shell. Instead:
