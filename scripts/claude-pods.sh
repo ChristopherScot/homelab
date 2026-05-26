@@ -24,17 +24,22 @@
 # Pods: claude-session-0 (homelab repo), claude-session-1 (schoolhouse app+infra).
 # ─────────────────────────────────────────────────────────────────────────────
 
-# rclaude N — open the tmux WORK layout (neovim + claude + shell) in pod N.
-#   rclaude        -> pod 0
-#   rclaude 1      -> pod 1
+# rclaude N [name] — open a tmux WORK layout (neovim + claude + shell) in pod N.
+#   rclaude            -> pod 0, default "work" session
+#   rclaude 1          -> pod 1, default "work" session
+#   rclaude 1 feat-x   -> pod 1, independent "work-feat-x" session
+# Run with different names to get multiple parallel workspaces in one pod;
+# re-running the same name re-attaches. Switch between live sessions inside
+# tmux with <prefix>s, or detach with <prefix>d.
 rclaude() {
   local n="${1:-0}"
+  local name="${2:-}"
   case "$n" in
     0|1) ;;
-    *) echo "usage: rclaude [0|1]" >&2; return 2 ;;
+    *) echo "usage: rclaude [0|1] [session-name]" >&2; return 2 ;;
   esac
   ssh -t homelab kubectl exec -it -n claude-pods "claude-session-${n}" \
-    -- /usr/local/bin/rclaude-layout
+    -- /usr/local/bin/rclaude-layout "$name"
 }
 
 # rclaude-rc N — attach the persistent Remote Control tmux session (the one

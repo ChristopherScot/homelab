@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
 # In-pod tmux work layout for hands-on editing + chatting with Claude.
-# Invoked by the `rclaude N` wrapper on the Mac (ssh -> kubectl exec -> this).
-# Idempotent: creates the "work" session once, then attaches; re-running just
-# re-attaches. Separate from the "claude" session that runs the persistent
-# Remote Control server (phone access) — so they don't collide.
+# Invoked by the `rclaude N [name]` wrapper on the Mac.
 #
-# Layout (session "work"):
-#   window 0 "code"  — left: neovim   | right(top): claude   right(bottom): shell
+# Usage (inside the pod):
+#   rclaude-layout                 -> session "work" (the default)
+#   rclaude-layout <name>          -> session "work-<name>" (parallel workspace)
+#   rclaude-layout <name> <dir>    -> ... starting in <dir>
+#
+# Each session is independent (own nvim + claude + shell), so you can run
+# several for different tasks and switch between them. Idempotent: re-running
+# with the same name re-attaches to that session.
+#
+# Layout per session "work[-name]" (window "code"):
+#   left: neovim | right-top: claude | right-bottom: shell
 set -u
 
-SESSION=work
-# Start in the pod's primary repo (first CLONE_REPOS entry, recorded by the
-# entrypoint to /workspace/.primary-repo). Falls back to an explicit arg,
-# then /workspace.
-START_DIR="${1:-}"
+NAME="${1:-}"
+START_DIR="${2:-}"
+if [ -n "$NAME" ]; then
+  SESSION="work-${NAME}"
+else
+  SESSION="work"
+fi
+
+# Start dir: explicit 2nd arg, else the pod's primary repo (first CLONE_REPOS
+# entry, recorded by the entrypoint to /workspace/.primary-repo), else /workspace.
 if [ -z "$START_DIR" ] && [ -f /workspace/.primary-repo ]; then
   START_DIR=$(cat /workspace/.primary-repo)
 fi
