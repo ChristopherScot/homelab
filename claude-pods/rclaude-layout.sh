@@ -23,12 +23,16 @@ else
   SESSION="work"
 fi
 
-# Start dir: explicit 2nd arg, else the pod's primary repo (recorded by the
-# entrypoint to /workspace/.primary-repo) so claude picks up that repo's
-# project config (.mcp.json, CLAUDE.md). Falls back to /workspace.
-# To work in a different repo (e.g. infra) with ITS config, use the tmux
-# sessionizer: <prefix>f -> fzf-pick the repo -> its own session.
-if [ -z "$START_DIR" ] && [ -f /workspace/.primary-repo ]; then
+# Start dir: explicit 2nd arg (a path under /workspace like "infra", or an
+# absolute path) — sets where nvim/claude open, so claude loads that repo's
+# .mcp.json / CLAUDE.md. A bare name is resolved under /workspace. If omitted,
+# uses the pod's primary repo (/workspace/.primary-repo), else /workspace.
+if [ -n "$START_DIR" ]; then
+  case "$START_DIR" in
+    /*) ;;                              # absolute, leave as-is
+    *)  START_DIR="/workspace/$START_DIR" ;;  # relative -> under /workspace
+  esac
+elif [ -f /workspace/.primary-repo ]; then
   START_DIR=$(cat /workspace/.primary-repo)
 fi
 [ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
