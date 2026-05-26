@@ -61,6 +61,7 @@ spec:
               echo "pod ordinal=$ORD -> repos: $REPOS"
               # space/comma/newline-separated; full URLs or owner/repo slugs
               # (assumed github.com). Idempotent: skips a repo dir that exists.
+              primary=""
               for r in $(echo "${REPOS:-}" | tr ',\n' '  '); do
                 [ -z "$r" ] && continue
                 case "$r" in
@@ -69,6 +70,7 @@ spec:
                   *)               echo "skip unrecognized repo ref: $r"; continue ;;
                 esac
                 dir="/workspace/$(basename "$r" .git)"
+                [ -z "$primary" ] && primary="$dir"   # first repo = primary
                 if [ -d "$dir/.git" ]; then
                   echo "repo present: $dir"
                 else
@@ -76,6 +78,8 @@ spec:
                   git clone "$url" "$dir" || echo "WARN: clone failed: $url"
                 fi
               done
+              # record the primary repo dir so `rclaude` opens there by default
+              [ -n "$primary" ] && echo "$primary" > /workspace/.primary-repo
               # Auto-start Claude Remote Control as a persistent server inside
               # tmux, so after ANY pod restart the bridge comes back on its own
               # and this session reappears in claude.ai/code / the mobile app —

@@ -10,11 +10,12 @@
 set -u
 
 SESSION=work
-# Start dir: explicit arg, else the first cloned repo in /workspace, else
-# /workspace. (Pod 0 has homelab; pod 1 has schoolhouse app/infra.)
+# Start in the pod's primary repo (the first entry of its CLONE_REPOS, which
+# the entrypoint records to /workspace/.primary-repo). Falls back to an
+# explicit arg, then /workspace.
 START_DIR="${1:-}"
-if [ -z "$START_DIR" ]; then
-  START_DIR=$(find /workspace -maxdepth 1 -mindepth 1 -type d -exec test -d '{}/.git' ';' -print 2>/dev/null | sort | head -1)
+if [ -z "$START_DIR" ] && [ -f /workspace/.primary-repo ]; then
+  START_DIR=$(cat /workspace/.primary-repo)
 fi
 [ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
 
