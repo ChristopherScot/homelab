@@ -13,25 +13,39 @@ metadata:
   namespace: coredns-secondary
 data:
   Corefile: |
+    # Appliance records get their OWN zone blocks (more specific zones win
+    # in CoreDNS), so the *.home wildcard template can't override them.
+    pihole.home.chrisscotmartin.com {
+        template IN A pihole.home.chrisscotmartin.com {
+            answer "{{ .Name }} 60 IN A 192.168.50.230"
+        }
+        template IN AAAA pihole.home.chrisscotmartin.com { rcode NOERROR }
+    }
+    dns1.home.chrisscotmartin.com {
+        template IN A dns1.home.chrisscotmartin.com {
+            answer "{{ .Name }} 60 IN A 192.168.50.232"
+        }
+        template IN AAAA dns1.home.chrisscotmartin.com { rcode NOERROR }
+    }
+    dns2.home.chrisscotmartin.com {
+        template IN A dns2.home.chrisscotmartin.com {
+            answer "{{ .Name }} 60 IN A 192.168.50.233"
+        }
+        template IN AAAA dns2.home.chrisscotmartin.com { rcode NOERROR }
+    }
+
+    # Everything else *.home (incl. bare apex) -> the nginx ingress LB.
     home.chrisscotmartin.com {
-        # Specific appliance records (not behind the ingress).
-        hosts {
-            192.168.50.230 pihole.home.chrisscotmartin.com
-            192.168.50.232 dns1.home.chrisscotmartin.com
-            192.168.50.233 dns2.home.chrisscotmartin.com
-            fallthrough
-        }
-        # Everything else *.home -> the nginx ingress LB. The template
-        # plugin answers any A query in this zone not matched above.
         template IN A home.chrisscotmartin.com {
-            match "^.*\.home\.chrisscotmartin\.com\.$"
+            match "home\.chrisscotmartin\.com\.$"
             answer "{{ .Name }} 60 IN A 192.168.50.225"
-            fallthrough
         }
-        # Bare apex home.chrisscotmartin.com -> ingress too.
-        template IN A home.chrisscotmartin.com {
-            match "^home\.chrisscotmartin\.com\.$"
-            answer "{{ .Name }} 60 IN A 192.168.50.225"
+        # Answer AAAA with an empty NODATA (no IPv6) instead of erroring —
+        # clients query AAAA alongside A; without this they get SERVFAIL +
+        # log spam.
+        template IN AAAA home.chrisscotmartin.com {
+            match "home\.chrisscotmartin\.com\.$"
+            rcode NOERROR
         }
         log
         errors
