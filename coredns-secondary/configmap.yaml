@@ -1,0 +1,53 @@
+# Corefile for the redundant secondary resolvers. These serve the homelab
+# zone authoritatively and forward everything else upstream. They are the
+# failover for Pi-hole (no ad-blocking here — resolution resilience only).
+#
+# All *.home.chrisscotmartin.com services sit behind the nginx ingress at
+# 192.168.50.225; the DNS appliances have their own IPs. A wildcard via the
+# `template` plugin keeps this self-maintaining (new services resolve with
+# no record upkeep), mirroring the intent of Pi-hole's host list.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: coredns-secondary
+  namespace: coredns-secondary
+data:
+  Corefile: |
+    home.chrisscotmartin.com {
+        # Specific appliance records (not behind the ingress).
+        hosts {
+            192.168.50.230 pihole.home.chrisscotmartin.com
+            192.168.50.232 dns1.home.chrisscotmartin.com
+            192.168.50.233 dns2.home.chrisscotmartin.com
+            fallthrough
+        }
+        # Everything else *.home -> the nginx ingress LB. The template
+        # plugin answers any A query in this zone not matched above.
+        template IN A home.chrisscotmartin.com {
+            match "^.*\.home\.chrisscotmartin\.com\.$"
+            answer "{{ .Name }} 60 IN A 192.168.50.225"
+            fallthrough
+        }
+        # Bare apex home.chrisscotmartin.com -> ingress too.
+        template IN A home.chrisscotmartin.com {
+            match "^home\.chrisscotmartin\.com\.$"
+            answer "{{ .Name }} 60 IN A 192.168.50.225"
+        }
+        log
+        errors
+    }
+
+    # Everything else: recurse via public upstreams. Plain DNS to both
+    # (mixed providers can't share one tls_servername; reliability over
+    # upstream encryption for a failover resolver). Cache to cut latency.
+    . {
+        forward . 1.1.1.1 8.8.8.8 {
+            health_check 5s
+        }
+        cache 30
+        loop
+        health        # :8080/health  (liveness probe)
+        ready         # :8181/ready   (readiness probe)
+        log
+        errors
+    }

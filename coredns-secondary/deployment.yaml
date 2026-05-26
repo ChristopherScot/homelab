@@ -1,0 +1,125 @@
+# Two redundant CoreDNS resolvers (dns1/dns2) for homelab DNS failover.
+# Each is a single CoreDNS replica with its own LoadBalancer IP, spread
+# across different nodes via anti-affinity so one node failure can't take
+# out both. They share the same Corefile ConfigMap.
+#
+# Phase 1 of the DNS-resilience work: purely additive. Clients aren't
+# pointed here yet (router DHCP change is a later phase). Pi-hole stays
+# the live resolver until cutover.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns-dns1
+  namespace: coredns-secondary
+  labels: { app: coredns-secondary, instance: dns1 }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: coredns-secondary, instance: dns1 }
+  template:
+    metadata:
+      labels: { app: coredns-secondary, instance: dns1 }
+    spec:
+      # Spread the two instances onto different nodes.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: coredns-secondary }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: coredns
+          image: registry.k8s.io/coredns/coredns:v1.11.3
+          args: ["-conf", "/etc/coredns/Corefile"]
+          ports:
+            - { containerPort: 53, protocol: UDP }
+            - { containerPort: 53, protocol: TCP }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/coredns
+              readOnly: true
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 5
+          readinessProbe:
+            httpGet: { path: /ready, port: 8181 }
+      volumes:
+        - name: config
+          configMap: { name: coredns-secondary }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coredns-dns2
+  namespace: coredns-secondary
+  labels: { app: coredns-secondary, instance: dns2 }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: coredns-secondary, instance: dns2 }
+  template:
+    metadata:
+      labels: { app: coredns-secondary, instance: dns2 }
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels: { app: coredns-secondary }
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: coredns
+          image: registry.k8s.io/coredns/coredns:v1.11.3
+          args: ["-conf", "/etc/coredns/Corefile"]
+          ports:
+            - { containerPort: 53, protocol: UDP }
+            - { containerPort: 53, protocol: TCP }
+          volumeMounts:
+            - name: config
+              mountPath: /etc/coredns
+              readOnly: true
+          resources:
+            requests: { cpu: 25m, memory: 32Mi }
+            limits: { memory: 128Mi }
+          livenessProbe:
+            httpGet: { path: /health, port: 8080 }
+            initialDelaySeconds: 5
+          readinessProbe:
+            httpGet: { path: /ready, port: 8181 }
+      volumes:
+        - name: config
+          configMap: { name: coredns-secondary }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coredns-dns1
+  namespace: coredns-secondary
+  labels: { app: coredns-secondary, instance: dns1 }
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: 192.168.50.232
+spec:
+  type: LoadBalancer
+  selector: { app: coredns-secondary, instance: dns1 }
+  ports:
+    - { name: dns-udp, port: 53, targetPort: 53, protocol: UDP }
+    - { name: dns-tcp, port: 53, targetPort: 53, protocol: TCP }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: coredns-dns2
+  namespace: coredns-secondary
+  labels: { app: coredns-secondary, instance: dns2 }
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: 192.168.50.233
+spec:
+  type: LoadBalancer
+  selector: { app: coredns-secondary, instance: dns2 }
+  ports:
+    - { name: dns-udp, port: 53, targetPort: 53, protocol: UDP }
+    - { name: dns-tcp, port: 53, targetPort: 53, protocol: TCP }

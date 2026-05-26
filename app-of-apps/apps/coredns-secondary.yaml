@@ -1,0 +1,25 @@
+# Redundant secondary DNS resolvers (2x CoreDNS) for homelab DNS failover.
+# Phase 1 of moving off the single Pi-hole (whose NAS-NFS config dependency
+# caused a full DNS outage). Additive — not client-facing until DHCP cutover.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: coredns-secondary
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: coredns-secondary
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: coredns-secondary
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
