@@ -20,13 +20,12 @@ fi
 [ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  # Build the layout. send-keys works reliably here because rclaude runs this
-  # at attach time (a real TTY exists). left: nvim | right-top: claude |
-  # right-bottom: shell.
-  tmux new-session -d -s "$SESSION" -n code -c "$START_DIR"
-  tmux send-keys -t "$SESSION:code" 'nvim .' C-m
-  tmux split-window -h -p 40 -t "$SESSION:code" -c "$START_DIR"
-  tmux send-keys -t "$SESSION:code.1" 'claude' C-m
+  # Launch nvim + claude as each pane's COMMAND (not send-keys, which races
+  # the shell's oh-my-zsh/starship startup and drops the keystrokes). Wrap as
+  # 'prog; exec zsh' so quitting the program drops to a normal shell instead
+  # of closing the pane. left: nvim | right-top: claude | right-bottom: shell.
+  tmux new-session    -d -s "$SESSION" -n code -c "$START_DIR" "nvim .; exec zsh"
+  tmux split-window -h -p 40 -t "$SESSION:code"   -c "$START_DIR" "claude; exec zsh"
   tmux split-window -v -p 40 -t "$SESSION:code.1" -c "$START_DIR"
   tmux select-pane -t "$SESSION:code.1"
 fi
