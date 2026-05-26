@@ -17,7 +17,9 @@ spec:
   target:
     name: mcp-grafana
   data:
-    - secretKey: GRAFANA_API_KEY
+    # mcp-grafana reads GRAFANA_SERVICE_ACCOUNT_TOKEN (GRAFANA_API_KEY is
+    # deprecated upstream). Same Vault token value; only the env var renamed.
+    - secretKey: GRAFANA_SERVICE_ACCOUNT_TOKEN
       remoteRef:
         key: grafana-local
         property: mcp_token
