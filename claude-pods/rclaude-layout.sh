@@ -10,41 +10,25 @@
 set -u
 
 SESSION=work
-# --build-only: create the session WITHOUT attaching (used by the pod
-# entrypoint, which has no TTY). Otherwise build (if missing) + attach.
-BUILD_ONLY=0
-START_DIR=""
-for a in "$@"; do
-  case "$a" in
-    --build-only) BUILD_ONLY=1 ;;
-    *) START_DIR="$a" ;;
-  esac
-done
 # Start in the pod's primary repo (first CLONE_REPOS entry, recorded by the
 # entrypoint to /workspace/.primary-repo). Falls back to an explicit arg,
 # then /workspace.
+START_DIR="${1:-}"
 if [ -z "$START_DIR" ] && [ -f /workspace/.primary-repo ]; then
   START_DIR=$(cat /workspace/.primary-repo)
 fi
 [ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  # Launch nvim + claude as the panes' direct commands (not send-keys, which
-  # races the shell's startup on a fresh boot and drops the keystrokes). Wrap
-  # in a shell so the pane drops to an interactive prompt when you quit the
-  # program, instead of closing the pane.
-  # left pane: neovim
-  tmux new-session -d -s "$SESSION" -n code -c "$START_DIR" \
-    "nvim .; exec zsh"
-  # right (40%): claude
-  tmux split-window -h -p 40 -t "$SESSION:code" -c "$START_DIR" \
-    "claude; exec zsh"
-  # right-bottom: plain shell
+  # Build the layout. send-keys works reliably here because rclaude runs this
+  # at attach time (a real TTY exists). left: nvim | right-top: claude |
+  # right-bottom: shell.
+  tmux new-session -d -s "$SESSION" -n code -c "$START_DIR"
+  tmux send-keys -t "$SESSION:code" 'nvim .' C-m
+  tmux split-window -h -p 40 -t "$SESSION:code" -c "$START_DIR"
+  tmux send-keys -t "$SESSION:code.1" 'claude' C-m
   tmux split-window -v -p 40 -t "$SESSION:code.1" -c "$START_DIR"
-  # focus the claude pane by default
   tmux select-pane -t "$SESSION:code.1"
 fi
 
-# entrypoint just wants the session built; interactive use attaches.
-[ "$BUILD_ONLY" -eq 1 ] && exit 0
 exec tmux attach -t "$SESSION"

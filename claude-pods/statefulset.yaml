@@ -117,13 +117,12 @@ spec:
                 tmux new-session -d -s rc -c /workspace \
                   'while true; do claude remote-control; echo "RC exited; restart 5s"; sleep 5; done'
               fi
-              # Ensure the `work` layout (nvim top-left + claude right + shell)
-              # ALWAYS exists after boot — restored by continuum, or freshly
-              # built here if this is a brand-new pod that never ran `rclaude`.
-              # `rclaude N` then just attaches to it.
-              if ! tmux has-session -t work 2>/dev/null; then
-                /usr/local/bin/rclaude-layout --build-only 2>/dev/null || true
-              fi
+              # The `work` layout (nvim + claude + shell) is NOT built at boot:
+              # nvim/claude need an attached TTY, which doesn't exist here, so
+              # launching them detached just exits to a shell. Instead:
+              #   - `rclaude N` builds the layout when you attach (real TTY)
+              #   - tmux-continuum restores it (incl. nvim) after pod restarts
+              # Both are reliable; boot-time auto-launch is not.
               exec sleep infinity
           env:
             - name: HOME
