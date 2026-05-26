@@ -13,6 +13,12 @@ ARG GO_VERSION=1.26.3
 ARG TOFU_VERSION=1.12.0
 ARG NVIM_VERSION=v0.12.2
 
+# UTF-8 locale so multibyte glyphs (starship ❯, eza/nvim icons) render instead
+# of garbling to "__". The slim base leaves LANG unset -> programs default to
+# the C locale and mangle UTF-8. C.UTF-8 is built in, no locale-gen needed.
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates jq openssh-client less vim ripgrep gnupg \
       tmux unzip build-essential \
@@ -130,14 +136,74 @@ RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/oh
       > /home/node/.oh-my-zsh/custom/zz-workflow.zsh \
     && chown -R 1000:1000 /home/node/.oh-my-zsh /home/node/.zshrc
 
-# tmux config: focus-events on (Claude Code wants this to detect pane focus;
-# otherwise it warns "tmux focus-events off ..." on every launch).
-RUN printf '%s\n' \
+# tmux config: focus-events (Claude Code wants it), UTF-8, mouse, big
+# scrollback, sane keybindings, a clean status bar, and tmux-resurrect/
+# continuum for session persistence. tpm is vendored into the skel home; the
+# entrypoint installs the plugins on first boot.
+RUN git clone --depth 1 https://github.com/tmux-plugins/tpm /home/node/.tmux/plugins/tpm \
+    && printf '%s\n' \
+      '# --- core ---' \
       'set -g focus-events on' \
       'set -g mouse on' \
       'set -g history-limit 50000' \
+      'set -g default-terminal "tmux-256color"' \
+      'set -ga terminal-overrides ",*256col*:Tc"   # truecolor' \
+      'set -g base-index 1' \
+      'setw -g pane-base-index 1' \
+      'set -sg escape-time 10' \
+      'set -g set-titles on' \
+      '' \
+      '# --- keybindings ---' \
+      '# prefix stays C-b. intuitive splits that keep cwd:' \
+      'bind | split-window -h -c "#{pane_current_path}"' \
+      'bind - split-window -v -c "#{pane_current_path}"' \
+      '# vim-style pane navigation:' \
+      'bind h select-pane -L' \
+      'bind j select-pane -D' \
+      'bind k select-pane -U' \
+      'bind l select-pane -R' \
+      '# reload config:' \
+      'bind r source-file ~/.tmux.conf \; display "reloaded"' \
+      '' \
+      '# --- status bar ---' \
+      'set -g status-interval 5' \
+      'set -g status-style "bg=colour236,fg=colour250"' \
+      'set -g status-left "#[bg=colour39,fg=colour16,bold] #S #[bg=colour236] "' \
+      'set -g status-left-length 30' \
+      'set -g status-right "#[fg=colour245]#H #[fg=colour250]%H:%M "' \
+      'setw -g window-status-current-style "bg=colour39,fg=colour16,bold"' \
+      'setw -g window-status-current-format " #I:#W "' \
+      'setw -g window-status-format " #I:#W "' \
+      '' \
+      '# --- plugins (tpm) ---' \
+      "set -g @plugin 'tmux-plugins/tpm'" \
+      "set -g @plugin 'tmux-plugins/tmux-resurrect'" \
+      "set -g @plugin 'tmux-plugins/tmux-continuum'" \
+      "set -g @continuum-restore 'on'   # auto-restore saved sessions on tmux start" \
+      "set -g @continuum-save-interval '5'" \
+      "run '~/.tmux/plugins/tpm/tpm'" \
       > /home/node/.tmux.conf \
-    && chown 1000:1000 /home/node/.tmux.conf
+    && chown -R 1000:1000 /home/node/.tmux.conf /home/node/.tmux
+
+# Baked base ~/.claude.json with NON-SECRET UX flags so fresh homes skip the
+# interactive prompts the auto-start `claude remote-control` server can't
+# answer: /workspace trust + the Remote Control enable dialog + onboarding.
+# The personal login (oauthAccount / .credentials.json) is NEVER baked — it's
+# added per-user by interactive `/login`, which merges into this base (seeding
+# is no-clobber and only runs on an empty home, so login state wins).
+RUN printf '%s\n' \
+      '{' \
+      '  "hasCompletedOnboarding": true,' \
+      '  "remoteDialogSeen": true,' \
+      '  "projects": {' \
+      '    "/workspace": {' \
+      '      "hasTrustDialogAccepted": true,' \
+      '      "hasCompletedProjectOnboarding": true' \
+      '    }' \
+      '  }' \
+      '}' \
+      > /home/node/.claude.json \
+    && chown 1000:1000 /home/node/.claude.json
 
 # Default the node user to zsh (the configured shell above).
 RUN chsh -s /usr/bin/zsh node

@@ -81,6 +81,11 @@ spec:
               done
               # record the primary repo dir so `rclaude` opens there by default
               [ -n "$primary" ] && echo "$primary" > /workspace/.primary-repo
+              # Install tmux plugins (resurrect/continuum) via tpm if not yet
+              # present on this home (idempotent; tpm itself is in the image).
+              if [ -d "$HOME/.tmux/plugins/tpm" ] && [ ! -d "$HOME/.tmux/plugins/tmux-resurrect" ]; then
+                "$HOME/.tmux/plugins/tpm/bin/install_plugins" 2>/dev/null || true
+              fi
               # Auto-start Claude Remote Control as a persistent server inside
               # tmux, so after ANY pod restart the bridge comes back on its own
               # and this session reappears in claude.ai/code / the mobile app —
