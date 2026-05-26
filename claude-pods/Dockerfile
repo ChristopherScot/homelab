@@ -74,6 +74,13 @@ RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
 ENV PATH=$PATH:/usr/local/go/bin:/home/node/go/bin
 ENV GOPATH=/home/node/go
 
+# Go LSP + tooling installed to /usr/local/bin so they are ALWAYS on PATH,
+# independent of the (PVC-mounted) home shell config. gopls = the Go LSP that
+# LazyVim attaches; gofumpt/goimports for formatting. (dlv installed below.)
+RUN GOBIN=/usr/local/bin /usr/local/go/bin/go install golang.org/x/tools/gopls@latest \
+    && GOBIN=/usr/local/bin /usr/local/go/bin/go install golang.org/x/tools/cmd/goimports@latest \
+    && GOBIN=/usr/local/bin /usr/local/go/bin/go install mvdan.cc/gofumpt@latest
+
 # OpenTofu (open-source Terraform; `tofu` CLI)
 RUN curl -fsSLo /tmp/tofu.zip \
       "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/tofu_${TOFU_VERSION}_linux_amd64.zip" \
@@ -110,8 +117,11 @@ RUN npm install -g \
 # lazyvim.json: Go (gopls + delve DAP + neotest-go), TypeScript (ts LSP +
 # js-debug DAP + vitest), Terraform, plus the dap, neotest, and formatting
 # extras. Plugins themselves install on first `nvim` launch (network needed).
+COPY nvim-options.lua /tmp/nvim-options.lua
 RUN git clone --depth 1 https://github.com/LazyVim/starter /home/node/.config/nvim \
     && rm -rf /home/node/.config/nvim/.git \
+    && cat /tmp/nvim-options.lua >> /home/node/.config/nvim/lua/config/options.lua \
+    && rm /tmp/nvim-options.lua \
     && printf '%s\n' \
       '{' \
       '  "extras": [' \
