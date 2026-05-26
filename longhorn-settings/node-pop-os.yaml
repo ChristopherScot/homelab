@@ -1,0 +1,26 @@
+# pop-os Longhorn node: allow scheduling on its default disk, but cap usage so
+# Longhorn takes at most ~50% of the disk's unused space (~131Gi). The disk is
+# shared with the OS (pop-os is the desktop/iGPU/transcoding node), so it was
+# previously drained (allowScheduling=false, evictionRequested=true). We now
+# let it host replicas to relieve the near-full node1/node2 SSD tier, while
+# storageReserved protects the OS + leaves the other ~half of free space.
+#
+# reserve math: storageMaximum 481593462784 (448Gi) − ~131Gi schedulable
+#   = 340959719424 reserved.
+# Declared as the exact existing default-disk name so this updates it in place
+# (ServerSideApply; do not introduce a second disk).
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: pop-os
+  namespace: longhorn-system
+spec:
+  disks:
+    default-disk-6b54d01dae4c5406:
+      allowScheduling: true
+      evictionRequested: false
+      diskDriver: ""
+      diskType: filesystem
+      path: /var/lib/longhorn/
+      storageReserved: 340959719424
+      tags: []
