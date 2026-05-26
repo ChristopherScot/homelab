@@ -23,18 +23,18 @@ else
   SESSION="work"
 fi
 
-# Start dir: explicit 2nd arg, else the pod's primary repo (first CLONE_REPOS
-# entry, recorded by the entrypoint to /workspace/.primary-repo), else /workspace.
+# Start dir: explicit 2nd arg, else the pod's primary repo (recorded by the
+# entrypoint to /workspace/.primary-repo) so claude picks up that repo's
+# project config (.mcp.json, CLAUDE.md). Falls back to /workspace.
+# To work in a different repo (e.g. infra) with ITS config, use the tmux
+# sessionizer: <prefix>f -> fzf-pick the repo -> its own session.
 if [ -z "$START_DIR" ] && [ -f /workspace/.primary-repo ]; then
   START_DIR=$(cat /workspace/.primary-repo)
 fi
 [ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  # Launch nvim + claude as each pane's COMMAND (not send-keys, which races
-  # the shell's oh-my-zsh/starship startup and drops the keystrokes). Wrap as
-  # 'prog; exec zsh' so quitting the program drops to a normal shell instead
-  # of closing the pane. left: nvim | right-top: claude | right-bottom: shell.
+  # left: nvim | right-top: claude | right-bottom: shell.
   tmux new-session    -d -s "$SESSION" -n code -c "$START_DIR" "nvim .; exec zsh"
   tmux split-window -h -p 40 -t "$SESSION:code"   -c "$START_DIR" "claude; exec zsh"
   tmux split-window -v -p 40 -t "$SESSION:code.1" -c "$START_DIR"
