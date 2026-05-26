@@ -53,13 +53,22 @@ spec:
               git config --global credential.helper store
               cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
               chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
-              # Per-pod repos by StatefulSet ordinal: pod 0 -> homelab,
-              # pod 1 -> schoolhouse app + infra. (StatefulSet gives all pods
-              # the same env, so we pick from CLONE_REPOS_0 / CLONE_REPOS_1
-              # based on the ordinal suffix of the pod name.)
+              # GCP auth: if a deploy key is mounted, decode + activate it so
+              # gcloud is ready for ephemeral deploys on boot.
+              if [ -f /run/secrets/gcp/key.json.b64 ]; then
+                base64 -d /run/secrets/gcp/key.json.b64 > "$HOME/.gcp-deploy-key.json" 2>/dev/null
+                chmod 600 "$HOME/.gcp-deploy-key.json"
+                gcloud auth activate-service-account --key-file="$HOME/.gcp-deploy-key.json" --quiet 2>/dev/null \
+                  && gcloud config set project "$(cat /run/secrets/gcp/project 2>/dev/null)" --quiet 2>/dev/null \
+                  && gcloud auth configure-docker us-central1-docker.pkg.dev --quiet 2>/dev/null \
+                  && echo "gcloud authed for deploy" || echo "WARN: gcloud auth failed"
+              fi
+              # Per-pod repos by StatefulSet ordinal, read from a Vault-backed
+              # secret file (/run/secrets/repos/pod<ordinal>) so specific repo
+              # names aren't committed to this repo. Falls back to CLONE_REPOS.
               ORD="${HOSTNAME##*-}"
-              eval "REPOS=\"\${CLONE_REPOS_${ORD}:-\${CLONE_REPOS:-}}\""
-              echo "pod ordinal=$ORD -> repos: $REPOS"
+              REPOS="$(cat "/run/secrets/repos/pod${ORD}" 2>/dev/null || echo "${CLONE_REPOS:-}")"
+              echo "pod ordinal=$ORD -> $(echo "$REPOS" | wc -w) repo(s)"
               # space/comma/newline-separated; full URLs or owner/repo slugs
               # (assumed github.com). Idempotent: skips a repo dir that exists.
               primary=""
@@ -82,39 +91,39 @@ spec:
               # record the primary repo dir so `rclaude` opens there by default
               [ -n "$primary" ] && echo "$primary" > /workspace/.primary-repo
               # Install tmux plugins (resurrect/continuum) via tpm if missing.
-              # tpm's installer needs a running tmux server with the conf
-              # sourced to read the @plugin declarations — so start a scratch
-              # server, source, install, then kill it. Idempotent.
+              # tpm install needs a running tmux server with the conf sourced.
               if [ -d "$HOME/.tmux/plugins/tpm" ] && [ ! -d "$HOME/.tmux/plugins/tmux-resurrect" ]; then
                 tmux new-session -d -s _tpm 2>/dev/null
                 tmux source-file "$HOME/.tmux.conf" 2>/dev/null
                 "$HOME/.tmux/plugins/tpm/bin/install_plugins" >/dev/null 2>&1 || true
                 tmux kill-session -t _tpm 2>/dev/null
               fi
-              # Auto-start Claude Remote Control as a persistent server inside
-              # tmux, so after ANY pod restart the bridge comes back on its own
-              # and this session reappears in claude.ai/code / the mobile app —
-              # no manual re-attach or /remote-control needed. Launches in
-              # /workspace (already a trusted dir; a subdir could re-prompt the
-              # trust dialog and hang the auto-start — cd into repos from within
-              # the session). Runs in tmux session "claude" so you can also
-              # `tmux attach -t claude` to watch/drive it. A restart-loop keeps
-              # it up if RC exits; the pod stays alive regardless.
-              if ! tmux has-session -t claude 2>/dev/null; then
-                tmux new-session -d -s claude -c /workspace \
-                  'while true; do claude remote-control; echo "remote-control exited; restarting in 5s"; sleep 5; done'
+              # Start the tmux server + source conf. tmux-continuum then
+              # auto-RESTORES the last saved environment (the `work` layout with
+              # nvim/claude/shell, via @resurrect-processes) — so after a pod
+              # restart your panes + running programs come back on their own.
+              tmux start-server 2>/dev/null
+              tmux source-file "$HOME/.tmux.conf" 2>/dev/null
+              # Give continuum a moment to restore saved sessions on boot.
+              sleep 8
+              # Ensure the persistent Remote Control bridge runs in a dedicated
+              # `rc` session (separate from the restored `work` layout, so RC
+              # state is unambiguous). If `rc` already has claude running
+              # (restored), leave it; else (re)start the RC loop. RC reconnects
+              # to claude.ai/code / mobile on its own — no manual step.
+              rc_running=$(tmux list-panes -t rc -F '#{pane_current_command}' 2>/dev/null | grep -c claude)
+              if [ "${rc_running:-0}" -eq 0 ]; then
+                tmux kill-session -t rc 2>/dev/null
+                tmux new-session -d -s rc -c /workspace \
+                  'while true; do claude remote-control; echo "RC exited; restart 5s"; sleep 5; done'
               fi
               exec sleep infinity
           env:
             - name: HOME
               value: /home/node
-            # Per-pod repos to pre-clone into /workspace on startup, chosen by
-            # the pod's ordinal (claude-session-0 -> _0, -1 -> _1). Space/
-            # comma/newline-separated; full URLs or owner/repo slugs.
-            - name: CLONE_REPOS_0
-              value: "ChristopherScot/homelab"
-            - name: CLONE_REPOS_1
-              value: "schoolhouse-world/app schoolhouse-world/infra"
+            # Per-pod repo lists come from the Vault-backed claude-repos secret
+            # (mounted at /run/secrets/repos/pod<ordinal>), not env, so repo
+            # names stay out of this repo.
             # Git identity for commits made from these sessions.
             - name: GIT_AUTHOR_NAME
               value: "Chris (claude-pod)"
@@ -138,6 +147,14 @@ spec:
             - name: git-creds
               mountPath: /run/secrets/git
               readOnly: true
+            # GCP deploy key (SA) for ephemeral deploys.
+            - name: gcp-deploy
+              mountPath: /run/secrets/gcp
+              readOnly: true
+            # Per-pod repo lists (Vault-backed; pod<ordinal> files).
+            - name: repos
+              mountPath: /run/secrets/repos
+              readOnly: true
           resources:
             requests:
               cpu: 500m
@@ -148,6 +165,14 @@ spec:
         - name: git-creds
           secret:
             secretName: claude-git-creds
+        - name: gcp-deploy
+          secret:
+            secretName: gcp-deploy
+            optional: true
+        - name: repos
+          secret:
+            secretName: claude-repos
+            optional: true
   volumeClaimTemplates:
     # $HOME — SSD (1 replica). Small + latency-sensitive; the interactive
     # experience lives here. Single replica keeps SSD usage modest.

@@ -46,7 +46,7 @@ rclaude-rc() {
     *) echo "usage: rclaude-rc [0|1]" >&2; return 2 ;;
   esac
   ssh -t homelab kubectl exec -it -n claude-pods "claude-session-${n}" \
-    -- tmux attach -t claude
+    -- tmux attach -t rc
 }
 
 # rclaude-sh N — just drop into a plain shell in pod N (no tmux layout).
