@@ -93,7 +93,7 @@ RUN mkdir -p /home/node/.config/nvim \
       'vim.opt.shiftwidth = 2' \
       'vim.opt.termguicolors = true' \
       'require("lazy").setup({' \
-      '  { "nvim-treesitter/nvim-treesitter", build = ":TSUpdate",' \
+      '  { "nvim-treesitter/nvim-treesitter", branch = "master", build = ":TSUpdate",' \
       '    config = function() require("nvim-treesitter.configs").setup({' \
       '      ensure_installed = {"go","typescript","javascript","tsx","hcl","terraform","yaml","json","bash","lua","dockerfile","markdown"},' \
       '      auto_install = true, highlight = { enable = true } }) end },' \
