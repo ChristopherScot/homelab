@@ -133,6 +133,12 @@ RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/oh
 # Default the node user to zsh (the configured shell above).
 RUN chsh -s /usr/bin/zsh node
 
+# Snapshot the baked home (oh-my-zsh, nvim config, .zshrc, etc.) to a pristine
+# skeleton. At runtime /home/node is mounted on a persistent PVC, which would
+# shadow these; the entrypoint seeds an empty home from /opt/home-skel on first
+# boot so the dotfiles persist AND remain user-editable.
+RUN cp -a /home/node /opt/home-skel && chown -R 1000:1000 /opt/home-skel
+
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the
 # /remote-control login survives pod restarts.

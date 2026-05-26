@@ -40,6 +40,15 @@ spec:
             - -lc
             - |
               set +e
+              # $HOME (/home/node) is mounted on the persistent PVC, so the
+              # image's baked dotfiles (oh-my-zsh, nvim config, .zshrc) are
+              # shadowed on first boot. Seed them from the image's pristine
+              # copy (/opt/home-skel) if this is a fresh/empty home, so they
+              # persist AND stay user-editable. Marker file = already seeded.
+              if [ ! -f "$HOME/.home-seeded" ]; then
+                cp -an /opt/home-skel/. "$HOME/" 2>/dev/null
+                touch "$HOME/.home-seeded"
+              fi
               git config --global credential.helper store
               cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
               chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
@@ -79,12 +88,16 @@ spec:
             - name: GIT_COMMITTER_EMAIL
               value: "christopher.scot.martin@gmail.com"
           volumeMounts:
+            # Per-pod PVC (volumeClaimTemplate -> workspace-claude-session-N),
+            # split into two subPaths so BOTH survive restarts:
+            #   home/ -> /home/node  (Claude login, shell/nvim state, dotfiles)
+            #   ws/   -> /workspace  (cloned repos + any changes)
+            - name: workspace
+              mountPath: /home/node
+              subPath: home
             - name: workspace
               mountPath: /workspace
-            # Persist Claude login/session state across restarts.
-            - name: workspace
-              mountPath: /home/node/.claude
-              subPath: dot-claude
+              subPath: ws
             # GitHub token for push (mounted from secret) — sessions source it.
             - name: git-creds
               mountPath: /run/secrets/git
