@@ -2,19 +2,8 @@
   "mcpServers": {
     "grafana": {
       "type": "stdio",
-      "command": "ssh",
-      "args": [
-        "homelab",
-        "kubectl",
-        "exec",
-        "-n",
-        "monitoring",
-        "-i",
-        "deploy/mcp-grafana",
-        "--",
-        "/app/mcp-grafana",
-        "stdio"
-      ],
+      "command": "./scripts/mcp-grafana.sh",
+      "args": [],
       "env": {}
     }
   }
