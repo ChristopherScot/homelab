@@ -53,12 +53,10 @@ spec:
               git config --global credential.helper store
               cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
               chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
-              # GCP auth: if a deploy key is mounted, decode + activate it so
-              # gcloud is ready for ephemeral deploys on boot.
-              if [ -f /run/secrets/gcp/key.json.b64 ]; then
-                base64 -d /run/secrets/gcp/key.json.b64 > "$HOME/.gcp-deploy-key.json" 2>/dev/null
-                chmod 600 "$HOME/.gcp-deploy-key.json"
-                gcloud auth activate-service-account --key-file="$HOME/.gcp-deploy-key.json" --quiet 2>/dev/null \
+              # GCP auth: if the deploy key is mounted, activate it so gcloud
+              # is ready for ephemeral deploys on boot. Raw JSON (no base64).
+              if [ -f /run/secrets/gcp/key.json ]; then
+                gcloud auth activate-service-account --key-file=/run/secrets/gcp/key.json --quiet 2>/dev/null \
                   && gcloud config set project "$(cat /run/secrets/gcp/project 2>/dev/null)" --quiet 2>/dev/null \
                   && gcloud auth configure-docker us-central1-docker.pkg.dev --quiet 2>/dev/null \
                   && echo "gcloud authed for deploy" || echo "WARN: gcloud auth failed"
