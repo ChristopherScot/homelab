@@ -52,10 +52,16 @@ spec:
               git config --global credential.helper store
               cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
               chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
-              # CLONE_REPOS: space/comma/newline-separated. Accepts full URLs
-              # or owner/repo slugs (assumed github.com). Idempotent: skips a
-              # repo whose dir already exists in /workspace.
-              for r in $(echo "${CLONE_REPOS:-}" | tr ',\n' '  '); do
+              # Per-pod repos by StatefulSet ordinal: pod 0 -> homelab,
+              # pod 1 -> schoolhouse app + infra. (StatefulSet gives all pods
+              # the same env, so we pick from CLONE_REPOS_0 / CLONE_REPOS_1
+              # based on the ordinal suffix of the pod name.)
+              ORD="${HOSTNAME##*-}"
+              eval "REPOS=\"\${CLONE_REPOS_${ORD}:-\${CLONE_REPOS:-}}\""
+              echo "pod ordinal=$ORD -> repos: $REPOS"
+              # space/comma/newline-separated; full URLs or owner/repo slugs
+              # (assumed github.com). Idempotent: skips a repo dir that exists.
+              for r in $(echo "${REPOS:-}" | tr ',\n' '  '); do
                 [ -z "$r" ] && continue
                 case "$r" in
                   http*://*|git@*) url="$r" ;;
@@ -87,10 +93,13 @@ spec:
           env:
             - name: HOME
               value: /home/node
-            # Repos to pre-clone into /workspace on startup (space/comma/
-            # newline-separated; full URLs or owner/repo slugs).
-            - name: CLONE_REPOS
+            # Per-pod repos to pre-clone into /workspace on startup, chosen by
+            # the pod's ordinal (claude-session-0 -> _0, -1 -> _1). Space/
+            # comma/newline-separated; full URLs or owner/repo slugs.
+            - name: CLONE_REPOS_0
               value: "ChristopherScot/homelab"
+            - name: CLONE_REPOS_1
+              value: "schoolhouse-world/app schoolhouse-world/infra"
             # Git identity for commits made from these sessions.
             - name: GIT_AUTHOR_NAME
               value: "Chris (claude-pod)"

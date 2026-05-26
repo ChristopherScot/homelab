@@ -10,8 +10,13 @@
 set -u
 
 SESSION=work
-START_DIR="${1:-/workspace/homelab}"
-[ -d "$START_DIR" ] || START_DIR=/workspace
+# Start dir: explicit arg, else the first cloned repo in /workspace, else
+# /workspace. (Pod 0 has homelab; pod 1 has schoolhouse app/infra.)
+START_DIR="${1:-}"
+if [ -z "$START_DIR" ]; then
+  START_DIR=$(find /workspace -maxdepth 1 -mindepth 1 -type d -exec test -d '{}/.git' ';' -print 2>/dev/null | sort | head -1)
+fi
+[ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   # window 0: neovim (left pane)
