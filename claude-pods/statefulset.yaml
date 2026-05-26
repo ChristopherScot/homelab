@@ -98,29 +98,13 @@ spec:
                 "$HOME/.tmux/plugins/tpm/bin/install_plugins" >/dev/null 2>&1 || true
                 tmux kill-session -t _tpm 2>/dev/null
               fi
-              # Start the tmux server + source conf. tmux-continuum then
-              # auto-RESTORES the last saved environment (the `work` layout with
-              # nvim/claude/shell, via @resurrect-processes) — so after a pod
-              # restart your panes + running programs come back on their own.
-              tmux start-server 2>/dev/null
-              tmux source-file "$HOME/.tmux.conf" 2>/dev/null
-              # Give continuum a moment to restore saved sessions on boot.
-              sleep 8
-              # Ensure the persistent Remote Control bridge runs in a dedicated
-              # `rc` session (separate from the restored `work` layout, so RC
-              # state is unambiguous). If `rc` already has claude running
-              # (restored), leave it; else (re)start the RC loop. RC reconnects
-              # to claude.ai/code / mobile on its own — no manual step.
-              # Detect a live RC by the pane CONTENT ("Connected"/"Remote
-              # Control"), NOT pane_current_command — RC runs under a wrapper
-              # shell so the command shows as "zsh" even when RC is up, which
-              # made the old check always think it was down.
-              rc_up=$(tmux capture-pane -t rc -p 2>/dev/null | grep -cE 'Connected|Remote Control|QR code')
-              if [ "${rc_up:-0}" -eq 0 ]; then
-                tmux kill-session -t rc 2>/dev/null
-                tmux new-session -d -s rc -c /workspace \
-                  'while true; do claude remote-control; echo "RC exited; restart 5s"; sleep 5; done'
-              fi
+              # Clean boot (no continuum auto-restore, so no stale sessions to
+              # race): start a fresh tmux server + the Remote Control bridge in
+              # a dedicated `rc` session. RC reconnects to claude.ai/code /
+              # mobile on its own — no manual step after a restart.
+              tmux kill-server 2>/dev/null
+              tmux new-session -d -s rc -c /workspace \
+                'while true; do claude remote-control; echo "RC exited; restart 5s"; sleep 5; done'
               # The `work` layout (nvim + claude + shell) is NOT built at boot:
               # nvim/claude need an attached TTY, which doesn't exist here, so
               # launching them detached just exits to a shell. Instead:

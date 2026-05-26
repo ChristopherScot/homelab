@@ -229,12 +229,12 @@ RUN git clone --depth 1 https://github.com/tmux-plugins/tpm /home/node/.tmux/plu
       '# --- plugins (tpm) ---' \
       "set -g @plugin 'tmux-plugins/tpm'" \
       "set -g @plugin 'tmux-plugins/tmux-resurrect'" \
-      "set -g @plugin 'tmux-plugins/tmux-continuum'" \
-      "set -g @continuum-restore 'on'   # auto-restore saved sessions on tmux start" \
-      "set -g @continuum-save-interval '2'" \
+      "# resurrect kept for MANUAL save/restore (prefix C-s / prefix C-r) if" \
+      "# ever wanted. Auto-restore (continuum) is intentionally OFF: it kept" \
+      "# restoring stale/dead rc+work sessions that shadowed the fresh ones the" \
+      "# entrypoint/rclaude create, causing races. Boot = clean: entrypoint" \
+      "# starts RC, rclaude builds the work layout on demand." \
       "set -g @resurrect-capture-pane-contents 'on'" \
-      "# restore these running programs in their panes (not just the layout):" \
-      "set -g @resurrect-processes 'nvim vim claude lazygit'" \
       "run '~/.tmux/plugins/tpm/tpm'" \
       > /home/node/.tmux.conf \
     && chown -R 1000:1000 /home/node/.tmux.conf /home/node/.tmux
