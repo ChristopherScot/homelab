@@ -29,18 +29,18 @@ fi
 [ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  # window 0: neovim (left pane)
-  tmux new-session -d -s "$SESSION" -n code -c "$START_DIR"
-  tmux send-keys -t "$SESSION:code" 'nvim .' C-m
-
-  # split right (40% width) for claude
-  tmux split-window -h -p 40 -t "$SESSION:code" -c "$START_DIR"
-  tmux send-keys -t "$SESSION:code.1" 'claude' C-m
-
-  # split that right column bottom for a plain shell
+  # Launch nvim + claude as the panes' direct commands (not send-keys, which
+  # races the shell's startup on a fresh boot and drops the keystrokes). Wrap
+  # in a shell so the pane drops to an interactive prompt when you quit the
+  # program, instead of closing the pane.
+  # left pane: neovim
+  tmux new-session -d -s "$SESSION" -n code -c "$START_DIR" \
+    "nvim .; exec zsh"
+  # right (40%): claude
+  tmux split-window -h -p 40 -t "$SESSION:code" -c "$START_DIR" \
+    "claude; exec zsh"
+  # right-bottom: plain shell
   tmux split-window -v -p 40 -t "$SESSION:code.1" -c "$START_DIR"
-  # (bottom pane left as a shell prompt)
-
   # focus the claude pane by default
   tmux select-pane -t "$SESSION:code.1"
 fi
