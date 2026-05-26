@@ -1,7 +1,10 @@
 # Interactive Claude Code session image for in-cluster pods, driven remotely
 # via /remote-control (claude.ai/code + mobile). Carries the toolset used to
 # operate this homelab: git, kubectl, helm, jq, yq, gh, plus the Claude CLI.
-FROM node:22-bookworm-slim
+# trixie (Debian 13, GLIBC 2.41) — bookworm's GLIBC 2.36 is too old for the
+# tree-sitter CLI LazyVim/nvim-treesitter use (needs GLIBC_2.39+), which broke
+# grammar builds + cascaded into LSP/parse errors.
+FROM node:22-trixie-slim
 
 ARG CLAUDE_CODE_VERSION=2.1.146
 # kubectl pinned near the cluster's k3s 1.30 (avoid large version skew).
@@ -66,6 +69,17 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
       > /etc/apt/sources.list.d/github-cli.list \
     && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Google Cloud SDK (gcloud) — for the GCP deployment target: Secret Manager,
+# Artifact Registry, GCE. Core + gke-gcloud-auth-plugin (GKE auth) + gsutil.
+# One image serves both homelab (kubectl/helm) and GCP envs.
+RUN curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+      | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+      > /etc/apt/sources.list.d/google-cloud-sdk.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+      google-cloud-cli google-cloud-cli-gke-gcloud-auth-plugin \
     && rm -rf /var/lib/apt/lists/*
 
 # Go
