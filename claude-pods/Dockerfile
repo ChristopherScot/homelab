@@ -139,6 +139,10 @@ RUN chsh -s /usr/bin/zsh node
 # boot so the dotfiles persist AND remain user-editable.
 RUN cp -a /home/node /opt/home-skel && chown -R 1000:1000 /opt/home-skel
 
+# Work-layout script for the `rclaude N` command (nvim + claude + shell).
+COPY rclaude-layout.sh /usr/local/bin/rclaude-layout
+RUN chmod +x /usr/local/bin/rclaude-layout
+
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the
 # /remote-control login survives pod restarts.
