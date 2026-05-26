@@ -104,9 +104,10 @@ spec:
         name: workspace
       spec:
         accessModes: [ReadWriteOnce]
-        # 1-replica SC: workspaces are re-clonable; avoids the unschedulable
-        # 2nd replica (node2 SSD full) + saves scarce SSD capacity.
-        storageClassName: longhorn-single
+        # hdd capacity tier (1 replica): workspaces are re-clonable and
+        # non-latency-sensitive, so they belong on the 1.6TB-free hdd disk,
+        # not the near-full SSD tier.
+        storageClassName: longhorn-hdd-single
         resources:
           requests:
             storage: 10Gi

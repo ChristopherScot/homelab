@@ -1,12 +1,13 @@
-# 1-replica Longhorn StorageClass for the Claude pod workspaces. These hold
-# only re-clonable data (the homelab repo + recoverable Claude login state),
-# so a single replica is fine — and 2 replicas couldn't schedule anyway
-# (replicas only fit on node1+node2 SSDs; node2 is near-full). One replica
-# avoids wasting scarce SSD capacity on ephemeral dev volumes.
+# Bulk/capacity StorageClass on the hdd tier (node1's 1.8TB hdd disk, 1.6TB
+# free) instead of the cramped SSD tier. For re-clonable / non-latency-
+# sensitive volumes like the Claude pod workspaces (homelab repo + recoverable
+# Claude login). 1 replica because only node1 has an hdd disk — and these
+# volumes don't need redundancy. Frees scarce SSD for DBs/latency-sensitive
+# apps.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
-  name: longhorn-single
+  name: longhorn-hdd-single
 provisioner: driver.longhorn.io
 allowVolumeExpansion: true
 reclaimPolicy: Delete
@@ -15,3 +16,5 @@ parameters:
   numberOfReplicas: "1"
   staleReplicaTimeout: "30"
   dataLocality: best-effort
+  # Pin replicas to the hdd-tagged disk (the 1.6TB-free capacity tier).
+  diskSelector: "hdd"
