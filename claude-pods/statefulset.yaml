@@ -70,6 +70,19 @@ spec:
                   git clone "$url" "$dir" || echo "WARN: clone failed: $url"
                 fi
               done
+              # Auto-start Claude Remote Control as a persistent server inside
+              # tmux, so after ANY pod restart the bridge comes back on its own
+              # and this session reappears in claude.ai/code / the mobile app —
+              # no manual re-attach or /remote-control needed. Launches in
+              # /workspace (already a trusted dir; a subdir could re-prompt the
+              # trust dialog and hang the auto-start — cd into repos from within
+              # the session). Runs in tmux session "claude" so you can also
+              # `tmux attach -t claude` to watch/drive it. A restart-loop keeps
+              # it up if RC exits; the pod stays alive regardless.
+              if ! tmux has-session -t claude 2>/dev/null; then
+                tmux new-session -d -s claude -c /workspace \
+                  'while true; do claude remote-control; echo "remote-control exited; restarting in 5s"; sleep 5; done'
+              fi
               exec sleep infinity
           env:
             - name: HOME
