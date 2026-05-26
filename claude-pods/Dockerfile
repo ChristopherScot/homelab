@@ -130,6 +130,15 @@ RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/oh
       > /home/node/.oh-my-zsh/custom/zz-workflow.zsh \
     && chown -R 1000:1000 /home/node/.oh-my-zsh /home/node/.zshrc
 
+# tmux config: focus-events on (Claude Code wants this to detect pane focus;
+# otherwise it warns "tmux focus-events off ..." on every launch).
+RUN printf '%s\n' \
+      'set -g focus-events on' \
+      'set -g mouse on' \
+      'set -g history-limit 50000' \
+      > /home/node/.tmux.conf \
+    && chown 1000:1000 /home/node/.tmux.conf
+
 # Default the node user to zsh (the configured shell above).
 RUN chsh -s /usr/bin/zsh node
 
