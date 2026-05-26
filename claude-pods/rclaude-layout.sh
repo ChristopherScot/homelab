@@ -10,10 +10,19 @@
 set -u
 
 SESSION=work
-# Start in the pod's primary repo (the first entry of its CLONE_REPOS, which
-# the entrypoint records to /workspace/.primary-repo). Falls back to an
-# explicit arg, then /workspace.
-START_DIR="${1:-}"
+# --build-only: create the session WITHOUT attaching (used by the pod
+# entrypoint, which has no TTY). Otherwise build (if missing) + attach.
+BUILD_ONLY=0
+START_DIR=""
+for a in "$@"; do
+  case "$a" in
+    --build-only) BUILD_ONLY=1 ;;
+    *) START_DIR="$a" ;;
+  esac
+done
+# Start in the pod's primary repo (first CLONE_REPOS entry, recorded by the
+# entrypoint to /workspace/.primary-repo). Falls back to an explicit arg,
+# then /workspace.
 if [ -z "$START_DIR" ] && [ -f /workspace/.primary-repo ]; then
   START_DIR=$(cat /workspace/.primary-repo)
 fi
@@ -36,4 +45,6 @@ if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   tmux select-pane -t "$SESSION:code.1"
 fi
 
+# entrypoint just wants the session built; interactive use attaches.
+[ "$BUILD_ONLY" -eq 1 ] && exit 0
 exec tmux attach -t "$SESSION"
