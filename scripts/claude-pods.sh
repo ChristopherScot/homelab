@@ -18,8 +18,12 @@
 #
 # ── COMMANDS ────────────────────────────────────────────────────────────────
 #   rclaude [0|1]      open the tmux WORK layout (neovim + claude + shell)
-#   rclaude-rc [0|1]   attach the Remote Control session (what your phone sees)
 #   rclaude-sh [0|1]   plain shell in the pod
+#
+# Remote Control (phone/web access) runs automatically in each pod's `rc`
+# session — drive it from claude.ai/code or the Claude app. There's no terminal
+# command for it: attaching the rc session only shows the server's status
+# screen, not a joinable conversation, so it isn't exposed here.
 #
 # Pods: claude-session-0 (homelab repo), claude-session-1 (schoolhouse app+infra).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -43,18 +47,6 @@ rclaude() {
   esac
   ssh -t homelab kubectl exec -it -n claude-pods "claude-session-${n}" \
     -- /usr/local/bin/rclaude-layout "$name" "$dir"
-}
-
-# rclaude-rc N — attach the persistent Remote Control tmux session (the one
-# bridged to claude.ai/code + mobile), to watch/drive it from a terminal.
-rclaude-rc() {
-  local n="${1:-0}"
-  case "$n" in
-    0|1) ;;
-    *) echo "usage: rclaude-rc [0|1]" >&2; return 2 ;;
-  esac
-  ssh -t homelab kubectl exec -it -n claude-pods "claude-session-${n}" \
-    -- tmux attach -t rc
 }
 
 # rclaude-sh N — just drop into a plain shell in pod N (no tmux layout).
