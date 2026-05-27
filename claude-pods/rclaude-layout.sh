@@ -38,19 +38,15 @@ fi
 [ -n "$START_DIR" ] && [ -d "$START_DIR" ] || START_DIR=/workspace
 
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
-  # The claude pane runs `claude --remote-control` (interactive mode): the
-  # session you type in here is ALSO reachable from claude.ai/code + the phone,
-  # in sync — so every rclaude session is remotely accessible without a
-  # separate always-on RC server. Interactive mode pre-creates the session
-  # (you're in it), avoiding the headless server-mode "Capacity 0/32" problem.
-  # RC session name (shown in the claude.ai/code session list): the explicit
-  # name if one was given, else the start dir's basename (e.g. "app", "infra")
-  # so an un-named `rclaude N` is still identifiable by what it opened on.
-  if [ -n "$NAME" ]; then
-    rc_name="$NAME"
-  else
-    rc_name="$(basename "$START_DIR")"
-  fi
+  # The work claude pane runs `claude --remote-control` so THIS session is also
+  # reachable from claude.ai/code + phone WHILE you're working in it (bonus
+  # remote access to your live dev session). Note: an attached interactive RC
+  # session dies on SIGHUP when you close the terminal — so for durable,
+  # always-on phone access the pod ALSO runs a dedicated never-attached `rc`
+  # session (entrypoint). work = live session (remote bonus); rc = persistent.
+  # RC name (in the claude.ai/code list): explicit name if given, else the
+  # start dir's basename (e.g. "app", "infra") so it's identifiable.
+  if [ -n "$NAME" ]; then rc_name="$NAME"; else rc_name="$(basename "$START_DIR")"; fi
   # left: nvim | right-top: claude --remote-control | right-bottom: shell.
   tmux new-session    -d -s "$SESSION" -n code -c "$START_DIR" "nvim .; exec zsh"
   tmux split-window -h -p 40 -t "$SESSION:code"   -c "$START_DIR" "claude --remote-control \"$rc_name\"; exec zsh"

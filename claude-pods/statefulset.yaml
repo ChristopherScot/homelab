@@ -104,22 +104,30 @@ spec:
                 "$HOME/.tmux/plugins/tpm/bin/install_plugins" >/dev/null 2>&1 || true
                 tmux kill-session -t _tpm 2>/dev/null
               fi
-              # Remote Control is NO LONGER a separate always-on server here.
-              # Headless server-mode `claude remote-control --create-session-in-dir`
-              # reliably came up Capacity 0/32 (no usable session -> phone spun),
-              # and supervising it churned un-deletable claude.ai envs + corrupted
-              # the tmux socket. Instead: the claude pane in each `rclaude` WORK
-              # session runs `claude --remote-control` (interactive mode) — that
-              # session IS remotely accessible from claude.ai/code + phone, in
-              # sync, and pre-creates its session because you're in it (with a
-              # real TTY). So any rclaude session you start is reachable from any
-              # device, with none of the headless server-mode breakage.
-              # Just ensure a clean tmux server exists for rclaude to use.
+              # Always-on Remote Control, the way that actually survives:
+              # run interactive `claude --remote-control` in a dedicated `rc`
+              # tmux session that we NEVER attach to. Why this works where the
+              # others didn't:
+              #   - server mode (`claude remote-control`) came up Capacity 0/32
+              #     headless -> phone spun. Avoided.
+              #   - interactive RC inside an *attached* pane died on SIGHUP when
+              #     you closed the terminal -> phone lost it. Avoided: nothing
+              #     ever attaches to `rc`, so there's no terminal to close and no
+              #     HUP; tmux holds the pty, claude stays up + connectable.
+              # The session is named by the pod's primary repo so the two pods
+              # are distinguishable in the claude.ai/code session list.
               tmux kill-server 2>/dev/null
               tmux start-server 2>/dev/null
-              # The `work` layout (nvim + claude --remote-control + shell) is built
-              # by `rclaude N` on attach (needs a real TTY; can't auto-launch at
-              # boot). Run `rclaude N` from any machine to start/attach a session.
+              # Name it "<repo>-persistent" so it's distinct in the claude.ai/code
+              # list from the per-work-session RC envs ("<repo>" or "<name>").
+              RC_NAME="$(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)")-persistent"
+              RC_DIR="$(cat /workspace/.primary-repo 2>/dev/null || echo /workspace)"
+              [ -d "$RC_DIR" ] || RC_DIR=/workspace
+              tmux new-session -d -s rc -c "$RC_DIR" \
+                "while true; do claude --remote-control \"$RC_NAME\"; echo 'RC exited; restart 5s'; sleep 5; done"
+              # The `work` layout (nvim + claude + shell) is built by `rclaude N`
+              # on attach (needs a real TTY). It's separate from the `rc` session
+              # above. Run `rclaude N` from any machine to start/attach work.
               exec sleep infinity
           env:
             - name: HOME
