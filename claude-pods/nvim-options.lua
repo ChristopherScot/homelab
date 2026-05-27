@@ -1,19 +1,28 @@
--- LazyVim user options (loaded after defaults). These pods are REMOTE
--- (ssh -> kubectl exec), so clipboard sync goes over OSC 52.
+
+-- These pods are REMOTE (kubectl exec, inside tmux, viewed in Ghostty on a Mac).
+-- Copy/paste between the Mac and nvim is done ENTIRELY with the terminal:
+--   * Cmd-C copies the terminal selection (hold Shift while dragging to select
+--     past tmux mouse mode) -> Mac clipboard.
+--   * Cmd-V bracketed-pastes the Mac clipboard into nvim (insert mode).
+-- Neither uses OSC 52, so neither triggers macOS's "an application is attempting
+-- to read from the clipboard" prompt.
 --
--- We DO want yanks in pod-nvim to reach the Mac clipboard. The repeated macOS
--- "an application is attempting to read from the clipboard" modal comes from
--- clipboard *reads* (OSC 52 paste/register sync) — macOS prompts per read.
--- Fix: OSC 52 for COPY only, and a no-op paste (returns empty) so nvim never
--- issues a clipboard *read* back over the wire. You still paste via normal
--- terminal paste (Cmd-V), which doesn't prompt. Yank (y) -> Mac clipboard works.
-local function osc52_copy(lines)
-  return require("vim.ui.clipboard.osc52").copy("+")(lines)
-end
-vim.opt.clipboard = "unnamedplus"
+-- That prompt was caused by nvim *reading* the system clipboard over OSC 52:
+-- neovim 0.12 auto-enables an OSC 52 provider from terminal capability detection
+-- (not just $SSH_TTY, and invisible in g:clipboard), and yanky.nvim syncs that
+-- clipboard on FocusGained -> a read on every click into nvim.
+--
+-- Fix: keep yy/p on the internal register (clipboard = "") and fully NEUTER the
+-- system-clipboard provider with a no-op g.clipboard so the +/* registers never
+-- emit an OSC 52 read or write. yanky's sync is also disabled in
+-- lua/plugins/clipboard.lua as belt-and-suspenders.
+vim.opt.clipboard = ""
+
 vim.g.clipboard = {
-  name = "osc52-copy-only",
-  copy = { ["+"] = osc52_copy, ["*"] = osc52_copy },
-  -- no-op paste: never read the system clipboard (avoids the macOS modal)
-  paste = { ["+"] = function() return { {}, "v" } end, ["*"] = function() return { {}, "v" } end },
+  name = "noop",
+  copy = { ["+"] = function() end, ["*"] = function() end },
+  paste = {
+    ["+"] = function() return { {}, "v" } end,
+    ["*"] = function() return { {}, "v" } end,
+  },
 }

@@ -120,6 +120,14 @@ RUN curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LA
 # Go debugger (delve) for in-editor DAP debugging of Go.
 RUN GOBIN=/usr/local/bin /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@latest
 
+# croc — secure relay-based file transfer between any two networks (no inbound
+# connectivity needed). Used to pull files into a pod from a laptop on a
+# different network: `croc send <file>` there, `croc --yes <code>` here.
+ARG CROC_VERSION=v10.4.4
+RUN curl -fsSL "https://github.com/schollz/croc/releases/download/${CROC_VERSION}/croc_${CROC_VERSION}_Linux-64bit.tar.gz" \
+      | tar -xz -C /tmp croc && mv /tmp/croc /usr/local/bin/croc \
+    && chmod +x /usr/local/bin/croc
+
 # Claude Code CLI + TypeScript toolchain (node base already present)
 RUN npm install -g \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
@@ -156,6 +164,9 @@ RUN git clone --depth 1 https://github.com/LazyVim/starter /home/node/.config/nv
       '}' \
       > /home/node/.config/nvim/lazyvim.json \
     && chown -R 1000:1000 /home/node/.config
+# Disable yanky's system-clipboard sync (a FocusGained OSC 52 read that popped
+# the macOS "attempting to read from the clipboard" prompt). See nvim-options.lua.
+COPY --chown=1000:1000 nvim-clipboard.lua /home/node/.config/nvim/lua/plugins/clipboard.lua
 
 # Shell: oh-my-zsh + starship + zoxide + eza aliases (nexxeln-style workflow).
 # PATH/exports/aliases/starship go in $ZSH_CUSTOM (sourced after oh-my-zsh.sh).
@@ -194,54 +205,8 @@ RUN git config --system core.pager delta \
 # scrollback, sane keybindings, a clean status bar, and tmux-resurrect/
 # continuum for session persistence. tpm is vendored into the skel home; the
 # entrypoint installs the plugins on first boot.
+COPY tmux.conf /home/node/.tmux.conf
 RUN git clone --depth 1 https://github.com/tmux-plugins/tpm /home/node/.tmux/plugins/tpm \
-    && printf '%s\n' \
-      '# --- core ---' \
-      'set -g focus-events on' \
-      'set -g mouse on' \
-      'set -g history-limit 50000' \
-      'set -g default-terminal "tmux-256color"' \
-      'set -ga terminal-overrides ",*256col*:Tc"   # truecolor' \
-      'set -g base-index 1' \
-      'setw -g pane-base-index 1' \
-      'set -sg escape-time 10' \
-      'set -g set-titles on' \
-      '' \
-      '# --- keybindings ---' \
-      '# prefix stays C-b. intuitive splits that keep cwd:' \
-      'bind | split-window -h -c "#{pane_current_path}"' \
-      'bind - split-window -v -c "#{pane_current_path}"' \
-      '# vim-style pane navigation:' \
-      'bind h select-pane -L' \
-      'bind j select-pane -D' \
-      'bind k select-pane -U' \
-      'bind l select-pane -R' \
-      '# tmux-sessionizer: fzf-jump to a per-repo session (prefix f):' \
-      'bind f run-shell "tmux neww tmux-sessionizer"' \
-      '# reload config:' \
-      'bind r source-file ~/.tmux.conf \; display "reloaded"' \
-      '' \
-      '# --- status bar ---' \
-      'set -g status-interval 5' \
-      'set -g status-style "bg=colour236,fg=colour250"' \
-      'set -g status-left "#[bg=colour39,fg=colour16,bold] #S #[bg=colour236] "' \
-      'set -g status-left-length 30' \
-      'set -g status-right "#[fg=colour245]#H #[fg=colour250]%H:%M "' \
-      'setw -g window-status-current-style "bg=colour39,fg=colour16,bold"' \
-      'setw -g window-status-current-format " #I:#W "' \
-      'setw -g window-status-format " #I:#W "' \
-      '' \
-      '# --- plugins (tpm) ---' \
-      "set -g @plugin 'tmux-plugins/tpm'" \
-      "set -g @plugin 'tmux-plugins/tmux-resurrect'" \
-      "# resurrect kept for MANUAL save/restore (prefix C-s / prefix C-r) if" \
-      "# ever wanted. Auto-restore (continuum) is intentionally OFF: it kept" \
-      "# restoring stale/dead rc+work sessions that shadowed the fresh ones the" \
-      "# entrypoint/rclaude create, causing races. Boot = clean: entrypoint" \
-      "# starts RC, rclaude builds the work layout on demand." \
-      "set -g @resurrect-capture-pane-contents 'on'" \
-      "run '~/.tmux/plugins/tpm/tpm'" \
-      > /home/node/.tmux.conf \
     && chown -R 1000:1000 /home/node/.tmux.conf /home/node/.tmux
 
 # Baked base ~/.claude.json with NON-SECRET UX flags so fresh homes skip the
