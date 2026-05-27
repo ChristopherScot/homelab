@@ -6,7 +6,7 @@
 # grammar builds + cascaded into LSP/parse errors.
 FROM node:22-trixie-slim
 
-ARG CLAUDE_CODE_VERSION=2.1.146
+ARG CLAUDE_CODE_VERSION=2.1.152
 # kubectl pinned near the cluster's k3s 1.30 (avoid large version skew).
 ARG KUBECTL_VERSION=v1.30.6
 # helm kept on v3 (v4 is a breaking major; chart compat).
