@@ -114,8 +114,11 @@ spec:
               [ -d "$RC_DIR" ] || RC_DIR=/workspace
               export CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX="$RC_NAME"
               tmux kill-server 2>/dev/null
+              # --spawn=same-dir: skip the interactive 'spawn mode [1/2]' prompt
+              # that otherwise blocks RC (it appears once per project dir and
+              # left RC stuck waiting -> phone sessions spun forever).
               tmux new-session -d -s rc -c "$RC_DIR" \
-                "while true; do claude remote-control --name '$RC_NAME'; echo 'RC exited; restart 5s'; sleep 5; done"
+                "while true; do claude remote-control --name '$RC_NAME' --spawn=same-dir; echo 'RC exited; restart 5s'; sleep 5; done"
               # The `work` layout (nvim + claude + shell) is NOT built at boot:
               # nvim/claude need an attached TTY, which doesn't exist here, so
               # launching them detached just exits to a shell. Instead:
