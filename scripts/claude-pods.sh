@@ -20,10 +20,12 @@
 #   rclaude [0|1]      open the tmux WORK layout (neovim + claude + shell)
 #   rclaude-sh [0|1]   plain shell in the pod
 #
-# Remote Control (phone/web access) runs automatically in each pod's `rc`
-# session — drive it from claude.ai/code or the Claude app. There's no terminal
-# command for it: attaching the rc session only shows the server's status
-# screen, not a joinable conversation, so it isn't exposed here.
+# Remote Control: the claude pane in each `rclaude` WORK session runs with
+# --remote-control, so THAT session is reachable from claude.ai/code + the
+# Claude app, in sync. Start a session with `rclaude N`, then continue it from
+# your phone/web by opening it in the claude.ai/code session list (named
+# "<pod-host>-<session>"). It stays reachable as long as the session runs
+# (tmux keeps it alive after you detach). No separate always-on RC server.
 #
 # Pods: claude-session-0 (homelab repo), claude-session-1 (schoolhouse app+infra).
 # ─────────────────────────────────────────────────────────────────────────────

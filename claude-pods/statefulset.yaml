@@ -102,53 +102,22 @@ spec:
                 "$HOME/.tmux/plugins/tpm/bin/install_plugins" >/dev/null 2>&1 || true
                 tmux kill-session -t _tpm 2>/dev/null
               fi
-              # Clean boot (no continuum auto-restore): fresh tmux server + the
-              # Remote Control bridge in a dedicated `rc` session.
-              # - Give RC a STABLE, distinct --name per pod so the two show up
-              #   identifiably on claude.ai/code (not both "workspace") and so
-              #   restarts reconnect to the SAME named environment instead of
-              #   minting a new one each time (which piled up stale sessions).
-              # - Root RC in the pod's primary repo so the env is labeled by it.
-              RC_NAME="$(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)")"
-              RC_DIR="$(cat /workspace/.primary-repo 2>/dev/null || echo /workspace)"
-              [ -d "$RC_DIR" ] || RC_DIR=/workspace
-              export CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX="$RC_NAME"
+              # Remote Control is NO LONGER a separate always-on server here.
+              # Headless server-mode `claude remote-control --create-session-in-dir`
+              # reliably came up Capacity 0/32 (no usable session -> phone spun),
+              # and supervising it churned un-deletable claude.ai envs + corrupted
+              # the tmux socket. Instead: the claude pane in each `rclaude` WORK
+              # session runs `claude --remote-control` (interactive mode) — that
+              # session IS remotely accessible from claude.ai/code + phone, in
+              # sync, and pre-creates its session because you're in it (with a
+              # real TTY). So any rclaude session you start is reachable from any
+              # device, with none of the headless server-mode breakage.
+              # Just ensure a clean tmux server exists for rclaude to use.
               tmux kill-server 2>/dev/null
-              # --spawn=same-dir: skip the interactive 'spawn mode [1/2]' prompt
-              #   that otherwise blocks RC (left it stuck -> phone spun forever).
-              # --create-session-in-dir: pre-create the initial session on start.
-              #   Without it, headless RC came up Capacity 0/32 (env registered
-              #   but NO session to attach to) -> tapping it on the phone spun
-              #   forever. With it, RC comes up 1/32 = immediately usable.
-              rc_cmd="while true; do claude remote-control --name '$RC_NAME' --spawn=same-dir --create-session-in-dir; echo 'RC exited; restart 5s'; sleep 5; done"
-              tmux new-session -d -s rc -c "$RC_DIR" "$rc_cmd"
-              # Readiness guard: at cold boot RC sometimes registers the env but
-              # comes up Capacity 0/32 (no session pre-created -> phone spins),
-              # a timing issue (network/auth not warm yet). IMPORTANT: every RC
-              # (re)start mints a NEW claude.ai environment that CANNOT be
-              # deleted (known RC limitation — no API/CLI/UI to remove stale
-              # envs). So WAIT for RC to self-heal to 1/32 (it usually does once
-              # the network warms, on the SAME env — no duplicate) and only
-              # restart as a last resort after a long wait. Minimizes the
-              # un-cleanable duplicate envs. Backgrounded so it doesn't block.
-              (
-                # up to ~3min of waiting for self-heal before a single restart
-                for w in $(seq 1 18); do
-                  sleep 10
-                  tmux capture-pane -t rc -p -S -40 2>/dev/null | grep -qE 'Capacity: [1-9]' && { echo "RC healthy (no restart needed)"; exit 0; }
-                done
-                # No external kill/recreate: it corrupted the tmux socket
-                # ("server exited unexpectedly" -> whole server dead, no RC) and
-                # minted un-deletable dup envs. The rc_cmd's own while-loop
-                # restarts RC in place; just warn here.
-                echo "WARN: RC still 0/32 after ~3min; inner loop keeps retrying (no external restart)."
-              ) &
-              # The `work` layout (nvim + claude + shell) is NOT built at boot:
-              # nvim/claude need an attached TTY, which doesn't exist here, so
-              # launching them detached just exits to a shell. Instead:
-              #   - `rclaude N` builds the layout when you attach (real TTY)
-              #   - tmux-continuum restores it (incl. nvim) after pod restarts
-              # Both are reliable; boot-time auto-launch is not.
+              tmux start-server 2>/dev/null
+              # The `work` layout (nvim + claude --remote-control + shell) is built
+              # by `rclaude N` on attach (needs a real TTY; can't auto-launch at
+              # boot). Run `rclaude N` from any machine to start/attach a session.
               exec sleep infinity
           env:
             - name: HOME
