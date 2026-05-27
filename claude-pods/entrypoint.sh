@@ -70,6 +70,12 @@ if [ -d "$HOME/.tmux/plugins/tpm" ] && [ ! -d "$HOME/.tmux/plugins/tmux-resurrec
   tmux kill-session -t _tpm 2>/dev/null
 fi
 
+# Clear orphaned nvim swap files. Panes/sessions killed (not :q'd) leave swap
+# files behind, so opening a file later triggers nvim's E325 "swap already
+# exists" recovery prompt — the annoying split-looking dialog. At boot no nvim
+# is running yet, so every swap file in this dir is by definition an orphan.
+rm -f "$HOME"/.local/state/nvim/swap/*.sw[a-p] 2>/dev/null || true
+
 # Always-on Remote Control, the way that actually survives: run interactive
 # `claude --remote-control` in a dedicated `rc` tmux session that we NEVER
 # attach to. Why this works where the others didn't:

@@ -15,6 +15,11 @@ ARG YQ_VERSION=v4.53.2
 ARG GO_VERSION=1.26.3
 ARG TOFU_VERSION=1.12.0
 ARG NVIM_VERSION=v0.12.2
+# Rootless image builds in-pod (buildkit + rootlesskit). Daemonless, unprivileged
+# — no Docker-in-Docker, no privileged container. Needs uidmap (installed above)
+# + /etc/subuid mapping (present in the base node image as node:100000:65536).
+ARG BUILDKIT_VERSION=v0.18.2
+ARG ROOTLESSKIT_VERSION=v2.3.1
 
 # UTF-8 locale so multibyte glyphs (starship ❯, eza/nvim icons) render instead
 # of garbling to "__". The slim base leaves LANG unset -> programs default to
@@ -26,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates jq openssh-client less vim ripgrep gnupg \
       tmux unzip build-essential \
       zsh fzf fd-find \
+      uidmap \
     && rm -rf /var/lib/apt/lists/*
 
 # Neovim — latest from the official release tarball (Debian's apt nvim is far
@@ -42,6 +48,16 @@ RUN mkdir -p /etc/apt/keyrings \
       > /etc/apt/sources.list.d/gierens.list \
     && apt-get update && apt-get install -y --no-install-recommends eza \
     && rm -rf /var/lib/apt/lists/*
+
+# BuildKit + RootlessKit for in-pod image builds (build + push to a registry;
+# no local container runtime). Driven by the `dbuild` wrapper, which starts a
+# rootless buildkitd on demand. Verified the rootless path works on the k3s
+# nodes given uidmap + the base image's /etc/subuid mapping.
+RUN curl -fsSL "https://github.com/moby/buildkit/releases/download/${BUILDKIT_VERSION}/buildkit-${BUILDKIT_VERSION}.linux-amd64.tar.gz" \
+      | tar -xz -C /usr/local bin/buildctl bin/buildkitd bin/buildkit-runc \
+    && curl -fsSL "https://github.com/rootless-containers/rootlesskit/releases/download/${ROOTLESSKIT_VERSION}/rootlesskit-x86_64.tar.gz" \
+      | tar -xz -C /usr/local/bin rootlesskit \
+    && chmod +x /usr/local/bin/buildctl /usr/local/bin/buildkitd /usr/local/bin/buildkit-runc /usr/local/bin/rootlesskit
 
 # starship prompt + zoxide (smart cd) — official installers to /usr/local/bin
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- -y \
@@ -93,7 +109,8 @@ ENV GOPATH=/home/node/go
 # LazyVim attaches; gofumpt/goimports for formatting. (dlv installed below.)
 RUN GOBIN=/usr/local/bin /usr/local/go/bin/go install golang.org/x/tools/gopls@latest \
     && GOBIN=/usr/local/bin /usr/local/go/bin/go install golang.org/x/tools/cmd/goimports@latest \
-    && GOBIN=/usr/local/bin /usr/local/go/bin/go install mvdan.cc/gofumpt@latest
+    && GOBIN=/usr/local/bin /usr/local/go/bin/go install mvdan.cc/gofumpt@latest \
+    && /usr/local/go/bin/go clean -cache -modcache
 
 # OpenTofu (open-source Terraform; `tofu` CLI)
 RUN curl -fsSLo /tmp/tofu.zip \
@@ -118,7 +135,8 @@ RUN curl -fsSL "https://github.com/jesseduffield/lazygit/releases/download/v${LA
     && chmod +x /usr/local/bin/direnv
 
 # Go debugger (delve) for in-editor DAP debugging of Go.
-RUN GOBIN=/usr/local/bin /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@latest
+RUN GOBIN=/usr/local/bin /usr/local/go/bin/go install github.com/go-delve/delve/cmd/dlv@latest \
+    && /usr/local/go/bin/go clean -cache -modcache
 
 # croc — secure relay-based file transfer between any two networks (no inbound
 # connectivity needed). Used to pull files into a pod from a laptop on a
@@ -262,7 +280,9 @@ COPY entrypoint.sh /usr/local/bin/entrypoint
 # kbrowser: provision a Kernel cloud browser + wire agent-browser to it over CDP
 # (this image has no local browser). Reads KERNEL_API_KEY from the env.
 COPY kbrowser.sh /usr/local/bin/kbrowser
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser
+# dbuild: rootless in-pod image build + push (buildkit under rootlesskit).
+COPY dbuild.sh /usr/local/bin/dbuild
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the
