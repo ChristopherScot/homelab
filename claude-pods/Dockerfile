@@ -128,9 +128,14 @@ RUN curl -fsSL "https://github.com/schollz/croc/releases/download/${CROC_VERSION
       | tar -xz -C /tmp croc && mv /tmp/croc /usr/local/bin/croc \
     && chmod +x /usr/local/bin/croc
 
-# Claude Code CLI + TypeScript toolchain (node base already present)
+# Claude Code CLI + TypeScript toolchain (node base already present).
+# agent-browser = browser-automation CLI for agents. NO `agent-browser install`
+# here: it would download a local Chrome, but this image ships no browser/display
+# and runs rootless — the browser lives in Kernel's cloud (kernel.sh) and
+# agent-browser connects out over CDP. See the `kernel` skill + `kbrowser`.
 RUN npm install -g \
       @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
+      agent-browser \
       typescript ts-node tsx
 
 # Neovim: LazyVim distribution — full IDE-grade setup (LSP, autocomplete via
@@ -232,6 +237,13 @@ RUN printf '%s\n' \
 # Default the node user to zsh (the configured shell above).
 RUN chsh -s /usr/bin/zsh node
 
+# Claude skills baked into the home so fresh pods discover them (seeded to $HOME
+# from /opt/home-skel on first boot): the `kernel` skill routes browser work to
+# a Kernel cloud browser via `kbrowser`, and the `agent-browser` stub points at
+# the bundled CLI guide. Both deliberately avoid a local `agent-browser install`
+# (no browser/display/root in this image).
+COPY --chown=1000:1000 skills/ /home/node/.claude/skills/
+
 # Snapshot the baked home (oh-my-zsh, nvim config, .zshrc, etc.) to a pristine
 # skeleton. At runtime /home/node is mounted on a persistent PVC, which would
 # shadow these; the entrypoint seeds an empty home from /opt/home-skel on first
@@ -247,7 +259,10 @@ COPY dp.sh /usr/local/bin/dp
 # Boot orchestration — the pod's entrypoint (was an inline command in the
 # StatefulSet; baked here now that it's stable + testable).
 COPY entrypoint.sh /usr/local/bin/entrypoint
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint
+# kbrowser: provision a Kernel cloud browser + wire agent-browser to it over CDP
+# (this image has no local browser). Reads KERNEL_API_KEY from the env.
+COPY kbrowser.sh /usr/local/bin/kbrowser
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the

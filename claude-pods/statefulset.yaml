@@ -58,10 +58,31 @@ spec:
               value: "Chris (claude-pod)"
             - name: GIT_COMMITTER_NAME
               value: "Chris (claude-pod)"
+            # Email from the claude-git-identity ExternalSecret (Vault-backed),
+            # not hardcoded here. optional:true so pods still boot if the Vault
+            # `email` property isn't set yet (commits just lack an email until).
             - name: GIT_AUTHOR_EMAIL
-              value: "christopher.scot.martin@gmail.com"
+              valueFrom:
+                secretKeyRef:
+                  name: claude-git-identity
+                  key: email
+                  optional: true
             - name: GIT_COMMITTER_EMAIL
-              value: "christopher.scot.martin@gmail.com"
+              valueFrom:
+                secretKeyRef:
+                  name: claude-git-identity
+                  key: email
+                  optional: true
+            # Kernel (kernel.sh) API key for `kbrowser` cloud browsers. From the
+            # kernel-api ExternalSecret (Vault-backed). Optional so pods still
+            # boot before the Vault path is populated; `kbrowser` then falls back
+            # to ~/.config/kernel/api-key.
+            - name: KERNEL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kernel-api
+                  key: api_key
+                  optional: true
           volumeMounts:
             # $HOME on the SSD tier — latency-sensitive (interactive shell,
             # zsh history fsyncs, nvim state, Claude login). On the HDD tier
