@@ -137,9 +137,11 @@ spec:
                   sleep 10
                   tmux capture-pane -t rc -p -S -40 2>/dev/null | grep -qE 'Capacity: [1-9]' && { echo "RC healthy (no restart needed)"; exit 0; }
                 done
-                echo "RC still 0/32 after ~3min — one restart attempt"
-                tmux kill-session -t rc 2>/dev/null
-                tmux new-session -d -s rc -c "$RC_DIR" "$rc_cmd"
+                # No external kill/recreate: it corrupted the tmux socket
+                # ("server exited unexpectedly" -> whole server dead, no RC) and
+                # minted un-deletable dup envs. The rc_cmd's own while-loop
+                # restarts RC in place; just warn here.
+                echo "WARN: RC still 0/32 after ~3min; inner loop keeps retrying (no external restart)."
               ) &
               # The `work` layout (nvim + claude + shell) is NOT built at boot:
               # nvim/claude need an attached TTY, which doesn't exist here, so
