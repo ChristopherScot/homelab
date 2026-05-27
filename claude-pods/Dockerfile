@@ -158,16 +158,15 @@ RUN git clone --depth 1 https://github.com/LazyVim/starter /home/node/.config/nv
     && chown -R 1000:1000 /home/node/.config
 
 # Shell: oh-my-zsh + starship + zoxide + eza aliases (nexxeln-style workflow).
-# Custom config goes in $ZSH_CUSTOM (sourced AFTER oh-my-zsh.sh, so our
-# aliases/inits win — appending to .zshrc loaded too early and OMZ clobbered
-# them). starship replaces the OMZ theme.
+# PATH/exports/aliases/starship go in $ZSH_CUSTOM (sourced after oh-my-zsh.sh).
+# BUT zoxide + direnv MUST init at the very END of .zshrc (they warn / mis-hook
+# otherwise — $ZSH_CUSTOM runs mid-omz, not last), so those two are appended to
+# the tail of .zshrc instead.
 RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/ohmyzsh/master/tools/install.sh)" "" --unattended' \
     && printf '%s\n' \
       'export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin' \
       'export GOPATH=$HOME/go' \
       'eval "$(starship init zsh)"' \
-      'eval "$(zoxide init zsh)"' \
-      'eval "$(direnv hook zsh)"' \
       'alias ls="eza --icons --git"' \
       'alias ll="eza -l -g --icons --git"' \
       'alias la="eza -la -g --icons --git"' \
@@ -176,6 +175,12 @@ RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/oh
       'alias fd="fdfind"' \
       'alias lg="lazygit"' \
       > /home/node/.oh-my-zsh/custom/zz-workflow.zsh \
+    && printf '%s\n' \
+      '' \
+      '# zoxide + direnv: must be initialized at the END of .zshrc' \
+      'eval "$(zoxide init zsh)"' \
+      'eval "$(direnv hook zsh)"' \
+      >> /home/node/.zshrc \
     && chown -R 1000:1000 /home/node/.oh-my-zsh /home/node/.zshrc
 
 # Global git config: delta as pager + diff highlighter (nice colored diffs).

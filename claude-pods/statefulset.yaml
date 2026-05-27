@@ -54,8 +54,10 @@ spec:
               # at first-seed): a stale persisted .tmux.conf with continuum
               # auto-restore once kept resurrecting dead rc/work sessions and
               # broke RC auto-start. Re-sync these on every boot. (User-editable
-              # state like nvim plugins, shell history, repos is NOT touched.)
+              # state like nvim plugins, shell history, repos is NOT touched;
+              # user shell customization belongs in $ZSH_CUSTOM, also untouched.)
               cp -f /opt/home-skel/.tmux.conf "$HOME/.tmux.conf" 2>/dev/null || true
+              cp -f /opt/home-skel/.zshrc     "$HOME/.zshrc"     2>/dev/null || true
               git config --global credential.helper store
               cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
               chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
