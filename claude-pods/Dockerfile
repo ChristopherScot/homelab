@@ -279,7 +279,10 @@ COPY rclaude-layout.sh /usr/local/bin/rclaude-layout
 COPY tmux-sessionizer.sh /usr/local/bin/tmux-sessionizer
 # dp: deploy-ephemeral wrapper (deploy to webapp--$OWNER or an explicit env).
 COPY dp.sh /usr/local/bin/dp
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp
+# Boot orchestration — the pod's entrypoint (was an inline command in the
+# StatefulSet; baked here now that it's stable + testable).
+COPY entrypoint.sh /usr/local/bin/entrypoint
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the
