@@ -120,8 +120,24 @@ spec:
               #   Without it, headless RC came up Capacity 0/32 (env registered
               #   but NO session to attach to) -> tapping it on the phone spun
               #   forever. With it, RC comes up 1/32 = immediately usable.
-              tmux new-session -d -s rc -c "$RC_DIR" \
-                "while true; do claude remote-control --name '$RC_NAME' --spawn=same-dir --create-session-in-dir; echo 'RC exited; restart 5s'; sleep 5; done"
+              rc_cmd="while true; do claude remote-control --name '$RC_NAME' --spawn=same-dir --create-session-in-dir; echo 'RC exited; restart 5s'; sleep 5; done"
+              tmux new-session -d -s rc -c "$RC_DIR" "$rc_cmd"
+              # Readiness guard: at cold boot RC sometimes registers the env but
+              # comes up Capacity 0/32 (no session pre-created -> phone spins),
+              # a timing issue (network/auth not warm yet). Verify RC reached
+              # 1/32; if not, kill + restart until it does. Runs in the
+              # background so it doesn't block the entrypoint.
+              (
+                for attempt in 1 2 3 4 5 6; do
+                  sleep 20
+                  if tmux capture-pane -t rc -p -S -40 2>/dev/null | grep -qE 'Capacity: [1-9]'; then
+                    echo "RC healthy (session pre-created) on attempt $attempt"; break
+                  fi
+                  echo "RC at 0/32 (attempt $attempt) — restarting rc"
+                  tmux kill-session -t rc 2>/dev/null
+                  tmux new-session -d -s rc -c "$RC_DIR" "$rc_cmd"
+                done
+              ) &
               # The `work` layout (nvim + claude + shell) is NOT built at boot:
               # nvim/claude need an attached TTY, which doesn't exist here, so
               # launching them detached just exits to a shell. Instead:
