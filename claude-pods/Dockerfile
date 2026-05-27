@@ -211,9 +211,11 @@ RUN su node -c 'sh -c "$(curl -fsSL https://raw.githubusercontent.com/ohmyzsh/oh
       > /home/node/.oh-my-zsh/custom/zz-workflow.zsh \
     && printf '%s\n' \
       '' \
-      '# zoxide + direnv: must be initialized at the END of .zshrc' \
-      'eval "$(zoxide init zsh)"' \
+      '# direnv + zoxide at the END of .zshrc. Both hook precmd/chpwd; the zoxide' \
+      '# doctor warns unless ITS hook is registered LAST, so zoxide MUST init' \
+      '# after direnv (and everything else).' \
       'eval "$(direnv hook zsh)"' \
+      'eval "$(zoxide init zsh)"' \
       >> /home/node/.zshrc \
     && chown -R 1000:1000 /home/node/.oh-my-zsh /home/node/.zshrc
 
