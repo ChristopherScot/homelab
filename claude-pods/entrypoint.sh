@@ -81,9 +81,11 @@ fi
 #     stays up + connectable.
 tmux kill-server 2>/dev/null
 tmux start-server 2>/dev/null
-# Name it "<repo>-persistent" so it's distinct in the claude.ai/code list from
-# the per-work-session RC envs ("<repo>" or "<name>").
-RC_NAME="$(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)")-persistent"
+# Name it "<repo>-persistent <MM-DD HH:MM>" so it's distinct in the
+# claude.ai/code list from the per-work-session RC envs ("<repo>" or "<name>"),
+# and the boot timestamp makes the freshest one obvious after a roll (each roll
+# spins up a new persistent RC; the latest timestamp is the live one).
+RC_NAME="$(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)")-persistent $(date '+%m-%d %H:%M')"
 RC_DIR="$(cat /workspace/.primary-repo 2>/dev/null || echo /workspace)"
 [ -d "$RC_DIR" ] || RC_DIR=/workspace
 tmux new-session -d -s rc -c "$RC_DIR" \
