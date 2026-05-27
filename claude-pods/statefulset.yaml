@@ -124,19 +124,22 @@ spec:
               tmux new-session -d -s rc -c "$RC_DIR" "$rc_cmd"
               # Readiness guard: at cold boot RC sometimes registers the env but
               # comes up Capacity 0/32 (no session pre-created -> phone spins),
-              # a timing issue (network/auth not warm yet). Verify RC reached
-              # 1/32; if not, kill + restart until it does. Runs in the
-              # background so it doesn't block the entrypoint.
+              # a timing issue (network/auth not warm yet). IMPORTANT: every RC
+              # (re)start mints a NEW claude.ai environment that CANNOT be
+              # deleted (known RC limitation — no API/CLI/UI to remove stale
+              # envs). So WAIT for RC to self-heal to 1/32 (it usually does once
+              # the network warms, on the SAME env — no duplicate) and only
+              # restart as a last resort after a long wait. Minimizes the
+              # un-cleanable duplicate envs. Backgrounded so it doesn't block.
               (
-                for attempt in 1 2 3 4 5 6; do
-                  sleep 20
-                  if tmux capture-pane -t rc -p -S -40 2>/dev/null | grep -qE 'Capacity: [1-9]'; then
-                    echo "RC healthy (session pre-created) on attempt $attempt"; break
-                  fi
-                  echo "RC at 0/32 (attempt $attempt) — restarting rc"
-                  tmux kill-session -t rc 2>/dev/null
-                  tmux new-session -d -s rc -c "$RC_DIR" "$rc_cmd"
+                # up to ~3min of waiting for self-heal before a single restart
+                for w in $(seq 1 18); do
+                  sleep 10
+                  tmux capture-pane -t rc -p -S -40 2>/dev/null | grep -qE 'Capacity: [1-9]' && { echo "RC healthy (no restart needed)"; exit 0; }
                 done
+                echo "RC still 0/32 after ~3min — one restart attempt"
+                tmux kill-session -t rc 2>/dev/null
+                tmux new-session -d -s rc -c "$RC_DIR" "$rc_cmd"
               ) &
               # The `work` layout (nvim + claude + shell) is NOT built at boot:
               # nvim/claude need an attached TTY, which doesn't exist here, so
