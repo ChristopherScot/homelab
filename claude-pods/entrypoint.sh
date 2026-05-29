@@ -97,6 +97,17 @@ RC_DIR="$(cat /workspace/.primary-repo 2>/dev/null || echo /workspace)"
 tmux new-session -d -s rc -c "$RC_DIR" \
   "while true; do claude --remote-control \"$RC_NAME\"; echo 'RC exited; restart 5s'; sleep 5; done"
 
+# Always-on VS Code Tunnel — same survivor pattern as `rc` (detached tmux
+# session, nothing ever attaches, restart loop). Connect from desktop VS Code
+# (Remote Tunnels extension) or vscode.dev/tunnel/<name>. Tunnel name is per-
+# pod so the two replicas don't collide in the GitHub-account namespace.
+# First-boot login: `tmux attach -t vscode`, copy the device-code URL/code,
+# complete the GitHub login, then `Ctrl-b d` to detach. Login persists under
+# $HOME/.vscode-cli (PVC), so subsequent restarts come up authed.
+TUNNEL_NAME="claude-${OWNER:-pod}-${ORD}"
+tmux new-session -d -s vscode -c "$RC_DIR" \
+  "while true; do code tunnel --accept-server-license-terms --name \"$TUNNEL_NAME\"; echo 'tunnel exited; restart 5s'; sleep 5; done"
+
 # The `work` layout (nvim + claude + shell) is built by `rclaude N` on attach
 # (needs a real TTY). It's separate from the `rc` session above. Run
 # `rclaude N` from any machine to start/attach work.
