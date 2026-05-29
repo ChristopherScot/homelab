@@ -152,7 +152,7 @@ RUN curl -fsSL "https://github.com/schollz/croc/releases/download/${CROC_VERSION
 # First boot needs a one-time GitHub device-code login: `tmux attach -t vscode`,
 # follow the URL, detach. Login state + downloaded VS Code Server live under
 # $HOME (persistent PVC), so the tunnel auto-resumes across restarts.
-RUN curl -fsSL "https://code.visualstudio.com/sha/download?build=stable&os=cli-linux-x64" \
+RUN curl -fsSL "https://update.code.visualstudio.com/latest/cli-linux-x64/stable" \
       -o /tmp/vscode-cli.tar.gz \
     && tar -xz -C /usr/local/bin -f /tmp/vscode-cli.tar.gz \
     && rm /tmp/vscode-cli.tar.gz \
