@@ -146,6 +146,18 @@ RUN curl -fsSL "https://github.com/schollz/croc/releases/download/${CROC_VERSION
       | tar -xz -C /tmp croc && mv /tmp/croc /usr/local/bin/croc \
     && chmod +x /usr/local/bin/croc
 
+# VS Code CLI for `code tunnel` — remote VS Code over Microsoft's tunnel infra
+# (no inbound network needed, same survivability story as the RC loop). Connect
+# from desktop VS Code (Remote Tunnels extension) or vscode.dev/tunnel/<name>.
+# First boot needs a one-time GitHub device-code login: `tmux attach -t vscode`,
+# follow the URL, detach. Login state + downloaded VS Code Server live under
+# $HOME (persistent PVC), so the tunnel auto-resumes across restarts.
+RUN curl -fsSL "https://update.code.visualstudio.com/latest/cli-linux-x64/stable" \
+      -o /tmp/vscode-cli.tar.gz \
+    && tar -xz -C /usr/local/bin -f /tmp/vscode-cli.tar.gz \
+    && rm /tmp/vscode-cli.tar.gz \
+    && chmod +x /usr/local/bin/code
+
 # Claude Code CLI + TypeScript toolchain (node base already present).
 # agent-browser = browser-automation CLI for agents. NO `agent-browser install`
 # here: it would download a local Chrome, but this image ships no browser/display
