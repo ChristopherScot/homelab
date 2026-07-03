@@ -259,11 +259,14 @@ spec:
           env:
             - name: TZ
               value: America/New_York
-            # v0.5.0 added a required auth config; MouseHole listens on
-            # localhost inside the VPN'd pod netns only (no Service, no
-            # ingress), so opting out is safe here.
-            - name: MOUSEHOLE_INSECURE_ALLOW_NO_AUTH
-              value: "true"
+            # v0.5.0 requires auth on /cookie, /state, /updates, /events.
+            # Bearer token, sourced from Vault via mam-session ExternalSecret;
+            # the seed sidecar + mam-exporter get the same token via env.
+            - name: MOUSEHOLE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mam-session
+                  key: mousehole_auth_token
             # v0.5.0 default state dir is /var/lib/mousehole; our PVC mounts
             # at /srv/mousehole (pre-existing), so point the app at it.
             - name: MOUSEHOLE_STATE_DIR_PATH
@@ -287,15 +290,25 @@ spec:
             - sh
             - -c
             - |
-              # Wait for MouseHole to come up
-              until curl -sf http://localhost:5010/state >/dev/null 2>&1; do
+              # /health is the only unauth'd endpoint in v0.5.0, use it for readiness.
+              until curl -sf http://localhost:5010/health >/dev/null 2>&1; do
                 echo "waiting for mousehole..."; sleep 2
               done
               echo "seeding mam_id into mousehole"
-              curl -sS -X PUT http://localhost:5010/state \
+              # v0.5.0: PUT /cookie with body {"value": "..."}, bearer auth required.
+              # Response body includes hasCookie=true iff persistence worked.
+              RESP=$(curl -sS -X PUT http://localhost:5010/cookie \
+                -H "Authorization: Bearer $MOUSEHOLE_AUTH_TOKEN" \
                 -H "Content-Type: application/json" \
-                -d "{\"currentCookie\":\"$MAM_ID\"}" \
-                && echo " ✓ seeded"
+                -d "{\"value\":\"$MAM_ID\"}")
+              echo "PUT /cookie -> $RESP"
+              case "$RESP" in
+                *'"hasCookie":true'*) echo " ✓ cookie set" ;;
+                *) echo " ✗ cookie NOT set; check MOUSEHOLE_AUTH_TOKEN + mam_id" >&2 ;;
+              esac
+              # Force an immediate MAM contact so lastMamContact reflects the new cookie.
+              curl -sS -X POST http://localhost:5010/updates \
+                -H "Authorization: Bearer $MOUSEHOLE_AUTH_TOKEN" >/dev/null || true
               # Sleep forever so the container doesn't restart
               tail -f /dev/null
           env:
@@ -304,6 +317,11 @@ spec:
                 secretKeyRef:
                   name: mam-session
                   key: mam_id
+            - name: MOUSEHOLE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: mam-session
+                  key: mousehole_auth_token
           resources:
             requests:
               cpu: 5m
@@ -331,6 +349,11 @@ spec:
               value: "60"
             - name: LOCAL_REMOTE_WRITE_URL
               value: "http://victoria-metrics.monitoring.svc.cluster.local:8428/api/v1/write"
+            - name: MAM_ID
+              valueFrom:
+                secretKeyRef:
+                  name: mam-session
+                  key: mam_id
           volumeMounts:
             - name: mam-exporter-script
               mountPath: /app

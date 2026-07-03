@@ -22,7 +22,11 @@ data:
     import os, json, time, base64, struct, sys
     import urllib.request, urllib.error
 
-    MOUSEHOLE_URL = os.environ.get("MOUSEHOLE_URL", "http://localhost:5010/state")
+    # MAM cookie: v0.5.0 MouseHole /state no longer exposes the cookie ("It
+    # never contains your cookie"), so pull from the mam-session Secret env
+    # directly. This exporter and MouseHole share the same source-of-truth
+    # value; if the cookie rotates, restart the pod to re-read.
+    MAM_ID = os.environ["MAM_ID"]
     MAM_URL = "https://www.myanonamouse.net/jsonLoad.php?snatch_summary=true"
     INTERVAL = int(os.environ.get("INTERVAL_SECONDS", "60"))
 
@@ -41,11 +45,6 @@ data:
 
     def log(msg):
         print(f"[mam-exporter] {msg}", flush=True)
-
-    def get_cookie():
-        """Pull the current mam_id from MouseHole's REST API (auto-refreshed on ASN change)."""
-        with urllib.request.urlopen(MOUSEHOLE_URL, timeout=5) as r:
-            return json.loads(r.read())["currentCookie"]
 
     def fetch_mam(cookie):
         req = urllib.request.Request(
@@ -230,11 +229,10 @@ data:
         if not DESTINATIONS:
             log("ERROR: no destinations configured (set GRAFANA_REMOTE_WRITE_URL and/or LOCAL_REMOTE_WRITE_URL)")
             sys.exit(1)
-        log(f"starting; interval={INTERVAL}s; destinations={[u for u,_ in DESTINATIONS]}; cookie source={MOUSEHOLE_URL}")
+        log(f"starting; interval={INTERVAL}s; destinations={[u for u,_ in DESTINATIONS]}; cookie source=env MAM_ID")
         while True:
             try:
-                cookie = get_cookie()
-                data = fetch_mam(cookie)
+                data = fetch_mam(MAM_ID)
                 metrics = parse_mam(data)
                 codes = push_metrics(metrics)
                 log(f"pushed {len(metrics)} metrics, codes {codes}, bonus={data.get('seedbonus','?')}, ratio={data.get('ratio','?')}, dl={data.get('downloaded','?')}")
