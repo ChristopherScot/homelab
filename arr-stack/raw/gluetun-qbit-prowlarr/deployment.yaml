@@ -251,7 +251,7 @@ spec:
         # cookie at boot from the mam-session Secret without manual UI
         # clicks. See mam-externalsecret.yaml for the Vault → Secret path.
         - name: mousehole
-          image: tmmrtn/mousehole:latest
+          image: tmmrtn/mousehole:0.5.0
           # MouseHole may fail on first startup before VPN is ready, but it
           # reschedules updates every 5 min and will succeed once gluetun
           # establishes the tunnel. Adding a wrapper to wait for VPN proved
@@ -259,6 +259,15 @@ spec:
           env:
             - name: TZ
               value: America/New_York
+            # v0.5.0 added a required auth config; MouseHole listens on
+            # localhost inside the VPN'd pod netns only (no Service, no
+            # ingress), so opting out is safe here.
+            - name: MOUSEHOLE_INSECURE_ALLOW_NO_AUTH
+              value: "true"
+            # v0.5.0 default state dir is /var/lib/mousehole; our PVC mounts
+            # at /srv/mousehole (pre-existing), so point the app at it.
+            - name: MOUSEHOLE_STATE_DIR_PATH
+              value: /srv/mousehole
           volumeMounts:
             - name: mousehole-state
               mountPath: /srv/mousehole
