@@ -1,0 +1,70 @@
+# go-shlink-redirector — small Go service that fronts the `go.` short-URL
+# host. On a slug hit it 302s to the long URL from shlink; on a miss it
+# 302s to the shlink web client's create page with `?customSlug=<slug>`
+# so typing `go/foo` for a not-yet-existing slug lands on a prefilled
+# create form. Source: github.com/ChristopherScot/go-shlink-redirector.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shlink-redirector
+  namespace: shlink
+  labels:
+    app: shlink-redirector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shlink-redirector
+  template:
+    metadata:
+      labels:
+        app: shlink-redirector
+    spec:
+      containers:
+        - name: shlink-redirector
+          image: ghcr.io/christopherscot/go-shlink-redirector:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: SHLINK_API_URL
+              value: "http://shlink.shlink.svc:8080"
+            - name: WEB_CLIENT_URL
+              value: "https://shlink.home.chrisscotmartin.com"
+            # Same api-key ESO-synced from Vault that the shlink pod
+            # seeds via INITIAL_API_KEY — safe to share since both live
+            # in this namespace and this service ONLY reads short-urls.
+            - name: SHLINK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: shlink-api
+                  key: api-key
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shlink-redirector
+  namespace: shlink
+spec:
+  selector:
+    app: shlink-redirector
+  ports:
+    - port: 3000
+      targetPort: 3000

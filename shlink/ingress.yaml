@@ -1,6 +1,10 @@
 # Two ingresses because the bare `go` host and the FQDN need different
 # TLS behavior, and nginx annotations apply per-Ingress-resource.
 #
+# Backend is shlink-redirector, not shlink itself: unknown slugs go to
+# a prefilled create page (see shlink-redirector deployment). Known
+# slugs still hit shlink under the hood via the redirector's API call.
+#
 # go (bare): plain HTTP only. ssl-redirect disabled so http://go/x works
 # with just an /etc/hosts entry and no cert mismatch (there's no valid
 # cert for the single-label name `go`). Shlink generates https:// links
@@ -23,9 +27,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: shlink
+                name: shlink-redirector
                 port:
-                  number: 8080
+                  number: 3000
 ---
 # go.home.chrisscotmartin.com: full HTTPS with a real cert-manager cert,
 # like every other homelab service. Works in any browser via pihole.
@@ -50,6 +54,6 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: shlink
+                name: shlink-redirector
                 port:
-                  number: 8080
+                  number: 3000
