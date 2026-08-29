@@ -31,6 +31,12 @@ spec:
           env:
             - name: DEFAULT_DOMAIN
               value: "go"
+            # Shlink downloads a MaxMind GeoLite2 IP-geolocation DB on first
+            # start to enrich visit tracking. We don't use that data; skip
+            # the download to keep startup fast and remove a network dep.
+            # (Without GEOLITE_LICENSE_KEY set, tracking runs unlocated.)
+            - name: SKIP_INITIAL_GEOLITE_DOWNLOAD
+              value: "true"
             - name: IS_HTTPS_ENABLED
               # Links are generated as https://go/... — the ingress
               # terminates TLS for go.home.chrisscotmartin.com.

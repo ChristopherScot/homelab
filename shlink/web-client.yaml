@@ -22,7 +22,7 @@ spec:
     spec:
       containers:
         - name: shlink-web
-          image: ghcr.io/shlinkio/shlink-web-client:5
+          image: ghcr.io/shlinkio/shlink-web-client:4
           ports:
             - containerPort: 8080
           env:
