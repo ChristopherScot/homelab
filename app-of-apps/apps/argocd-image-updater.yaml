@@ -16,27 +16,18 @@ spec:
     helm:
       releaseName: argocd-image-updater
       values: |
-        # Poll every 5m; write-backs to git commit on main.
         config:
           argocd:
             grpcWeb: true
             serverAddress: argocd-server.argocd.svc:443
             insecure: false
             plainText: false
-          gitCommitUser: "argocd-image-updater"
-          gitCommitMail: "argocd-image-updater@chrisscotmartin.com"
-          gitCommitTemplate: |
-            bump {{ .AppName }} image
-
-            {{ range .AppChanges -}}
-            - {{ .Image }}: {{ .OldTag }} -> {{ .NewTag }}
-            {{ end -}}
         # Poll interval — 5m keeps GHCR usage very low.
         extraArgs:
           - --interval
           - 5m
         # Log at info so first-time debugging is easy; drop to warn once
-        # write-back is proven.
+        # updates are proven.
         log:
           level: info
   destination:

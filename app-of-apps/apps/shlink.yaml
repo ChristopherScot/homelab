@@ -16,14 +16,13 @@ metadata:
     # the current-latest digest sans re-tagging so any push to :latest
     # triggers a redeploy.
     argocd-image-updater.argoproj.io/image-list: redirector=ghcr.io/christopherscot/go-shlink-redirector
+    # digest strategy: watch the sha256 of ghcr's `:latest` tag; a new
+    # digest triggers a redeploy without changing the image string in
+    # deployment.yaml. Manifest stays `image: …:latest`; the redeploy is
+    # driven by Argo's parameter override (write-back-method: argocd).
     argocd-image-updater.argoproj.io/redirector.update-strategy: digest
     argocd-image-updater.argoproj.io/redirector.allow-tags: regexp:^latest$
-    # write-back via kustomize: image-updater rewrites the `images:`
-    # block in shlink/kustomization.yaml with the resolved sha256
-    # digest. Argo picks up the git commit and syncs the manifest.
-    argocd-image-updater.argoproj.io/write-back-method: git
-    argocd-image-updater.argoproj.io/write-back-target: kustomization
-    argocd-image-updater.argoproj.io/git-branch: main
+    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
   project: default
   source:
