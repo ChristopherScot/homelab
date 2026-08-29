@@ -1,0 +1,16 @@
+# Kustomize overlay so argocd-image-updater has a canonical spot to
+# write image bumps for the redirector (see shlink Argo Application
+# annotations in app-of-apps/apps/shlink.yaml). Image-updater rewrites
+# the `newTag` below to the resolved sha256 digest whenever a new
+# :latest digest is pushed to GHCR, and Argo syncs the change.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - web-client.yaml
+  - redirector.yaml
+  - ingress.yaml
+  - externalsecret.yaml
+images:
+  - name: ghcr.io/christopherscot/go-shlink-redirector
+    newTag: latest
