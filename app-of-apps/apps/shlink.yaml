@@ -8,6 +8,22 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # argocd-image-updater watches the redirector image on GHCR and, when
+    # a new :latest digest appears, commits an image bump to
+    # shlink/redirector.yaml (write-back method: git). Argo then syncs
+    # the new manifest, rolling the deployment. `digest` strategy tracks
+    # the current-latest digest sans re-tagging so any push to :latest
+    # triggers a redeploy.
+    argocd-image-updater.argoproj.io/image-list: redirector=ghcr.io/christopherscot/go-shlink-redirector
+    argocd-image-updater.argoproj.io/redirector.update-strategy: digest
+    argocd-image-updater.argoproj.io/redirector.allow-tags: regexp:^latest$
+    # write-back via kustomize: image-updater rewrites the `images:`
+    # block in shlink/kustomization.yaml with the resolved sha256
+    # digest. Argo picks up the git commit and syncs the manifest.
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/write-back-target: kustomization
+    argocd-image-updater.argoproj.io/git-branch: main
 spec:
   project: default
   source:

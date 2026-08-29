@@ -1,0 +1,48 @@
+# Argo CD Image Updater — watches container registries for new tags/digests
+# of images referenced by Argo Applications and writes the update back to
+# git so Argo can sync normally. Wired into apps via annotations on the
+# Application itself (see e.g. shlink-redirector).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: argocd-image-updater
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://argoproj.github.io/argo-helm
+    chart: argocd-image-updater
+    targetRevision: 0.13.0
+    helm:
+      releaseName: argocd-image-updater
+      values: |
+        # Poll every 5m; write-backs to git commit on main.
+        config:
+          argocd:
+            grpcWeb: true
+            serverAddress: argocd-server.argocd.svc:443
+            insecure: false
+            plainText: false
+          gitCommitUser: "argocd-image-updater"
+          gitCommitMail: "argocd-image-updater@chrisscotmartin.com"
+          gitCommitTemplate: |
+            bump {{ .AppName }} image
+
+            {{ range .AppChanges -}}
+            - {{ .Image }}: {{ .OldTag }} -> {{ .NewTag }}
+            {{ end -}}
+        # Poll interval — 5m keeps GHCR usage very low.
+        extraArgs:
+          - --interval
+          - 5m
+        # Log at info so first-time debugging is easy; drop to warn once
+        # write-back is proven.
+        log:
+          level: info
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
