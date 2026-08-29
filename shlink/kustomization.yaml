@@ -13,4 +13,4 @@ resources:
   - externalsecret.yaml
 images:
   - name: ghcr.io/christopherscot/go-shlink-redirector
-    newTag: latest
+    digest: sha256:14f1a77e1fec3584ce1db26d624f89d461f3ac0f134d450d5afa4c158e417fb2
