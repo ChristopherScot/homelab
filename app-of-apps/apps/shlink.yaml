@@ -15,13 +15,11 @@ metadata:
     # the new manifest, rolling the deployment. `digest` strategy tracks
     # the current-latest digest sans re-tagging so any push to :latest
     # triggers a redeploy.
-    argocd-image-updater.argoproj.io/image-list: redirector=ghcr.io/christopherscot/go-shlink-redirector
-    # digest strategy: watch the sha256 of ghcr's `:latest` tag; a new
-    # digest triggers image-updater to bump `newTag` in
-    # shlink/kustomization.yaml (write-back via git commit on main),
-    # then Argo syncs the kustomize build normally.
+    # Track :latest and bump on each new digest push. image-updater
+    # writes the new sha256 into shlink/kustomization.yaml (git write-
+    # back on main); Argo syncs the kustomize build → new pod.
+    argocd-image-updater.argoproj.io/image-list: redirector=ghcr.io/christopherscot/go-shlink-redirector:latest
     argocd-image-updater.argoproj.io/redirector.update-strategy: digest
-    argocd-image-updater.argoproj.io/redirector.allow-tags: regexp:^latest$
     argocd-image-updater.argoproj.io/write-back-method: git
     argocd-image-updater.argoproj.io/write-back-target: kustomization
     argocd-image-updater.argoproj.io/git-branch: main
