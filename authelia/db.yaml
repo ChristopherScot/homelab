@@ -1,0 +1,87 @@
+# Postgres backend for Authelia. Replaces the previous local SQLite
+# file (formerly on synology-iscsi at pvc/authelia-db), which had a
+# habit of getting the fs remounted read-only on iSCSI hiccups and
+# leaving Authelia stuck with a "database disk image is malformed"
+# open FD to a deleted file (see 2026-09-13 incident).
+#
+# Authelia's DB workload is tiny — session records, 2FA enrollments,
+# regulation counters. A 1Gi volume and 2 replicas is generous.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: authelia-db
+  namespace: authelia
+spec:
+  instances: 2
+  postgresql:
+    parameters:
+      # Login-driven workload, negligible write rate. Ship WAL hourly
+      # instead of every 5m to reduce S3 PUT churn.
+      archive_timeout: "3600s"
+  storage:
+    size: 1Gi
+    storageClass: longhorn
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  bootstrap:
+    initdb:
+      database: authelia
+      owner: authelia
+  # Continuous backup to S3 (Barman): WAL + base backups. Restore via
+  # a `recovery` bootstrap pointing at this objectStore. Uses the same
+  # authelia-db-backup-s3 pattern as other CNPG clusters — creds ES'd
+  # from kv/cnpg-backups/s3.
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://cscot-homelab-pg-backups/authelia"
+      s3Credentials:
+        accessKeyId:
+          name: authelia-db-backup-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: authelia-db-backup-s3
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+    retentionPolicy: "30d"
+---
+# Daily base backup (WAL is archived continuously between these).
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: authelia-db-daily
+  namespace: authelia
+spec:
+  schedule: "0 30 4 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: authelia-db
+---
+# CNPG needs the S3 creds to archive WAL and take base backups.
+# Same secret pattern used by paperless/vaultwarden/etc.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: authelia-db-backup-s3
+  namespace: authelia
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-authelia
+    kind: SecretStore
+  target:
+    name: authelia-db-backup-s3
+    creationPolicy: Owner
+  data:
+    - secretKey: ACCESS_KEY_ID
+      remoteRef:
+        key: cnpg-backups/s3
+        property: access_key_id
+    - secretKey: ACCESS_SECRET_KEY
+      remoteRef:
+        key: cnpg-backups/s3
+        property: access_secret_key
