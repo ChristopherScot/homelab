@@ -53,3 +53,6 @@ spec:
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
+      # admission-create/patch pre-install jobs re-run every sync
+      # otherwise and hang forever if the webhook Secret already exists.
+      - SkipHookIfAlreadyPresent=true
