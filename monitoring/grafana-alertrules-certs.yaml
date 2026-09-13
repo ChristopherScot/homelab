@@ -1,0 +1,44 @@
+# Certificate expiration alerts. Every homelab service has a Let's Encrypt
+# cert managed by cert-manager. If a renewal silently fails (rate-limited,
+# ACME auth mis-set, DNS propagation broken), the cert quietly runs out
+# and every user-visible service HTTPS-errors at once. cert-manager tries
+# to renew at 2/3 of the cert's lifetime (60d for a 90d cert) — this alert
+# fires with 7d to spare so there's time to fix without going dark.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: certs
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  folderRef: monitoring
+  interval: 300s  # 5m — cert expiry doesn't need 60s resolution
+  rules:
+    - uid: cert-expiring-soon
+      title: Certificate expiring in less than 7 days
+      condition: B
+      for: 30m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: certs, severity: warning }
+      annotations:
+        summary: "Cert {{ $labels.namespace }}/{{ $labels.name }} expires in {{ printf \"%.1f\" (div $values.A.Value 86400) }} days"
+        description: "cert-manager's Certificate {{ $labels.namespace }}/{{ $labels.name }} has less than 7 days until expiration. cert-manager should have already tried to renew (renew triggers at 2/3 lifetime); if the cert is still this close to expiry, renewal is failing. Check `kubectl -n {{ $labels.namespace }} describe certificate {{ $labels.name }}` and the paired CertificateRequest for the ACME error."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 300, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'min by (namespace, name) (certmanager_certificate_expiration_timestamp_seconds - time())', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: lt, params: [604800] }  # 7 days in seconds

@@ -30,6 +30,15 @@ spec:
             patch:
               enabled: true
           watchIngressWithoutClass: false
+          # Enable the built-in Prometheus metrics listener on :10254 and
+          # ask Grafana Alloy (see monitoring/) to scrape it via its
+          # annotation-based auto-discovery. Needed for the ingress 5xx
+          # rate alert (grafana-alertrules-ingress.yaml).
+          metrics:
+            enabled: true
+          podAnnotations:
+            k8s.grafana.com/scrape: "true"
+            k8s.grafana.com/metrics.portName: "metrics"
           resources:
             requests:
               cpu: 100m

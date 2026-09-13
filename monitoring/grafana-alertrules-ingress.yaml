@@ -1,0 +1,107 @@
+# Ingress-level and infrastructure alerts. Catches user-visible outages
+# BEFORE users notice (5xx spikes), read-only PVC remounts (the class of
+# failure that took Authelia down on 2026-09-13), and k3s systemd process
+# thrashing (the smell we missed for weeks — pop-os's k3s had 26 restarts
+# accumulated with no alerting).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: infrastructure
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  folderRef: monitoring
+  interval: 60s
+  rules:
+    - uid: ingress-5xx-spike
+      title: Ingress 5xx rate spike
+      condition: B
+      # 5m so we don't page on a single bad request or one flaky refresh.
+      for: 5m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: ingress, severity: warning }
+      annotations:
+        summary: "Ingress {{ $labels.ingress }} returning 5xx at {{ printf \"%.2f\" $values.A.Value }} req/s"
+        description: "Ingress-nginx has served >0.1 requests/sec of 5xx responses on {{ $labels.ingress }} for 5m. Usually means the upstream service is failing (pod crashlooping, DB down, backend timeouts). Check `kubectl -n <ns> logs deploy/<app>` and ingress-nginx logs: `kubectl -n ingress-nginx logs deploy/ingress-nginx-controller | grep {{ $labels.ingress }}`."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 300, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'sum by (ingress) (rate(nginx_ingress_controller_requests{status=~"5.."}[5m]))', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0.1] }
+
+    - uid: pvc-readonly-remount
+      title: Filesystem remounted read-only
+      condition: B
+      # Trigger fast — an RO remount usually indicates iSCSI/CSI failure
+      # that is actively causing app-level errors (SQLite corruption
+      # errors, DB write failures). 2m avoids paging on transient
+      # kernel oddities but still catches real outages quickly.
+      for: 2m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: storage, severity: critical }
+      annotations:
+        summary: "Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} was remounted read-only"
+        description: "The kernel remounted {{ $labels.mountpoint }} ({{ $labels.fstype }}) as read-only on {{ $labels.instance }}. This usually happens when the underlying block device (iSCSI target, Longhorn volume) has an unrecoverable I/O error, and the fs stays RO until the pod restarts. Apps writing to this fs will see confusing 'database is malformed' or 'read-only file system' errors. Check which pod holds this mount: `kubectl get pod -A -o wide | grep <node>` and restart the affected pod after fixing the underlying storage issue. See 2026-09-13 Authelia incident for a real example."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 120, to: 0 }
+          datasourceUid: grafanacloud-prom
+          # Exclude filesystems that are RO by design.
+          model: { expr: 'max by (instance, mountpoint, fstype) (node_filesystem_readonly{fstype!~"iso9660|squashfs|tmpfs|ramfs|overlay"})', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
+
+    - uid: k3s-restart-thrashing
+      title: k3s systemd process thrashing
+      condition: B
+      # More than 3 restarts in an hour means k3s is having a bad time.
+      for: 5m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: k3s, severity: warning }
+      annotations:
+        summary: "k3s on {{ $labels.instance }} has restarted {{ printf \"%.0f\" $values.A.Value }} times in the last hour"
+        description: "The k3s systemd unit on {{ $labels.instance }} has restarted more than 3 times in an hour — the process is crashing repeatedly, not just a clean restart. This causes intermittent kubectl unavailability, etcd re-elections, and cascading pod restarts. Check: `ssh {{ $labels.instance }} journalctl -u k3s --since '1 hour ago' | grep -iE 'error|panic|oom|killed'` and node memory pressure."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 3600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          # increase() of the process_start_time_seconds gauge counts restarts.
+          # Alloy exposes it as `process_start_time_seconds{job=~".*k3s.*|.*kubelet.*"}`
+          # for the k3s process (which is also the apiserver).
+          model: { expr: 'count by (instance) (changes(process_start_time_seconds{job=~"integrations/kubernetes/kubelet|apiserver"}[1h]) > 0) or vector(0)', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [3] }

@@ -13,6 +13,14 @@ spec:
       releaseName: vault
       values: |
         server:
+          # Scrape Vault's internal metrics via Alloy annotation
+          # auto-discovery. Powers the vault-sealed alert. Requires
+          # unauthenticated_metrics_access on the listener (below) since
+          # Alloy has no Vault token.
+          annotations:
+            k8s.grafana.com/scrape: "true"
+            k8s.grafana.com/metrics.path: "/v1/sys/metrics"
+            k8s.grafana.com/metrics.param_format: "prometheus"
           # AWS creds for the awskms seal stanza. Populated by the k8s
           # Secret `vault-autounseal-aws` in the same namespace (created
           # out-of-band via `kubectl create secret` — NOT ESO, since ESO
@@ -44,6 +52,17 @@ spec:
                 tls_disable = 1
                 address = "[::]:8200"
                 cluster_address = "[::]:8201"
+                telemetry {
+                  # Alloy scrapes /v1/sys/metrics with no Vault token —
+                  # this lets that endpoint respond without auth. Only
+                  # exposes metrics; no other Vault surface is affected.
+                  unauthenticated_metrics_access = "true"
+                }
+              }
+
+              telemetry {
+                prometheus_retention_time = "30s"
+                disable_hostname = true
               }
 
               storage "file" {

@@ -11,6 +11,14 @@ spec:
     repoURL: https://cloudnative-pg.github.io/charts
     chart: cloudnative-pg
     targetRevision: 0.25.0 # operator 1.26.0 (has the declarative Database CRD)
+    helm:
+      values: |
+        # Scrape the operator's metrics via Alloy annotation autodiscovery
+        # (chart doesn't expose CNPG cluster metrics; those go via a per-
+        # cluster ServiceMonitor which we set on the Cluster CR directly).
+        podAnnotations:
+          k8s.grafana.com/scrape: "true"
+          k8s.grafana.com/metrics.portName: "metrics"
   destination:
     server: https://kubernetes.default.svc
     namespace: cnpg-system
