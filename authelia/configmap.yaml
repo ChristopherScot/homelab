@@ -102,8 +102,12 @@ data:
 
     storage:
       # storage.encryption_key comes from AUTHELIA_STORAGE_ENCRYPTION_KEY env.
-      local:
-        path: /config/db/db.sqlite3
+      # Postgres backing store (CNPG cluster authelia-db, see db.yaml).
+      # Connection creds injected as AUTHELIA_STORAGE_POSTGRES_* env vars
+      # from the CNPG-generated authelia-db-app Secret in deployment.yaml.
+      postgres:
+        address: 'tcp://authelia-db-rw.authelia.svc:5432'
+        database: authelia
 
     identity_validation:
       reset_password:

@@ -37,6 +37,20 @@ spec:
             # Enables {{ secret "..." }} templating in configuration.yml.
             - name: X_AUTHELIA_CONFIG_FILTERS
               value: template
+            # Postgres creds from the CNPG-generated authelia-db-app Secret.
+            # `username` and `password` are the CNPG standard fields for the
+            # per-cluster app user (see db.yaml). Authelia expects these
+            # under AUTHELIA_STORAGE_POSTGRES_{USERNAME,PASSWORD}.
+            - name: AUTHELIA_STORAGE_POSTGRES_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: authelia-db-app
+                  key: username
+            - name: AUTHELIA_STORAGE_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: authelia-db-app
+                  key: password
           envFrom:
             - secretRef:
                 name: authelia-keys
@@ -54,8 +68,6 @@ spec:
             - name: oidc-secrets
               mountPath: /config/secrets
               readOnly: true
-            - name: db
-              mountPath: /config/db
             - name: notifications
               mountPath: /config/notifications
           resources:
@@ -93,9 +105,6 @@ spec:
                 path: oidc_vault_client_secret_hashed
               - key: oidc_kavita_client_secret_hashed
                 path: oidc_kavita_client_secret_hashed
-        - name: db
-          persistentVolumeClaim:
-            claimName: authelia-db
         # Authelia writes notifications (e.g. 2FA QR codes when SMTP isn't
         # configured) to a file. emptyDir is fine — kubectl logs/exec recovers.
         - name: notifications
