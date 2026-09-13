@@ -11,6 +11,54 @@ spec:
     targetRevision: 0.29.1
     helm:
       releaseName: vault
+      values: |
+        server:
+          # AWS creds for the awskms seal stanza. Populated by the k8s
+          # Secret `vault-autounseal-aws` in the same namespace (created
+          # out-of-band via `kubectl create secret` — NOT ESO, since ESO
+          # depends on Vault being unsealed, which is what we're trying
+          # to enable). Rotating the AK/SK is a manual op: update 1P
+          # (homelab-vault-autounseal-aws), regenerate the Secret, roll
+          # the pod. See vault/README.md if we ever add one.
+          extraEnvironmentVars:
+            VAULT_SEAL_TYPE: "awskms"
+            VAULT_AWSKMS_SEAL_KEY_ID: "alias/homelab-vault-unseal"
+            AWS_REGION: "us-east-1"
+          extraSecretEnvironmentVars:
+            - envName: AWS_ACCESS_KEY_ID
+              secretName: vault-autounseal-aws
+              secretKey: AWS_ACCESS_KEY_ID
+            - envName: AWS_SECRET_ACCESS_KEY
+              secretName: vault-autounseal-aws
+              secretKey: AWS_SECRET_ACCESS_KEY
+          standalone:
+            enabled: true
+            # Override the chart default HCL so we can add the seal
+            # stanza. Keep everything else the chart shipped: file
+            # storage, TCP listener, UI. The disable_seal_wrap =
+            # "false" lets the KMS wrap the recovery key envelope.
+            config: |
+              ui = true
+
+              listener "tcp" {
+                tls_disable = 1
+                address = "[::]:8200"
+                cluster_address = "[::]:8201"
+              }
+
+              storage "file" {
+                path = "/vault/data"
+              }
+
+              # AWS KMS auto-unseal. Vault talks to KMS on every start
+              # to unwrap the master key; the AWS creds come from
+              # extraSecretEnvironmentVars above.
+              seal "awskms" {
+                region     = "us-east-1"
+                kms_key_id = "alias/homelab-vault-unseal"
+              }
+
+              disable_mlock = true
   destination:
     server: https://kubernetes.default.svc
     namespace: default
