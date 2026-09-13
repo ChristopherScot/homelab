@@ -84,4 +84,4 @@ spec:
     - secretKey: ACCESS_SECRET_KEY
       remoteRef:
         key: cnpg-backups/s3
-        property: access_secret_key
+        property: secret_access_key
