@@ -1,0 +1,18 @@
+# Kustomize overlay so argocd-image-updater has a canonical place to write
+# image bumps. Without it Argo classifies this app as source type
+# "Directory" and the updater skips it entirely:
+#
+#   skipping app 'argocd/approvald' of type 'Directory' because it's not of
+#   supported source type
+#
+# which is silent - the app stays Synced/Healthy on a stale image while new
+# builds pile up in the registry. Same pattern as shlink.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+images:
+  - name: ghcr.io/christopherscot/approvald
+    newTag: latest
