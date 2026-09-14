@@ -1,5 +1,6 @@
 # Alerting contact points, provisioned as code (the originals were UI-only and
-# lost in the SQLite->Postgres migration; see GRAFANA_POSTGRES_MIGRATION.md).
+# lost in the 2026-05 SQLite->Postgres backend migration, so they are defined
+# here to survive the next one).
 #   - email-chris  : SES SMTP email to chris@chrisscotmartin.com
 #   - ntfy-warning : webhook -> in-cluster ntfy /homelab-warning topic
 #   - ntfy-critical: webhook -> in-cluster ntfy /homelab-critical topic
