@@ -100,7 +100,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: approvald
-          image: ghcr.io/christopherscot/approvald:486e608
+          image: ghcr.io/christopherscot/approvald:9908453138cce45233e5fbf988ff14fa7508d241
           ports:
             - containerPort: 3000
           env:
