@@ -1,0 +1,3 @@
+kustomize:
+  images:
+  - ghcr.io/christopherscot/approvald:latest@sha256:499f73b92df00d7124c3f4278e80a9ef071908b05ad57caefbde1ff84fb59706
