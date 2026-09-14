@@ -1,0 +1,34 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: approvald
+  namespace: argocd
+  annotations:
+    # Track :latest by DIGEST, not by tag string. Kubernetes only re-pulls
+    # when the tag text changes, so a bare :latest would never roll on its
+    # own - the pod would keep the old image until something unrelated
+    # restarted it. image-updater watches GHCR, and on each new :latest
+    # digest writes the sha256 into approvald/deployment.yaml (git
+    # write-back), which Argo then syncs into a rollout. Push to the
+    # approvald repo, get a deploy, with the running version recorded in
+    # git and revertible.
+    argocd-image-updater.argoproj.io/image-list: approvald=ghcr.io/christopherscot/approvald:latest
+    argocd-image-updater.argoproj.io/approvald.update-strategy: digest
+    argocd-image-updater.argoproj.io/write-back-method: git
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: approvald
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: approvald
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

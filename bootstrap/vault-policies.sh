@@ -41,6 +41,7 @@ APPS=(
   "dead-mans-switch|kv/data/dead-mans-switch/*|dead-mans-switch|external-secrets-sa"
   "longhorn|kv/data/longhorn/*|longhorn-system|external-secrets-sa"
   "picoshare|kv/data/picoshare/*|picoshare|external-secrets-sa"
+  "approvald|kv/data/approvald/*|approvald|external-secrets-sa"
 )
 
 for entry in "${APPS[@]}"; do

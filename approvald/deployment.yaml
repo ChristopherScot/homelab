@@ -1,0 +1,151 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: approvald
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-sa
+  namespace: approvald
+---
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: vault-approvald
+  namespace: approvald
+spec:
+  provider:
+    vault:
+      server: http://vault.default.svc.cluster.local:8200
+      path: kv
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: approvald
+          serviceAccountRef:
+            name: external-secrets-sa
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: approvald-secrets
+  namespace: approvald
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-approvald
+    kind: SecretStore
+  target:
+    name: approvald-secrets
+  data:
+    # Writes the response topic. This is the credential the Mac deliberately
+    # does not have - it is what keeps the requester from self-approving.
+    - secretKey: NTFY_TOKEN
+      remoteRef: { key: approvald/config, property: ntfy_token }
+    # Shared secret the Mac presents to /register.
+    - secretKey: REGISTER_TOKEN
+      remoteRef: { key: approvald/config, property: register_token }
+---
+# The image is a private GHCR package, so the kubelet needs a pull
+# credential. Reuses the existing claude-pods/git token rather than minting
+# a second one; it is already a read-scoped GHCR credential.
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: ghcr-pull
+  namespace: approvald
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-approvald
+    kind: SecretStore
+  target:
+    name: ghcr-pull
+    template:
+      type: kubernetes.io/dockerconfigjson
+      data:
+        .dockerconfigjson: |
+          {"auths":{"ghcr.io":{"username":"{{ .username }}","password":"{{ .token }}","auth":"{{ printf "%s:%s" .username .token | b64enc }}"}}}
+  data:
+    - secretKey: username
+      remoteRef: { key: claude-pods/git, property: username }
+    - secretKey: token
+      remoteRef: { key: claude-pods/git, property: token }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: approvald
+  namespace: approvald
+  annotations:
+    reloader.stakater.com/auto: "true"
+spec:
+  # Single replica on purpose: pending approvals live in memory, and two
+  # replicas would each see only their own. A restart drops pending requests,
+  # which fail closed (the Mac times out and denies).
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: approvald
+  template:
+    metadata:
+      labels:
+        app: approvald
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: approvald
+          image: ghcr.io/christopherscot/approvald:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: BASE_URL
+              value: https://approve.chrisscotmartin.com
+            - name: NTFY_URL
+              value: http://ntfy.ntfy.svc.cluster.local
+            - name: RESPONSE_TOPIC
+              value: approvals-resp
+            - name: NTFY_TOKEN
+              valueFrom:
+                secretKeyRef: { name: approvald-secrets, key: NTFY_TOKEN }
+            - name: REGISTER_TOKEN
+              valueFrom:
+                secretKeyRef: { name: approvald-secrets, key: REGISTER_TOKEN }
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          livenessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 5
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: { path: /healthz, port: 3000 }
+            initialDelaySeconds: 2
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: approvald
+  namespace: approvald
+spec:
+  selector:
+    app: approvald
+  ports:
+    - port: 80
+      targetPort: 3000
