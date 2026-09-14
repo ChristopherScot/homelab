@@ -3,6 +3,23 @@ kind: Application
 metadata:
   name: approvald
   namespace: argocd
+  annotations:
+    # Track :latest by DIGEST, not by tag string. Kubernetes only re-pulls
+    # when the tag text changes, so a bare :latest would never roll on its
+    # own. image-updater watches GHCR and, on each new :latest digest,
+    # writes the sha256 into approvald/deployment.yaml (git write-back);
+    # Argo then syncs it into a rollout. Same pattern as shlink.
+    #
+    # Chosen over the template's CI publish step, which pushes rendered
+    # manifests from the service repo into this one and therefore needs a
+    # CI_PAT that can write this repo. That token has never existed here -
+    # shlink uses the updater instead - and it would be a long-lived
+    # credential, held in a service repo, able to write the repository that
+    # controls the whole cluster. The updater does the same job from inside
+    # the cluster with Argo's own credentials.
+    argocd-image-updater.argoproj.io/image-list: approvald=ghcr.io/christopherscot/approvald:latest
+    argocd-image-updater.argoproj.io/approvald.update-strategy: digest
+    argocd-image-updater.argoproj.io/write-back-method: git
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
