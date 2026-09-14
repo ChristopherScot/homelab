@@ -1,0 +1,193 @@
+# Dynamic DNS: keeps the Route 53 A record for ntfy.chrisscotmartin.com
+# pointed at the house's current WAN address.
+#
+# Why this exists: Comcast rotates the WAN IP with no notice. On
+# 2026-09-14 the record still read 76.153.223.132 while the house had
+# moved to 76.110.226.187, so every from-outside path to ntfy died with a
+# TCP timeout — the phone stopped receiving notifications and `toclip`
+# silently stopped working, with nothing surfacing the breakage.
+#
+# ntfy is the only hostname published to the WAN (everything else is
+# *.home.chrisscotmartin.com -> 192.168.50.225, LAN-only), so this single
+# record is the whole public surface. In-cluster consumers talk to
+# ntfy.ntfy.svc.cluster.local and were never affected.
+#
+# The IAM credential is scoped to exactly this one record — see
+# bootstrap/vault-policies.sh and the matching AWS policy. It cannot touch
+# any other name in the zone.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ddns
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: external-secrets-sa
+  namespace: ddns
+---
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: vault-ddns
+  namespace: ddns
+spec:
+  provider:
+    vault:
+      server: http://vault.default.svc.cluster.local:8200
+      path: kv
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: ddns
+          serviceAccountRef:
+            name: external-secrets-sa
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: ddns-secrets
+  namespace: ddns
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-ddns
+    kind: SecretStore
+  target:
+    name: ddns-secrets
+  data:
+    - secretKey: AWS_ACCESS_KEY_ID
+      remoteRef: { key: ddns/config, property: aws_access_key_id }
+    - secretKey: AWS_SECRET_ACCESS_KEY
+      remoteRef: { key: ddns/config, property: aws_secret_access_key }
+    - secretKey: HOSTED_ZONE_ID
+      remoteRef: { key: ddns/config, property: hosted_zone_id }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ddns-script
+  namespace: ddns
+data:
+  update.sh: |
+    #!/bin/sh
+    # Compare the current WAN IP against what Route 53 serves; UPSERT only
+    # on a real change so we don't burn API calls (or rack up change
+    # history) every 5 minutes.
+    set -eu
+
+    RECORD="${RECORD_NAME:?}"
+    ZONE="${HOSTED_ZONE_ID:?}"
+    TTL="${RECORD_TTL:-300}"
+
+    # Two independent echo services: if one is down or lying, we don't want
+    # to publish a bogus address. Both must agree before we touch DNS.
+    ip1=$(curl -fsS -m 10 https://api.ipify.org || echo "")
+    ip2=$(curl -fsS -m 10 https://ifconfig.me/ip || echo "")
+
+    valid() {
+      echo "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    }
+
+    if ! valid "$ip1" || ! valid "$ip2"; then
+      echo "could not determine WAN IP (got '$ip1' / '$ip2') — leaving DNS alone"
+      exit 0
+    fi
+    if [ "$ip1" != "$ip2" ]; then
+      echo "echo services disagree ($ip1 vs $ip2) — leaving DNS alone"
+      exit 0
+    fi
+    wan="$ip1"
+
+    # Ask Route 53 what it currently serves, not a resolver — avoids acting
+    # on a stale cached answer.
+    current=$(aws route53 list-resource-record-sets \
+      --hosted-zone-id "$ZONE" \
+      --query "ResourceRecordSets[?Name=='${RECORD}.' && Type=='A'].ResourceRecords[0].Value | [0]" \
+      --output text 2>/dev/null || echo "")
+
+    if [ "$current" = "$wan" ]; then
+      echo "in sync: $RECORD -> $wan"
+      exit 0
+    fi
+
+    echo "WAN changed: $RECORD is $current, should be $wan — updating"
+    cat >/tmp/change.json <<JSON
+    {
+      "Comment": "ddns auto-update",
+      "Changes": [{
+        "Action": "UPSERT",
+        "ResourceRecordSet": {
+          "Name": "${RECORD}",
+          "Type": "A",
+          "TTL": ${TTL},
+          "ResourceRecords": [{"Value": "${wan}"}]
+        }
+      }]
+    }
+    JSON
+
+    aws route53 change-resource-record-sets \
+      --hosted-zone-id "$ZONE" \
+      --change-batch file:///tmp/change.json >/dev/null
+
+    echo "updated $RECORD -> $wan"
+
+    # Tell the phone the public path just moved. Uses the in-cluster
+    # service, which works regardless of what DNS is doing.
+    curl -fsS -m 10 \
+      -H "Authorization: Bearer ${NTFY_TOKEN:-}" \
+      -H "Title: WAN IP changed" \
+      -H "Tags: globe_with_meridians" \
+      -d "$RECORD now points at $wan (was $current)" \
+      http://ntfy.ntfy.svc.cluster.local/homelab-warning >/dev/null 2>&1 || true
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ddns
+  namespace: ddns
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      activeDeadlineSeconds: 120
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: ddns
+              image: amazon/aws-cli:2.22.35
+              command: ["/bin/sh", "/script/update.sh"]
+              env:
+                - name: RECORD_NAME
+                  value: ntfy.chrisscotmartin.com
+                - name: RECORD_TTL
+                  value: "300"
+                - name: AWS_ACCESS_KEY_ID
+                  valueFrom:
+                    secretKeyRef: { name: ddns-secrets, key: AWS_ACCESS_KEY_ID }
+                - name: AWS_SECRET_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef: { name: ddns-secrets, key: AWS_SECRET_ACCESS_KEY }
+                - name: HOSTED_ZONE_ID
+                  valueFrom:
+                    secretKeyRef: { name: ddns-secrets, key: HOSTED_ZONE_ID }
+              volumeMounts:
+                - name: script
+                  mountPath: /script
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 64Mi
+                limits:
+                  memory: 128Mi
+          volumes:
+            - name: script
+              configMap:
+                name: ddns-script
