@@ -20,6 +20,13 @@ metadata:
     argocd-image-updater.argoproj.io/image-list: approvald=ghcr.io/christopherscot/approvald:latest
     argocd-image-updater.argoproj.io/approvald.update-strategy: digest
     argocd-image-updater.argoproj.io/write-back-method: git
+    # Without this the updater writes .argocd-source-approvald.yaml instead
+    # of kustomization.yaml, leaving two files that both claim to set the
+    # image and can silently disagree. It also makes the updater treat this
+    # app as Kustomize regardless of Argo's detected source type.
+    argocd-image-updater.argoproj.io/write-back-target: kustomization
+    # git write-back must target a branch; upstream warns against HEAD.
+    argocd-image-updater.argoproj.io/git-branch: main
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
