@@ -17,13 +17,30 @@
 # Usage:
 #   scripts/sync-kubeconfig.sh          # refresh if the local copy differs
 #   scripts/sync-kubeconfig.sh --check  # report only, change nothing
+#
+# Override the address if needed, e.g. when away from the LAN on the
+# home tailnet:
+#   KUBE_SERVER=https://pop-os:6443 KUBE_TLS_SERVER_NAME= scripts/sync-kubeconfig.sh
 set -euo pipefail
 
 SSH_HOST="${HOMELAB_SSH_HOST:-homelab}"
 # The node's kubeconfig says 127.0.0.1, which is only right *on* the node.
-# Rewrite it to an address this machine can reach. Override if the LAN IP
-# changes: KUBE_SERVER=https://host:6443 scripts/sync-kubeconfig.sh
-SERVER="${KUBE_SERVER:-https://192.168.50.179:6443}"
+# Rewrite it to an address this Mac can reach.
+#
+# Default to mDNS rather than the LAN IP or the Tailscale name:
+#   - the LAN IP (192.168.50.179) is a DHCP lease and can move;
+#   - the Tailscale name is unreliable here on purpose - multiple tailnets
+#     are in play, so you can be physically home but signed into a
+#     different account, and /etc/hosts pins pop-os to a Tailscale IP that
+#     is then unreachable (this is what made the node look down on
+#     2026-09-13).
+# mDNS resolves whenever we're on the LAN, independent of any tailnet.
+SERVER="${KUBE_SERVER:-https://pop-os.local:6443}"
+# The API cert's SANs include bare "pop-os" but NOT "pop-os.local", so
+# verification has to be told which name to check. Belongs in the
+# kubeconfig as tls-server-name; without it kubectl fails the hostname
+# check against pop-os.local.
+TLS_NAME="${KUBE_TLS_SERVER_NAME:-pop-os}"
 DEST="${KUBECONFIG_DEST:-$HOME/.kube/config}"
 
 check_only=0
@@ -59,6 +76,11 @@ fi
 echo "remote: valid until $(printf '%s' "$remote" | cert_enddate)"
 
 new=$(printf '%s' "$remote" | sed "s|https://127.0.0.1:6443|$SERVER|")
+# Add tls-server-name alongside the rewritten server line (skip if the
+# server address already matches a SAN, e.g. KUBE_SERVER=https://pop-os:6443).
+if [ -n "$TLS_NAME" ] && ! printf '%s' "$new" | grep -q 'tls-server-name:'; then
+  new=$(printf '%s' "$new" | sed "s|^\( *\)server: $SERVER|\1server: $SERVER\n\1tls-server-name: $TLS_NAME|")
+fi
 
 # Compare full content, not dates: k3s renews by extending notAfter on the
 # same cert, so notBefore never moves and can't be used as a change signal.
