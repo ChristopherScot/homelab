@@ -37,48 +37,56 @@ visible rather than silent.
 
 ## One-time setup (manual, outside GitOps)
 
-1. **IAM user** with an access key, and a policy scoped to this record
-   only — not the whole zone:
+No new IAM user is needed. This reuses the existing cert-manager Route 53
+credential (IAM user `cert-manager-route53`, inline policy
+`route53-dns01-chrisscotmartin`), whose policy already allows exactly
+`ChangeResourceRecordSets` + `ListResourceRecordSets` on the
+`chrisscotmartin.com` zone — everything this job does and nothing more.
 
-   ```json
-   {
-     "Version": "2012-10-17",
-     "Statement": [
-       {
-         "Effect": "Allow",
-         "Action": "route53:ChangeResourceRecordSets",
-         "Resource": "arn:aws:route53:::hostedzone/<ZONE_ID>",
-         "Condition": {
-           "ForAllValues:StringEquals": {
-             "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["ntfy.chrisscotmartin.com"],
-             "route53:ChangeResourceRecordSetsRecordTypes": ["A"]
-           }
-         }
-       },
-       {
-         "Effect": "Allow",
-         "Action": ["route53:ListResourceRecordSets", "route53:GetHostedZone"],
-         "Resource": "arn:aws:route53:::hostedzone/<ZONE_ID>"
-       }
-     ]
-   }
-   ```
+That policy is scoped to the zone rather than to the single `ntfy` A
+record, so it is marginally broader than strictly required. Accepted
+deliberately: one credential to rotate beats two, and it is already
+homelab-specific and zone-limited.
 
-2. **Vault** — store the credentials at `kv/ddns/config`:
+The only setup step is making sure the Vault item carries **both** halves
+of the credential. Historically only the secret was stored there, with the
+key ID inlined in `cert-manager-config/clusterissuer.yaml`. Check:
 
-   ```
-   vault kv put kv/ddns/config \
-     aws_access_key_id=AKIA... \
-     aws_secret_access_key=... \
-     hosted_zone_id=Z...
-   ```
+```
+kubectl exec -n default vault-0 -- env VAULT_ADDR=http://127.0.0.1:8200 \
+  VAULT_TOKEN="$VAULT_TOKEN" vault kv get kv/cert-manager/route53
+```
 
-3. **Vault role** — already declared in `bootstrap/vault-policies.sh`;
-   re-run it to create the `ddns` policy and Kubernetes auth role.
+If there is no `access_key_id` property, add it without disturbing the
+existing secret (`patch`, not `put` — `put` replaces the whole item):
 
-Until steps 1–2 are done the ExternalSecret stays unsynced and the
-CronJob's pods will fail to start. That's the intended failure mode:
-no credential, no writes.
+```
+kubectl exec -n default vault-0 -- env VAULT_ADDR=http://127.0.0.1:8200 \
+  VAULT_TOKEN="$VAULT_TOKEN" vault kv patch kv/cert-manager/route53 \
+  access_key_id=<the AKIA... value from clusterissuer.yaml>
+```
+
+Then create the Vault policy + Kubernetes auth role:
+
+```
+kubectl -n default port-forward svc/vault 8200:8200 &
+VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN=<root> ./bootstrap/vault-policies.sh
+```
+
+Until the ExternalSecret can resolve both properties it stays unsynced and
+the CronJob's pods won't start. That is the intended failure mode: no
+credential, no writes.
+
+### Note on the key ID in git
+
+`cert-manager-config/clusterissuer.yaml` has the AWS access key ID inline
+(cert-manager's `ClusterIssuer` schema takes it as a plain field, with only
+the secret behind a `SecretRef`). The secret half has never been in git.
+A key ID is an identifier rather than a credential, but this repo is
+public, so this app keeps both halves in Vault instead. Tidying the
+cert-manager side the same way is a reasonable follow-up; note that git
+history would still carry the old value, so genuinely removing it means
+rotating the key.
 
 ## Verifying
 

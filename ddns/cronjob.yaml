@@ -57,12 +57,21 @@ spec:
   target:
     name: ddns-secrets
   data:
-    - secretKey: AWS_ACCESS_KEY_ID
-      remoteRef: { key: ddns/config, property: aws_access_key_id }
+    # Reuse the cert-manager Route 53 credential rather than minting a
+    # second long-lived AWS key. Its IAM policy
+    # (cert-manager-route53 / route53-dns01-chrisscotmartin) already allows
+    # exactly ChangeResourceRecordSets + ListResourceRecordSets on the
+    # chrisscotmartin.com zone, which is all this job needs. It is scoped to
+    # the zone rather than to the single ntfy record, so it is marginally
+    # broader than strictly required - accepted deliberately: one credential
+    # to rotate beats two, and it is already homelab-specific.
+    #
+    # Both halves come from Vault. The access key id is an identifier rather
+    # than a credential, but this repo is public, so it stays out of git too.
     - secretKey: AWS_SECRET_ACCESS_KEY
-      remoteRef: { key: ddns/config, property: aws_secret_access_key }
-    - secretKey: HOSTED_ZONE_ID
-      remoteRef: { key: ddns/config, property: hosted_zone_id }
+      remoteRef: { key: cert-manager/route53, property: secret_access_key }
+    - secretKey: AWS_ACCESS_KEY_ID
+      remoteRef: { key: cert-manager/route53, property: access_key_id }
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -172,12 +181,12 @@ spec:
                 - name: AWS_ACCESS_KEY_ID
                   valueFrom:
                     secretKeyRef: { name: ddns-secrets, key: AWS_ACCESS_KEY_ID }
+                - name: HOSTED_ZONE_ID
+                  valueFrom:
+                    configMapKeyRef: { name: ddns-config, key: hosted_zone_id }
                 - name: AWS_SECRET_ACCESS_KEY
                   valueFrom:
                     secretKeyRef: { name: ddns-secrets, key: AWS_SECRET_ACCESS_KEY }
-                - name: HOSTED_ZONE_ID
-                  valueFrom:
-                    secretKeyRef: { name: ddns-secrets, key: HOSTED_ZONE_ID }
               volumeMounts:
                 - name: script
                   mountPath: /script
@@ -191,3 +200,14 @@ spec:
             - name: script
               configMap:
                 name: ddns-script
+---
+# Hosted zone id only. It names a DNS zone that is public by definition
+# (its NS records are queryable), so it is fine in git. The AWS key id and
+# secret both come from Vault via ddns-secrets.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ddns-config
+  namespace: ddns
+data:
+  hosted_zone_id: Z0475915FBCYEAWH0Y68

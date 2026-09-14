@@ -41,7 +41,6 @@ APPS=(
   "dead-mans-switch|kv/data/dead-mans-switch/*|dead-mans-switch|external-secrets-sa"
   "longhorn|kv/data/longhorn/*|longhorn-system|external-secrets-sa"
   "picoshare|kv/data/picoshare/*|picoshare|external-secrets-sa"
-  "ddns|kv/data/ddns/*|ddns|external-secrets-sa"
 )
 
 for entry in "${APPS[@]}"; do
@@ -62,6 +61,21 @@ EOF
     policies="$app" \
     ttl=1h
 done
+
+# ddns updates the ntfy WAN A record and reuses cert-manager's Route 53
+# credential rather than a second AWS key, so its policy points at
+# cert-manager's kv path instead of a kv/ddns/* of its own. Read-only, one
+# path, bound to the ddns namespace's SA.
+vault policy write ddns - <<EOF
+path "kv/data/cert-manager/route53"     { capabilities = ["read"] }
+path "kv/metadata/cert-manager/route53" { capabilities = ["read", "list"] }
+EOF
+
+vault write auth/kubernetes/role/ddns \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="ddns" \
+  policies="ddns" \
+  ttl=1h
 
 # Authelia gets an extra grant for shared SES SMTP creds (used by its
 # notifier.smtp config). The per-app loop above only sets one path per
