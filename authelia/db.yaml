@@ -13,6 +13,11 @@ metadata:
   namespace: authelia
 spec:
   instances: 2
+  # PodMonitor lets Grafana Alloy scrape per-instance PG metrics
+  # (cnpg_pg_cluster_status, replication lag, connection counts, backup
+  # status). Powers the CNPG alert rule group.
+  monitoring:
+    enablePodMonitor: true
   postgresql:
     parameters:
       # Login-driven workload, negligible write rate. Ship WAL hourly

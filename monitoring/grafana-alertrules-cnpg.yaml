@@ -1,0 +1,112 @@
+# CNPG (CloudNativePG) Postgres cluster alerts. Six clusters now depend
+# on CNPG (authelia, paperless, shlink, grafana, vaultwarden, plus the
+# pg-test playground). If any cluster degrades — instance down, backup
+# failing, replication lag climbing — we want to know before the
+# downstream app hits errors.
+#
+# Metrics come from per-instance PodMonitors (spec.monitoring.
+# enablePodMonitor: true on each Cluster CR), scraped by Grafana Alloy
+# via prometheus.operator.podmonitors.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaAlertRuleGroup
+metadata:
+  name: cnpg
+  namespace: monitoring
+spec:
+  instanceSelector:
+    matchLabels:
+      dashboards: local
+  folderRef: monitoring
+  interval: 60s
+  rules:
+    - uid: cnpg-cluster-degraded
+      title: CNPG cluster is degraded
+      condition: B
+      # 5m — CNPG reconciler takes ~1-2m to bring a replica back after
+      # a pod restart; 5m avoids paging on those transient windows.
+      # cnpg_collector_up=0 for one instance is fine (still HA); we key
+      # off cnpg_collector_last_available_backup_timestamp / replication
+      # rather than a single-pod signal.
+      for: 5m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: cnpg, severity: warning }
+      annotations:
+        summary: "CNPG cluster {{ $labels.namespace }}/{{ $labels.cluster }} has fewer ready instances than desired"
+        description: "The CNPG PodMonitor reports fewer ready instances than the Cluster CR spec.instances. Check `kubectl -n {{ $labels.namespace }} get cluster {{ $labels.cluster }}` and `kubectl -n {{ $labels.namespace }} describe pod {{ $labels.cluster }}-*` for the failing replica. Common causes: PVC attach stuck (Longhorn / synology-csi), replica in archive-recovery loop after unclean shutdown, WAL replication lagging."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 300, to: 0 }
+          datasourceUid: grafanacloud-prom
+          # count of collector-up=1 pods vs the target instance count.
+          # cnpg_collector_up{namespace,cluster,pod} = 1 when healthy.
+          model: { expr: 'sum by (namespace, cluster) (cnpg_collector_up) < sum by (namespace, cluster) (kube_statefulset_replicas{namespace=~".+"} * on(namespace, statefulset) group_left(cluster) label_replace(cnpg_collector_up, "statefulset", "$1", "cluster", "(.+)")) or (count by (namespace, cluster) (cnpg_collector_up == 0) > 0)', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
+
+    - uid: cnpg-backup-stale
+      title: CNPG cluster's last backup is >36h old
+      condition: B
+      # Base backups run daily (see ScheduledBackup CRs). >36h means at
+      # least one daily run was missed and offsite recovery is drifting.
+      # Warning severity — WAL is still streaming continuously, so
+      # in-cluster durability is fine; offsite RTO extends.
+      for: 15m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: cnpg, severity: warning }
+      annotations:
+        summary: "CNPG cluster {{ $labels.namespace }}/{{ $labels.cluster }} hasn't successfully backed up in {{ printf \"%.1f\" (div $values.A.Value 3600) }} hours"
+        description: "The most recent successful base backup for CNPG cluster {{ $labels.namespace }}/{{ $labels.cluster }} is over 36 hours old. Check `kubectl -n {{ $labels.namespace }} get backup.postgresql.cnpg.io` for the most recent Backup CR status, and `kubectl -n {{ $labels.namespace }} logs {{ $labels.cluster }}-1 -c postgres | grep -iE 'barman|backup'` for the underlying error. Continuous WAL archiving is independent of this and typically still working."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 900, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'time() - max by (namespace, cluster) (cnpg_collector_last_available_backup_timestamp)', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [129600] }  # 36 hours in seconds
+
+    - uid: cnpg-replication-lagging
+      title: CNPG replica lagging by >5 min
+      condition: B
+      for: 10m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: cnpg, severity: warning }
+      annotations:
+        summary: "CNPG replica {{ $labels.pod }} is lagging {{ printf \"%.0f\" $values.A.Value }}s behind primary"
+        description: "Streaming replication lag on {{ $labels.namespace }}/{{ $labels.pod }} has exceeded 5 minutes for 10m. If the primary fails now the replica would be behind by this much. Check network between the two DB pods, disk IO on the replica, and long-running transactions on the primary."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'max by (namespace, cluster, pod) (cnpg_pg_replication_lag)', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [300] }  # 5 minutes

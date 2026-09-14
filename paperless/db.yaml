@@ -9,6 +9,8 @@ metadata:
   namespace: paperless
 spec:
   instances: 2
+  monitoring:
+    enablePodMonitor: true
   postgresql:
     parameters:
       # Low-write DB + daily base backups → no need to ship WAL every 5 min

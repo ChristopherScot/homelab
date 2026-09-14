@@ -9,6 +9,8 @@ metadata:
   namespace: vaultwarden
 spec:
   instances: 2
+  monitoring:
+    enablePodMonitor: true
   postgresql:
     parameters:
       # Low-write vault + daily base backups → ship WAL at most hourly

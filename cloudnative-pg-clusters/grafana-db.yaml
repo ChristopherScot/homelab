@@ -10,6 +10,8 @@ metadata:
   namespace: monitoring
 spec:
   instances: 2
+  monitoring:
+    enablePodMonitor: true
   storage:
     size: 2Gi
     storageClass: longhorn
