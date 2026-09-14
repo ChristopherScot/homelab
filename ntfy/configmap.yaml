@@ -14,6 +14,20 @@ data:
     # Auth: closed by default. Nothing reads or publishes without a token
     # grant, even though the server is internet-reachable. Topic ACLs are
     # managed via `ntfy access` (set up out-of-band, stored in Vault).
+    #
+    # Users (one per client, each scoped to its own topics):
+    #   clip          write-only  general
+    #   grafana       write-only  homelab-critical, homelab-warning
+    #   homeassistant write-only  home
+    #   approvals     write-only  approvals-req   <- Mac remote-approval flow
+    #                 read-only   approvals-resp
+    #
+    # The approvals split is deliberate and load-bearing: the Mac asks on
+    # -req and listens on -resp, but CANNOT publish to -resp, so a compromised
+    # or unattended Mac cannot approve its own request. Responses are posted
+    # from the phone as the admin user. Verified: publish to -resp with the
+    # approvals token returns 403. Do not collapse these into one topic or
+    # grant the approvals user write on -resp.
     auth-file: "/var/lib/ntfy/user.db"
     auth-default-access: "deny-all"
 
