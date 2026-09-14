@@ -72,6 +72,8 @@ spec:
       remoteRef: { key: cert-manager/route53, property: secret_access_key }
     - secretKey: AWS_ACCESS_KEY_ID
       remoteRef: { key: cert-manager/route53, property: access_key_id }
+    - secretKey: HOSTED_ZONE_ID
+      remoteRef: { key: cert-manager/route53, property: hosted_zone_id }
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -183,7 +185,7 @@ spec:
                     secretKeyRef: { name: ddns-secrets, key: AWS_ACCESS_KEY_ID }
                 - name: HOSTED_ZONE_ID
                   valueFrom:
-                    configMapKeyRef: { name: ddns-config, key: hosted_zone_id }
+                    secretKeyRef: { name: ddns-secrets, key: HOSTED_ZONE_ID }
                 - name: AWS_SECRET_ACCESS_KEY
                   valueFrom:
                     secretKeyRef: { name: ddns-secrets, key: AWS_SECRET_ACCESS_KEY }
@@ -200,14 +202,3 @@ spec:
             - name: script
               configMap:
                 name: ddns-script
----
-# Hosted zone id only. It names a DNS zone that is public by definition
-# (its NS records are queryable), so it is fine in git. The AWS key id and
-# secret both come from Vault via ddns-secrets.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: ddns-config
-  namespace: ddns
-data:
-  hosted_zone_id: Z0475915FBCYEAWH0Y68
