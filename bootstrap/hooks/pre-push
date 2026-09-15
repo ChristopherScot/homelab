@@ -38,4 +38,20 @@ for chart in "${charts[@]}"; do
 done
 
 [ $stale -eq 0 ] || exit 1
+
+# Vault's auth roles are not Kubernetes objects, so nothing reconciles them
+# and no diff shows them. If this push changes the declared state, check it
+# against live Vault first - otherwise the script and reality drift apart
+# silently, which is how approvald's secret sync broke.
+if ! git diff --quiet "@{push}" HEAD -- bootstrap/vault-policies.sh 2>/dev/null; then
+  echo "pre-push: bootstrap/vault-policies.sh changed; checking live Vault..."
+  if ! "$repo_root/bootstrap/vault-drift.sh"; then
+    echo
+    echo "pre-push: Vault does not match the declared state."
+    echo "  Apply it:  ./bootstrap/vault-policies.sh"
+    echo "  Override:  git push --no-verify"
+    exit 1
+  fi
+fi
+
 exit 0
