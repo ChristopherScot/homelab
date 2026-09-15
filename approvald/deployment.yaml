@@ -1,99 +1,16 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: approvald
-  labels:
-    # Enforces at the namespace what the container securityContext below
-    # merely requests.
-    pod-security.kubernetes.io/enforce: restricted
-    pod-security.kubernetes.io/enforce-version: latest
----
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: external-secrets-sa
-  namespace: approvald
----
-apiVersion: external-secrets.io/v1beta1
-kind: SecretStore
-metadata:
-  name: vault-approvald
-  namespace: approvald
-spec:
-  provider:
-    vault:
-      server: http://vault.default.svc.cluster.local:8200
-      path: kv
-      version: v2
-      auth:
-        kubernetes:
-          mountPath: kubernetes
-          role: approvald
-          serviceAccountRef:
-            name: external-secrets-sa
----
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: approvald-secrets
-  namespace: approvald
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: vault-approvald
-    kind: SecretStore
-  target:
-    name: approvald-secrets
-  data:
-    # Writes the response topic. This is the credential the Mac deliberately
-    # does not have - it is what keeps the requester from self-approving.
-    - secretKey: NTFY_TOKEN
-      remoteRef: { key: approvald/config, property: ntfy_token }
-    # Shared secret the Mac presents to /register.
-    - secretKey: REGISTER_TOKEN
-      remoteRef: { key: approvald/config, property: register_token }
----
-# The image is a private GHCR package, so the kubelet needs a pull
-# credential. Reuses the existing claude-pods/git token rather than minting
-# a second one; it is already a read-scoped GHCR credential.
-apiVersion: external-secrets.io/v1beta1
-kind: ExternalSecret
-metadata:
-  name: ghcr-pull
-  namespace: approvald
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    name: vault-approvald
-    kind: SecretStore
-  target:
-    name: ghcr-pull
-    template:
-      type: kubernetes.io/dockerconfigjson
-      data:
-        .dockerconfigjson: |
-          {"auths":{"ghcr.io":{"username":"{{ .username }}","password":"{{ .token }}","auth":"{{ printf "%s:%s" .username .token | b64enc }}"}}}
-  data:
-    - secretKey: username
-      remoteRef: { key: claude-pods/git, property: username }
-    - secretKey: token
-      remoteRef: { key: claude-pods/git, property: token }
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: approvald
   namespace: approvald
-  annotations:
-    reloader.stakater.com/auto: "true"
+  labels:
+    app: approvald
+    team: me-myself-and-i
 spec:
-  # Single replica on purpose: pending approvals live in memory, and two
-  # replicas would each see only their own. A restart drops pending requests,
-  # which fail closed (the Mac times out and denies).
   replicas: 1
+  # At one replica the default rolling update takes the only pod down
+  # first; surging instead keeps the service up across a deploy.
   strategy:
-    # Surge rather than Recreate: at one replica, Recreate means the
-    # service is down for the whole rollout.
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 0
@@ -110,36 +27,28 @@ spec:
         k8s.grafana.com/metrics.portNumber: "3000"
       labels:
         app: approvald
+        team: me-myself-and-i
     spec:
-      # Required by the restricted Pod Security Standard.
+      # Required by the restricted Pod Security Standard, and the cheapest
+      # hardening available.
+      serviceAccountName: approvald
+      # Longer than the server's 20s drain so shutdown finishes before
+      # SIGKILL.
+      terminationGracePeriodSeconds: 30
       securityContext:
         seccompProfile:
           type: RuntimeDefault
-      terminationGracePeriodSeconds: 30
-      # The Vault role binds to this ServiceAccount; without this the pod
-      # runs as `default` and its identity is not the one the
-      # ExternalSecret set up.
-      serviceAccountName: external-secrets-sa
-      imagePullSecrets:
-        - name: ghcr-pull
       containers:
         - name: approvald
           image: ghcr.io/christopherscot/approvald:latest
           ports:
             - containerPort: 3000
           env:
-            - name: BASE_URL
-              value: https://approve.chrisscotmartin.com
-            - name: NTFY_URL
-              value: http://ntfy.ntfy.svc.cluster.local
-            - name: RESPONSE_TOPIC
-              value: approvals-resp
-            - name: NTFY_TOKEN
-              valueFrom:
-                secretKeyRef: { name: approvald-secrets, key: NTFY_TOKEN }
-            - name: REGISTER_TOKEN
-              valueFrom:
-                secretKeyRef: { name: approvald-secrets, key: REGISTER_TOKEN }
+            - name: PORT
+              value: "3000"
+          envFrom:
+            - secretRef:
+                name: approvald-secrets
           resources:
             requests:
               cpu: 10m
@@ -168,3 +77,6 @@ spec:
             periodSeconds: 30
             timeoutSeconds: 5
             failureThreshold: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}

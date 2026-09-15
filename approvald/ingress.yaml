@@ -1,13 +1,3 @@
-# PUBLIC ingress — class "public" routes via the dedicated public controller
-# (192.168.50.231), the only IP the router forwards 443 to.
-#
-# No Authelia in front, deliberately. Authelia lives on
-# auth.home.chrisscotmartin.com, which resolves to the LAN-only 192.168.50.225,
-# so a forward-auth redirect would dead-end whenever the phone is on cellular
-# — precisely the case this whole flow exists for. Authorization is instead a
-# per-request capability token in the tap URL: unguessable, single-use, and
-# expiring in minutes, so it authorizes one pending request rather than
-# granting an ambient session.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -15,12 +5,6 @@ metadata:
   namespace: approvald
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod
-    # Tap links only; nothing here takes a large body.
-    nginx.ingress.kubernetes.io/proxy-body-size: "16k"
-    # Blunt but useful: the decision path is hit once per approval by a human
-    # thumb, so anything hammering it is not a legitimate user.
-    nginx.ingress.kubernetes.io/limit-rps: "5"
-    nginx.ingress.kubernetes.io/limit-burst-multiplier: "4"
 spec:
   ingressClassName: public
   tls:
