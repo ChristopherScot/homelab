@@ -24,6 +24,11 @@ export VAULT_ADDR VAULT_TOKEN
 vault auth list 2>/dev/null | grep -q '^kubernetes/' || \
   vault auth enable kubernetes
 
+# Third-party and hand-written apps only. Services scaffolded by
+# homelabctl derive their own role from their config.yaml - run
+# `homelabctl vault --apply` in the service directory rather than adding a
+# line here, or the role ends up declared in two places that can disagree.
+#
 # Each entry: <app-name>|<kv-path-glob>|<bound-namespace>|<bound-sa>
 # Single-path roles are defined here. The homepage role reads from
 # multiple kv paths and is declared separately below.
@@ -41,7 +46,6 @@ APPS=(
   "dead-mans-switch|kv/data/dead-mans-switch/*|dead-mans-switch|external-secrets-sa"
   "longhorn|kv/data/longhorn/*|longhorn-system|external-secrets-sa"
   "picoshare|kv/data/picoshare/*|picoshare|external-secrets-sa"
-  "approvald|kv/data/approvald/*|approvald|approvald"
 )
 
 for entry in "${APPS[@]}"; do
