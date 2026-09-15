@@ -72,13 +72,17 @@ spec:
             capabilities:
               drop: [ALL]
           readinessProbe:
-            httpGet: { path: /healthz, port: 3000 }
+            httpGet:
+              path: /healthz
+              port: 3000
             initialDelaySeconds: 2
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3
           livenessProbe:
-            httpGet: { path: /healthz, port: 3000 }
+            httpGet:
+              path: /healthz
+              port: 3000
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5
