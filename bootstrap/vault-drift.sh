@@ -55,6 +55,13 @@ vault_exec() {
 # deployed. Without this, every homelabctl-managed service reported as
 # "someone wrote these by hand" - burying real findings in false ones
 # until nobody read the output.
+#
+# KNOWN ISSUE (2026-09-17): after `demo` was deleted from Vault and every
+# reference removed from this repo, this still reports it as "declared but
+# not in Vault". None of the three greps above produce `demo` when run by
+# hand against the same tree - so the stale value is coming from somewhere
+# this comment's author could not find. Treat a lone `demo` line as noise
+# until that is chased down; anything else it reports is real.
 declared_roles=$(
   {
     grep -oE '^  "[a-z0-9-]+\|' "$declared_file" | tr -d ' "|'
