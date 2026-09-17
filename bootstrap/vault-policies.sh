@@ -29,6 +29,19 @@ vault auth list 2>/dev/null | grep -q '^kubernetes/' || \
 # `homelabctl vault --apply` in the service directory rather than adding a
 # line here, or the role ends up declared in two places that can disagree.
 #
+# This script is the declaration; re-running it is idempotent and is how
+# you reconcile. There used to be a vault-drift.sh that compared it to
+# live Vault from a pre-push hook, removed 2026-09-17: it reported four
+# legitimate roles as hand-written, hid a real finding in that noise, and
+# a `set -euo pipefail` bug meant it had been silently skipping most of
+# its own checks. A check you have to remember to distrust is worse than
+# none.
+#
+# The gap it was covering is still real - Vault auth roles are not
+# Kubernetes objects, so nothing reconciles them and no diff shows them.
+# What shrank the gap is homelabctl: for every service it manages the
+# config.yaml IS the declaration, so there is nothing here to drift from.
+#
 # Each entry: <app-name>|<kv-path-glob>|<bound-namespace>|<bound-sa>
 # Single-path roles are defined here. The homepage role reads from
 # multiple kv paths and is declared separately below.
