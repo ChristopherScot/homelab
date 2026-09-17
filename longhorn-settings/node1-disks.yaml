@@ -7,21 +7,15 @@
 # non-Longhorn growth here is logs and container images. The default
 # reserves 30% of the disk regardless of what the machine is for, which on
 # a storage node is space that exists to be used.
-# PAUSED 2026-09-17: allowScheduling false on both disks while node1 is on
-# wifi. Rebuilding its replicas was failing and restarting - 26 starts, 10
-# completions, 9 failures in one 20-minute sample - because a rebuild that
-# stalls past its timeout begins again from zero, so the same data crossed
-# the link repeatedly. loki-storage reached "failed to rebuild too many
-# times".
+# Scheduling was paused here on 2026-09-17 and resumed the same day. The
+# rebuilds were failing and restarting - 26 starts, 10 completions, 9
+# failures in one 20-minute sample - because five concurrent rebuilds
+# shared one wifi link, so individual requests stalled past their
+# per-request budget and each failure discarded everything it had copied.
 #
-# Nothing is offline while paused: every volume still serves from its
-# healthy replica on node2 or pop-os. They stay degraded, and Longhorn's
-# "volume not healthy" alert keeps firing, which is honest - they ARE a
-# single copy.
-#
-# Set both back to true to resume. Prefer doing that with node1 on
-# ethernet: 40GiB is minutes wired and hours over wifi, and the
-# failure-restart loop is what wifi causes.
+# Resumed once concurrent-replica-rebuild-per-node-limit went to 1 (see
+# config.yaml). One rebuild at a time gets the whole link, which is slower
+# in theory and actually finishes.
 apiVersion: longhorn.io/v1beta2
 kind: Node
 metadata:
@@ -32,7 +26,7 @@ spec:
     # Declared as the exact existing disk name so this updates in place
     # (ServerSideApply; do not introduce a second disk).
     default-disk-7a3e185305ffcb16:
-      allowScheduling: false
+      allowScheduling: true
       evictionRequested: false
       diskDriver: ""
       diskType: filesystem
@@ -40,7 +34,7 @@ spec:
       storageReserved: 42949672960
       tags: []
     hdd:
-      allowScheduling: false
+      allowScheduling: true
       diskDriver: ""
       diskType: filesystem
       evictionRequested: false
