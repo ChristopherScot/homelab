@@ -7,6 +7,21 @@
 # non-Longhorn growth here is logs and container images. The default
 # reserves 30% of the disk regardless of what the machine is for, which on
 # a storage node is space that exists to be used.
+# PAUSED 2026-09-17: allowScheduling false on both disks while node1 is on
+# wifi. Rebuilding its replicas was failing and restarting - 26 starts, 10
+# completions, 9 failures in one 20-minute sample - because a rebuild that
+# stalls past its timeout begins again from zero, so the same data crossed
+# the link repeatedly. loki-storage reached "failed to rebuild too many
+# times".
+#
+# Nothing is offline while paused: every volume still serves from its
+# healthy replica on node2 or pop-os. They stay degraded, and Longhorn's
+# "volume not healthy" alert keeps firing, which is honest - they ARE a
+# single copy.
+#
+# Set both back to true to resume. Prefer doing that with node1 on
+# ethernet: 40GiB is minutes wired and hours over wifi, and the
+# failure-restart loop is what wifi causes.
 apiVersion: longhorn.io/v1beta2
 kind: Node
 metadata:
@@ -17,7 +32,7 @@ spec:
     # Declared as the exact existing disk name so this updates in place
     # (ServerSideApply; do not introduce a second disk).
     default-disk-7a3e185305ffcb16:
-      allowScheduling: true
+      allowScheduling: false
       evictionRequested: false
       diskDriver: ""
       diskType: filesystem
@@ -25,7 +40,7 @@ spec:
       storageReserved: 42949672960
       tags: []
     hdd:
-      allowScheduling: true
+      allowScheduling: false
       diskDriver: ""
       diskType: filesystem
       evictionRequested: false
