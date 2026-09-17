@@ -40,12 +40,24 @@ vault_exec() {
     VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN="$token" "$@" 2>/dev/null
 }
 
-# Roles the script declares: the APPS array plus any explicit
-# `vault write auth/kubernetes/role/<name>`.
+# Roles this repo declares, from BOTH writers.
+#
+# vault-policies.sh covers third-party and hand-written apps. Services
+# scaffolded by homelabctl never appear there - they derive their role
+# from their own config.yaml and create it with `homelabctl vault
+# --apply`, which lives in the service repo, not here.
+#
+# So the second source is the manifests: every ESO SecretStore names the
+# role it authenticates with, and those manifests are what is actually
+# deployed. Without this, every homelabctl-managed service reported as
+# "someone wrote these by hand" - burying real findings in false ones
+# until nobody read the output.
 declared_roles=$(
   {
     grep -oE '^  "[a-z0-9-]+\|' "$declared_file" | tr -d ' "|'
     grep -oE 'auth/kubernetes/role/[a-z0-9-]+' "$declared_file" | sed 's|.*/||'
+    grep -rhoE '^[[:space:]]+role: "?[a-z0-9-]+"?' --include='*.yaml' "$repo_root" \
+      | sed -E 's/.*role: "?([a-z0-9-]+)"?/\1/'
   } | sort -u
 )
 
@@ -100,8 +112,33 @@ print(",".join(d.get("bound_service_account_names") or []),
   fi
 done
 
+# Scope, not just existence. A role bound to `*` service accounts in `*`
+# namespaces can be assumed by ANY pod in the cluster, so a policy that
+# reads kv/data/* gives every workload every secret - defeating the
+# per-app isolation the rest of this file checks. Being declared does not
+# make that safe, so this runs over every live role regardless.
+for r in $live_roles; do
+  # Prints the policies when both bindings are wildcards, nothing
+  # otherwise - so the shell tests for output rather than parsing fields.
+  wildcard=$(vault_exec vault read -format=json "auth/kubernetes/role/$r" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)["data"]
+sa=d.get("bound_service_account_names") or []
+ns=d.get("bound_service_account_namespaces") or []
+if "*" in sa and "*" in ns:
+    print(",".join(d.get("token_policies") or []) or "none")' 2>/dev/null) || continue
+
+  [ -n "$wildcard" ] || continue
+
+  drift=1
+  report "${red}role $r is bound to any service account in any namespace${off}"
+  report "  ${dim}any pod in the cluster can assume it; policies: $wildcard${off}"
+  report "  ${dim}bind it to the service account and namespace that needs it${off}"
+  report ""
+done
+
 if [ "$drift" -eq 0 ]; then
-  report "${green}vault matches bootstrap/vault-policies.sh${off}"
+  report "${green}vault matches what this repo declares${off}"
   exit 0
 fi
 
