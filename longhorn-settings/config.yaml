@@ -50,3 +50,45 @@ spec:
   labels:
     app: longhorn
     type: auto-backup
+---
+# Rebuild tuning for a cluster on wifi.
+#
+# The defaults assume a wired network. On this one - 13-72ms with heavy
+# jitter - rebuilding node1's replicas failed and restarted repeatedly: 26
+# starts, 10 completions, 9 failures in one 20-minute sample. A rebuild
+# that trips a timeout begins again from zero, so the same data crossed
+# the link several times and loki-storage reached "failed to rebuild too
+# many times".
+#
+# These three make a rebuild slower to give up rather than faster to
+# finish. Revisit them if the nodes are ever wired, where the shorter
+# defaults detect a genuinely dead replica sooner.
+apiVersion: longhorn.io/v1beta2
+kind: Setting
+metadata:
+  name: engine-replica-timeout
+  namespace: longhorn-system
+# 30s, the maximum Longhorn allows, up from 8. This is how long the engine
+# waits for a replica before marking it failed; 8s is short enough that a
+# jitter spike under rebuild load looks like a dead replica.
+value: "30"
+---
+apiVersion: longhorn.io/v1beta2
+kind: Setting
+metadata:
+  name: replica-file-sync-http-client-timeout
+  namespace: longhorn-system
+# 120s, up from 30. A file-sync chunk that stalls past this aborts the
+# whole rebuild - which is the restart-from-zero loop above.
+value: "120"
+---
+apiVersion: longhorn.io/v1beta2
+kind: Setting
+metadata:
+  name: concurrent-replica-rebuild-per-node-limit
+  namespace: longhorn-system
+# 1, down from 5. Five rebuilds sharing one wifi link each get a fifth of
+# the bandwidth, so each is five times likelier to trip its timeout - and
+# a failed rebuild wastes everything it had copied. One at a time is
+# slower in theory and faster in practice.
+value: "1"
