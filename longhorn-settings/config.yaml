@@ -60,17 +60,31 @@ spec:
 # the link several times and loki-storage reached "failed to rebuild too
 # many times".
 #
-# These three make a rebuild slower to give up rather than faster to
-# finish. Revisit them if the nodes are ever wired, where the shorter
-# defaults detect a genuinely dead replica sooner.
+# Worth being precise about what these measure, because it changes which
+# one is doing the work. Both timeouts are IDLE/per-request, not deadlines
+# on the whole transfer: engine-replica-timeout is time since the last
+# response and only counts while I/O is outstanding, and the file-sync one
+# bounds a single request. A rebuild that is actively moving data does not
+# trip either - which is the right design, and means "it is taking hours"
+# was never the thing failing.
+#
+# What failed was contention. Five rebuilds sharing one wifi link meant
+# individual requests stalled past their budget, and a tripped timeout
+# discards everything that rebuild had copied. So the concurrency limit
+# below is the actual fix; the two timeouts are a cushion for jitter
+# spikes, not the cure.
+#
+# Revisit if the nodes are ever wired: shorter timeouts detect a genuinely
+# dead replica sooner, which is the better trade on a link that does not
+# stall.
 apiVersion: longhorn.io/v1beta2
 kind: Setting
 metadata:
   name: engine-replica-timeout
   namespace: longhorn-system
-# 30s, the maximum Longhorn allows, up from 8. This is how long the engine
-# waits for a replica before marking it failed; 8s is short enough that a
-# jitter spike under rebuild load looks like a dead replica.
+# 30s, the maximum Longhorn allows, up from 8. Time since the last
+# response, counted only while I/O is outstanding - so this is the margin
+# for a jitter spike, not a budget for the rebuild.
 value: "30"
 ---
 apiVersion: longhorn.io/v1beta2
@@ -78,8 +92,9 @@ kind: Setting
 metadata:
   name: replica-file-sync-http-client-timeout
   namespace: longhorn-system
-# 120s, up from 30. A file-sync chunk that stalls past this aborts the
-# whole rebuild - which is the restart-from-zero loop above.
+# 120s, up from 30. Bounds a single sync request. A request that stalls
+# past it fails the rebuild, which then restarts from zero - so the cost
+# of being too strict is everything already copied.
 value: "120"
 ---
 apiVersion: longhorn.io/v1beta2
@@ -87,8 +102,9 @@ kind: Setting
 metadata:
   name: concurrent-replica-rebuild-per-node-limit
   namespace: longhorn-system
-# 1, down from 5. Five rebuilds sharing one wifi link each get a fifth of
-# the bandwidth, so each is five times likelier to trip its timeout - and
-# a failed rebuild wastes everything it had copied. One at a time is
-# slower in theory and faster in practice.
+# 1, down from 5. This is the fix. Five rebuilds sharing one wifi link
+# meant each got a fifth of the bandwidth, so individual requests stalled
+# past their per-request budget - and a failed rebuild discards everything
+# it had copied. One at a time is slower in theory and finishes in
+# practice.
 value: "1"
