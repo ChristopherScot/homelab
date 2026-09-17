@@ -1,3 +1,12 @@
+# node1's Longhorn disks. Both are declared here: the 30%-of-disk reserve
+# Longhorn defaults to on the root disk was live but undeclared until
+# 2026-09-17, so `kubectl` and git disagreed and nothing said so.
+#
+# 40Gi on the root disk, down from the 134.6Gi default. node1 is headless
+# - no desktop, no browser cache, no transcoding scratch - so the only
+# non-Longhorn growth here is logs and container images. The default
+# reserves 30% of the disk regardless of what the machine is for, which on
+# a storage node is space that exists to be used.
 apiVersion: longhorn.io/v1beta2
 kind: Node
 metadata:
@@ -5,6 +14,16 @@ metadata:
   namespace: longhorn-system
 spec:
   disks:
+    # Declared as the exact existing disk name so this updates in place
+    # (ServerSideApply; do not introduce a second disk).
+    default-disk-7a3e185305ffcb16:
+      allowScheduling: true
+      evictionRequested: false
+      diskDriver: ""
+      diskType: filesystem
+      path: /var/lib/longhorn/
+      storageReserved: 42949672960
+      tags: []
     hdd:
       allowScheduling: true
       diskDriver: ""

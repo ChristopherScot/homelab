@@ -13,7 +13,14 @@ spec:
   monitoring:
     enablePodMonitor: true
   storage:
-    size: 2Gi
+    # 10Gi, not 2Gi. At 2Gi the volume held 5.1GiB actual: the default
+    # Longhorn recurring job snapshots every 6h and retains 8, and this
+    # database was writing enough that each snapshot captured ~650MB. The
+    # chain outgrew the volume, and CNPG then refused to start Postgres at
+    # all - "Detected low-disk space condition, avoid starting the
+    # instance" - which is the right call, and left Grafana without a
+    # backend from 2026-09-16 until this was raised.
+    size: 10Gi
     storageClass: longhorn
   resources:
     requests:

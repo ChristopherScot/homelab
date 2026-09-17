@@ -1,12 +1,34 @@
-# pop-os Longhorn node: allow scheduling on its default disk, but cap usage so
-# Longhorn takes at most ~50% of the disk's unused space (~131Gi). The disk is
-# shared with the OS (pop-os is the desktop/iGPU/transcoding node), so it was
-# previously drained (allowScheduling=false, evictionRequested=true). We now
-# let it host replicas to relieve the near-full node1/node2 SSD tier, while
-# storageReserved protects the OS + leaves the other ~half of free space.
+# pop-os Longhorn node: allow scheduling on its default disk, but reserve
+# enough that the OS is never crowded. The disk is shared with the OS
+# (pop-os is the desktop/iGPU/transcoding node), so it was previously
+# drained (allowScheduling=false, evictionRequested=true) before being
+# allowed to host replicas.
 #
-# reserve math: storageMaximum 481593462784 (448Gi) − ~131Gi schedulable
-#   = 340959719424 reserved.
+# Reserved 100Gi, down from 318Gi (2026-09-17). The old value capped
+# Longhorn at ~131Gi schedulable, and it had reached 133Gi - so every
+# expansion and every replica rebuild was rejected by the admission
+# webhook with "cannot schedule N more bytes". That is what kept
+# grafana-db from starting: CNPG could not expand its PVC, so the
+# reconcile loop never got as far as recreating the pod.
+#
+# 100Gi is sized from measurement, not halves: everything non-Longhorn on
+# this disk is ~34GB (home 17, usr 11, logs 5.7, rancher 0.2, opt 0.3),
+# so this is ~3x headroom. Longhorn backups do not count - they go to S3
+# (see s3-backup-target.yaml), not local disk.
+#
+# 100Gi is close to the 135Gi node1/node2 hold on the same size disk, and
+# that similarity is a coincidence worth noting rather than a rule: they
+# are headless, where the only non-Longhorn growth is logs and images.
+# pop-os runs a desktop, so a browser cache, transcoding scratch and a
+# home directory grow here without anyone deciding they should. The
+# cushion is sized for THAT, not for parity - revisit it upward if this
+# machine picks up more desktop work, not because the other nodes differ.
+#
+# node1 is also back as of 2026-09-17 with 354GB free on its SSD and a
+# 1.8TB disk at 6%, so the tier pressure that justified pop-os hosting
+# replicas at all has eased. If this disk ever needs the space back,
+# raising the reserve evicts replicas to node1 rather than stranding
+# them.
 # Declared as the exact existing default-disk name so this updates it in place
 # (ServerSideApply; do not introduce a second disk).
 apiVersion: longhorn.io/v1beta2
@@ -22,5 +44,5 @@ spec:
       diskDriver: ""
       diskType: filesystem
       path: /var/lib/longhorn/
-      storageReserved: 340959719424
+      storageReserved: 107374182400
       tags: []
