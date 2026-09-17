@@ -19,6 +19,18 @@ spec:
       # selfHeal but NOT prune — auto-applies new/changed Application CRs
       # so leaf apps get their spec updates without manual triggers, but a
       # bad commit (deleted/malformed yaml) can't cascade-delete child
-      # Applications. Manual prune via the Argo UI when truly retiring an
-      # Application from app-of-apps/apps/.
+      # Applications.
+      #
+      # The asymmetry is the point: 42 of the 45 leaf Applications set
+      # `prune: true` themselves, so pruning HERE would not merely remove
+      # an Application - it would cascade into deleting every resource
+      # that Application manages. A leaf pruning is recoverable (Argo
+      # re-syncs from git); this would not be.
+      #
+      # Retiring an app is rare and the manual step is one command, so
+      # after removing the file from app-of-apps/apps/:
+      #
+      #   kubectl delete app -n argocd <name>
+      #
+      # The Application's own finalizer then removes what it managed.
       selfHeal: true
