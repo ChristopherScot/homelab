@@ -35,9 +35,12 @@ if [ -z "$token" ]; then
 fi
 [ -n "$token" ] || { echo "vault-drift: no VAULT_TOKEN and could not read it from 1Password" >&2; exit 2; }
 
+# </dev/null matters: kubectl exec reads stdin, and inside a `for` loop
+# that consumes the iteration list, so the loop runs once and stops. That
+# silently skipped every role after the first in the scope check below.
 vault_exec() {
   kubectl exec -n default vault-0 -- env \
-    VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN="$token" "$@" 2>/dev/null
+    VAULT_ADDR=http://127.0.0.1:8200 VAULT_TOKEN="$token" "$@" 2>/dev/null </dev/null
 }
 
 # Roles this repo declares, from BOTH writers.
@@ -98,8 +101,11 @@ print(",".join(d.get("bound_service_account_names") or []),
       ",".join(d.get("bound_service_account_namespaces") or []),
       ",".join(d.get("token_policies") or []))' 2>/dev/null) || continue
 
-  # The declared binding, from the APPS array: name|path|namespace|sa
-  want=$(grep -oE "^  \"$r\|[^\"]+\"" "$declared_file" | tr -d ' "' | awk -F'|' '{print $4, $3, $1}')
+  # The declared binding, from the APPS array: name|path|namespace|sa.
+  # `|| true` because a homelabctl-managed role is not in that array at
+  # all, so grep exits 1 - and under `set -e` that ended the script
+  # silently, skipping every check below this loop.
+  want=$(grep -oE "^  \"$r\|[^\"]+\"" "$declared_file" | tr -d ' "' | awk -F'|' '{print $4, $3, $1}' || true)
   [ -n "$want" ] || continue   # explicit blocks vary too much to compare
 
   if [ "$live" != "$want" ]; then
