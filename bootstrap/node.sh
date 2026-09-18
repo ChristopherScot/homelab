@@ -16,6 +16,22 @@ TOKEN=$2
 echo "Joining the existing k3s cluster as a controller/master using internal etcd..."
 curl -sfL https://get.k3s.io | K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=$TOKEN sh -s - server --disable traefik --disable servicelb --disable metrics-server
 
+# Verify the --disable flags reached the installed unit. See the same
+# check in primary.sh for what goes wrong when they do not: a bundled
+# metrics-server that k3s regenerates on every restart, whose labels do
+# not match the Helm chart's Service, which breaks API discovery and
+# leaves namespaces unable to terminate.
+#
+# Every server node runs the addon controller, so one node missing the
+# flag is enough to reintroduce it for the whole cluster.
+for want in traefik servicelb metrics-server; do
+  if ! systemctl cat k3s.service 2>/dev/null | grep -q "'$want'"; then
+    echo "WARNING: --disable $want did not reach /etc/systemd/system/k3s.service." >&2
+    echo "  Fix ExecStart, remove /var/lib/rancher/k3s/server/manifests/$want*," >&2
+    echo "  then: sudo systemctl daemon-reload && sudo systemctl restart k3s" >&2
+  fi
+done
+
 # Wait for k3s to be up and running
 echo "Waiting for k3s to be up and running..."
 sleep 30

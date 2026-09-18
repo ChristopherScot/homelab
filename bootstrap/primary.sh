@@ -10,6 +10,31 @@ set -e
 echo "Installing k3s with Traefik, Service Load Balancer, and metrics-server disabled, using etcd as the datastore..."
 curl -sfL https://get.k3s.io | sh -s - server --disable traefik --disable servicelb --disable metrics-server --cluster-init
 
+# Verify the --disable flags actually reached the installed unit.
+#
+# Not paranoia: on pop-os, --disable metrics-server was passed here but
+# only traefik and servicelb ended up in /etc/systemd/system/k3s.service.
+# k3s therefore kept regenerating its bundled metrics-server into
+# /var/lib/rancher/k3s/server/manifests/metrics-server/ and re-applying
+# it on every restart. That copy is labelled k8s-app=metrics-server while
+# the Helm chart's Service selects app.kubernetes.io/name, so the Service
+# had no endpoints, v1beta1.metrics.k8s.io reported Available=False, and
+# API DISCOVERY FAILED CLUSTER-WIDE - which meant no namespace could
+# finish terminating. It sat that way from 2024-11-13 to 2026-09-18 and
+# surfaced as six namespaces stuck in Terminating during an incident.
+#
+# A flag that silently does not take is worth ten seconds to check.
+for want in traefik servicelb metrics-server; do
+  if ! systemctl cat k3s.service 2>/dev/null | grep -q "'$want'"; then
+    echo "WARNING: --disable $want did not reach /etc/systemd/system/k3s.service." >&2
+    echo "  Add it to ExecStart, then:" >&2
+    echo "    sudo rm -rf /var/lib/rancher/k3s/server/manifests/$want*" >&2
+    echo "    sudo systemctl daemon-reload && sudo systemctl restart k3s" >&2
+    echo "  The manifests on disk must go too - the flag stops k3s" >&2
+    echo "  REGENERATING them, not applying ones already there." >&2
+  fi
+done
+
 # Wait for k3s to be up and running
 echo "Waiting for k3s to be up and running..."
 sleep 30
