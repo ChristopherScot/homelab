@@ -90,7 +90,10 @@ spec:
       source:
         repoURL: '{{repoURL}}'
         targetRevision: HEAD
-        path: '{{path}}'
+        # manifestPath, not path: the git file generator supplies its
+        # own {{path}} - the directory of the matched argocd.json - and
+        # it wins over a key of the same name in the file.
+        path: '{{manifestPath}}'
       destination:
         server: 'https://kubernetes.default.svc'
         namespace: '{{namespace}}'
