@@ -1,7 +1,0 @@
-# Argo's own namespace. It exists long before this app could create it -
-# bootstrap makes it - but it is declared here so the set is complete and
-# nothing else claims it.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: argocd

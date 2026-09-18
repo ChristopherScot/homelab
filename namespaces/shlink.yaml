@@ -1,7 +1,0 @@
-# Shared: shlink, shlink-web and shlink-redirector all run here, plus the
-# CNPG Postgres cluster that backs them. Was created by the pg-clusters
-# app, which also owns two Delete-reclaim PVCs in it.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: shlink

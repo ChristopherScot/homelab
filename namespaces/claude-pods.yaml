@@ -1,6 +1,0 @@
-# Holds four Longhorn PVCs (session home and workspace volumes), all on
-# Delete-reclaim classes.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: claude-pods

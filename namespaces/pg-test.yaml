@@ -1,6 +1,0 @@
-# Holds the throwaway CNPG cluster that gives the pg-clusters app
-# something to manage.
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: pg-test
