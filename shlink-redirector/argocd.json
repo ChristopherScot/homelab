@@ -1,0 +1,6 @@
+{
+  "name": "shlink-redirector",
+  "team": "me-myself-and-i",
+  "namespace": "shlink",
+  "image": "ghcr.io/christopherscot/go-shlink-redirector"
+}

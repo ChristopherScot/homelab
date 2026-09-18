@@ -1,0 +1,69 @@
+# Applications for services homelabctl generates, from one template.
+#
+# Scoped deliberately to homelabctl-managed services rather than every app
+# in this repo: the others are Helm charts or the arr-stack's multi-source
+# apps, which this template cannot express and which gain nothing from it.
+# Adding service number three should be "commit a directory", not "write
+# another Application by hand".
+#
+# Each service publishes deploy/argocd.json from its own config.yaml, so
+# the values here stay derived from the service's source of truth.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: homelabctl-services
+  namespace: argocd
+spec:
+  # create-update, NOT create-delete: a generator that stops listing a
+  # service leaves its Application in place rather than deleting it.
+  #
+  # The leaves set prune: true, so a delete here would not merely remove
+  # an Application - it would cascade into deleting everything that
+  # Application manages. Same asymmetry, and the same reasoning, as
+  # app-of-apps.yaml omitting prune on the parent.
+  syncPolicy:
+    applicationsSync: create-update
+  generators:
+    - git:
+        repoURL: 'https://github.com/ChristopherScot/homelab'
+        revision: HEAD
+        files:
+          - path: '*/argocd.json'
+  template:
+    metadata:
+      name: '{{name}}'
+      labels:
+        team: '{{team}}'
+      annotations:
+        # Track :latest by DIGEST, not by tag string. Kubernetes only
+        # re-pulls when the tag text changes, so a bare :latest would
+        # never roll on its own.
+        argocd-image-updater.argoproj.io/image-list: '{{name}}={{image}}:latest'
+        argocd-image-updater.argoproj.io/{{name}}.update-strategy: digest
+        argocd-image-updater.argoproj.io/write-back-method: git
+        # Without this the updater writes .argocd-source-<app>.yaml
+        # instead of kustomization.yaml, leaving two files that both
+        # claim to set the image and can silently disagree. It also makes
+        # the updater treat the app as Kustomize regardless of Argo's
+        # detected source type.
+        argocd-image-updater.argoproj.io/write-back-target: kustomization
+        # git write-back must target a branch; upstream warns against
+        # HEAD.
+        argocd-image-updater.argoproj.io/git-branch: main
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: 'https://github.com/ChristopherScot/homelab'
+        targetRevision: HEAD
+        path: '{{name}}'
+      destination:
+        server: 'https://kubernetes.default.svc'
+        namespace: '{{namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
