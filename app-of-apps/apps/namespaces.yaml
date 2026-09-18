@@ -1,0 +1,37 @@
+# Namespaces, owned here rather than by the apps that run in them.
+#
+# Argo tracks every resource in an app's directory as a member of that
+# app, and the leaf apps set prune: true - so a Namespace co-located with
+# a service was prunable, and pruning a Namespace cascades into deleting
+# everything inside it. That fired on an ordinary revert, a bad merge or
+# `argocd app delete` without --cascade=false. The media namespace was the
+# sharpest case: six Longhorn PVCs on a Delete-reclaim StorageClass.
+#
+# Namespaces also outlive the apps in them, and media is shared by five
+# Applications, so no single app can own it.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: namespaces
+  namespace: argocd
+  # No resources-finalizer, unlike every other app here: that finalizer
+  # cascade-deletes an Application's resources when the Application is
+  # deleted, which for this one means every namespace in the cluster. The
+  # whole point of this app is that namespaces outlive what manages them.
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: namespaces
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: default
+  syncPolicy:
+    automated:
+      # selfHeal but deliberately NOT prune. A namespace removed from this
+      # directory stays in the cluster; deleting one is manual, which is
+      # the right weight for an operation that is not transactional and
+      # takes every resource inside it. `homelabctl check` can report
+      # namespaces present in the cluster but absent here.
+      selfHeal: true

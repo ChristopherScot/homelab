@@ -1,0 +1,8 @@
+# Shared by the whole arr-stack: radarr, sonarr, readarr, bazarr,
+# prowlarr, jellyfin and friends, each with its own Application. That is
+# why it cannot belong to any one of them - and why the Longhorn PVCs in
+# here were the most exposed thing in the repo while it did.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: media

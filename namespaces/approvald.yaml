@@ -1,0 +1,16 @@
+# approvald is the only namespace in this cluster that enforces
+# restricted. The pods it holds satisfy restricted on their own -
+# homelabctl renders runAsNonRoot, uid 65532, drop ALL,
+# readOnlyRootFilesystem and a RuntimeDefault seccomp profile by default -
+# so this label is not what makes the current workload compliant. It is
+# what stops a future one that is not.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: approvald
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    # TODO: pin to the cluster's minor version. `latest` means the policy
+    # definition can tighten on a Kubernetes upgrade and start rejecting
+    # pods that were admissible the day before.
+    pod-security.kubernetes.io/enforce-version: latest

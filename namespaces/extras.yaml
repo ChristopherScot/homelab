@@ -1,0 +1,5 @@
+# Holds extras-data, a 500Gi PVC on synology-nfs (Retain).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: extras
