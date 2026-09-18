@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shlink-redirector
+  namespace: shlink
+  labels:
+    app: shlink-redirector
+    team: me-myself-and-i
+spec:
+  replicas: 1
+  # At one replica the default rolling update takes the only pod down
+  # first; surging instead keeps the service up across a deploy.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: shlink-redirector
+  template:
+    metadata:
+      annotations:
+        k8s.grafana.com/scrape: "true"
+        k8s.grafana.com/metrics.path: "/metrics"
+        k8s.grafana.com/metrics.portNumber: "3000"
+      labels:
+        app: shlink-redirector
+        team: me-myself-and-i
+    spec:
+      # Required by the restricted Pod Security Standard, and the cheapest
+      # hardening available.
+      serviceAccountName: shlink-redirector
+      # Longer than the server's 20s drain so shutdown finishes before
+      # SIGKILL.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: shlink-redirector
+          image: ghcr.io/christopherscot/go-shlink-redirector:latest
+          ports:
+            - containerPort: 3000
+          env:
+            - name: PORT
+              value: "3000"
+            - name: SHLINK_API_URL
+              value: "http://shlink.shlink.svc:8080"
+          envFrom:
+            - secretRef:
+                name: shlink-redirector-secrets
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: shlink-redirector
+  namespace: shlink
+spec:
+  selector:
+    app: shlink-redirector
+  ports:
+    - port: 80
+      targetPort: 3000
