@@ -20,7 +20,7 @@ spec:
         - vault.home.chrisscotmartin.com
       secretName: vault-tls
   rules:
-    - host: vault.lab
+    - host: vault.home.chrisscotmartin.com
       http:
         paths:
           - path: /
@@ -30,7 +30,29 @@ spec:
                 name: vault
                 port:
                   number: 8200
-    - host: vault.home.chrisscotmartin.com
+---
+# vault.lab on its own resource, because ssl-redirect is a RESOURCE-scoped
+# annotation rather than a per-host one. No public CA will issue for an
+# undelegated name, so it has no certificate and must not be redirected
+# to https - and while these rules shared an Ingress with the FQDN there
+# was no correct setting: without the override vault.lab 308s to the
+# controller's self-signed fallback, and with it the FQDN silently stops
+# being redirected too.
+#
+# Deliberately no cluster-issuer annotation: that is what keeps
+# cert-manager from ever attempting an order it cannot complete.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vault-ingress-lan
+  namespace: default
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  ingressClassName: external
+  rules:
+    - host: vault.lab
       http:
         paths:
           - path: /
