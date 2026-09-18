@@ -4,5 +4,5 @@
   "namespace": "shlink",
   "image": "ghcr.io/christopherscot/go-shlink-redirector",
   "repoURL": "https://github.com/ChristopherScot/go-shlink-redirector",
-  "path": "deploy/shlink-redirector"
+  "manifestPath": "deploy/shlink-redirector"
 }
