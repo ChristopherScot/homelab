@@ -60,8 +60,15 @@ spec:
         # committing its own digest from CI - which already has write
         # access to its own repo via GITHUB_TOKEN - not widening this.
         argocd-image-updater.argoproj.io/write-back-method: argocd
-      finalizers:
-        - resources-finalizer.argocd.argoproj.io
+      # No resources-finalizer, unlike a hand-written Application.
+      #
+      # That finalizer means "deleting this Application deletes what it
+      # manages", which is right for one someone wrote and wrong for one
+      # a generator owns: applicationsSync is create-update, so the
+      # ApplicationSet never deletes these. The only thing the finalizer
+      # can do here is turn an ordinary repair - delete the record, let
+      # the generator rebuild it - into a cascade that takes the running
+      # service with it.
     spec:
       project: default
       # Read from the SERVICE's own repo, not from here. A service's
