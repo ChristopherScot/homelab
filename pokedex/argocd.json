@@ -1,0 +1,8 @@
+{
+  "name": "pokedex",
+  "team": "me-myself-and-i",
+  "namespace": "pokedex",
+  "image": "ghcr.io/christopherscot/pokemon-pokedex",
+  "repoURL": "https://github.com/ChristopherScot/pokemon",
+  "manifestPath": "services/pokedex/deploy/pokedex"
+}
