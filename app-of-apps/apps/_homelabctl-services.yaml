@@ -31,6 +31,40 @@ spec:
   # and the stale spec was not.
   syncPolicy:
     applicationsSync: sync
+
+  # Hands /spec/source/kustomize to argocd-image-updater and stops
+  # reconciling it.
+  #
+  # applicationsSync: sync means the controller patches a generated
+  # Application back to this template whenever the two differ. That is
+  # what makes a changed repoURL or manifestPath actually apply - and it
+  # also reverted every digest the image updater wrote, in under five
+  # seconds, silently.
+  #
+  # The updater's write-back-method is argocd, so the digest it resolves
+  # lands in spec.source.kustomize.images on the live Application rather
+  # than in git. With that field reconciled, the updater logged
+  # "Successfully updated the live application spec" every five minutes
+  # while the running Deployment sat on a bare :latest tag that
+  # Kubernetes had no reason to re-pull. Nothing auto-deployed, and
+  # nothing reported an error.
+  #
+  # Scoped to the one field the updater owns: everything else in the
+  # template still reconciles.
+  #
+  # The accepted cost is that the digest lives only in the cluster. It is
+  # not in git, so it is not reviewable, and a cluster rebuilt from
+  # bootstrap comes back on whatever :latest resolves to at that moment
+  # rather than the digest each app was pinned at. Almost always the same
+  # image; not guaranteed to be.
+  #
+  # The alternative that puts it in git is CI committing its own digest
+  # into deploy/<name>/kustomization.yaml, which needs no credential the
+  # service's workflow does not already have. That is the upgrade path if
+  # digest-in-git is ever wanted; it is not a change to this file.
+  ignoreApplicationDifferences:
+    - jsonPointers:
+        - /spec/source/kustomize
   generators:
     - git:
         repoURL: 'https://github.com/ChristopherScot/homelab'
