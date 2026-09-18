@@ -40,24 +40,42 @@ spec:
         # never roll on its own.
         argocd-image-updater.argoproj.io/image-list: '{{name}}={{image}}:latest'
         argocd-image-updater.argoproj.io/{{name}}.update-strategy: digest
-        argocd-image-updater.argoproj.io/write-back-method: git
-        # Without this the updater writes .argocd-source-<app>.yaml
-        # instead of kustomization.yaml, leaving two files that both
-        # claim to set the image and can silently disagree. It also makes
-        # the updater treat the app as Kustomize regardless of Argo's
-        # detected source type.
-        argocd-image-updater.argoproj.io/write-back-target: kustomization
-        # git write-back must target a branch; upstream warns against
-        # HEAD.
-        argocd-image-updater.argoproj.io/git-branch: main
+        # write-back-method: argocd, not git. The updater stores the
+        # resolved digest on the Application in the cluster rather than
+        # committing it to the repo.
+        #
+        # That is what lets an Application read its manifests from the
+        # SERVICE's own repo. Git write-back has to commit into whichever
+        # repo holds kustomization.yaml, so pointing Argo at a service
+        # repo meant giving the updater write access to every service
+        # repo - a credential this does not need in order to do its job.
+        #
+        # The cost is that the digest lives only in the cluster: after a
+        # rebuild, apps come back on whatever :latest resolves to rather
+        # than the digest they were pinned at. That is almost always the
+        # same image, and it is a smaller price than a write credential
+        # on every repo.
+        #
+        # If digest-in-git is ever wanted back, the upgrade is a service
+        # committing its own digest from CI - which already has write
+        # access to its own repo via GITHUB_TOKEN - not widening this.
+        argocd-image-updater.argoproj.io/write-back-method: argocd
       finalizers:
         - resources-finalizer.argocd.argoproj.io
     spec:
       project: default
+      # Read from the SERVICE's own repo, not from here. A service's
+      # manifests are rendered by homelabctl into its own deploy/
+      # directory and committed there; copying them into this repo was
+      # the one manual step left in the chain, and the step people
+      # forget.
+      #
+      # Both fields come from the service's argocd.json, so a service in
+      # a monorepo and one in its own repo are described the same way.
       source:
-        repoURL: 'https://github.com/ChristopherScot/homelab'
+        repoURL: '{{repoURL}}'
         targetRevision: HEAD
-        path: '{{name}}'
+        path: '{{path}}'
       destination:
         server: 'https://kubernetes.default.svc'
         namespace: '{{namespace}}'
