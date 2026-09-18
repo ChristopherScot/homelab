@@ -1,15 +1,3 @@
-# Postgres backend for Shlink (URL shortener). 2 instances for failover,
-# same pattern as grafana-db. CNPG generates a `shlink-db-app` secret with
-# connection creds in the shlink namespace.
-#
-# The shlink namespace is created here (CreateNamespace on the pg-clusters
-# app covers argocd's namespace, but this cluster + the Shlink app both
-# live in `shlink`, so declare it explicitly).
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: shlink
----
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:

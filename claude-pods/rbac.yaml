@@ -3,11 +3,6 @@
 # via /remote-control — not unattended agents. A person is always in the loop.
 ---
 apiVersion: v1
-kind: Namespace
-metadata:
-  name: claude-pods
----
-apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: claude-session
