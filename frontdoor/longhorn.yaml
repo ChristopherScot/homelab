@@ -12,7 +12,6 @@ metadata:
     gethomepage.dev/description: "Block storage UI"
     gethomepage.dev/group: "Cluster"
     gethomepage.dev/icon: "longhorn.png"
-    nginx.ingress.kubernetes.io/ssl-redirect: "false"
     nginx.ingress.kubernetes.io/proxy-body-size: 10000m
 spec:
   ingressClassName: external
@@ -21,7 +20,7 @@ spec:
         - longhorn.home.chrisscotmartin.com
       secretName: longhorn-tls
   rules:
-    - host: longhorn.lab
+    - host: longhorn.home.chrisscotmartin.com
       http:
         paths:
           - path: /
@@ -31,7 +30,28 @@ spec:
                 name: longhorn-frontend
                 port:
                   number: 80
-    - host: longhorn.home.chrisscotmartin.com
+---
+# longhorn.lab on its own resource, because ssl-redirect is a RESOURCE-scoped
+# annotation rather than a per-host one. No public CA will issue for an
+# undelegated name, so it has no certificate and must not be redirected
+# to https - and while these rules shared an Ingress with the FQDN there
+# was no correct setting: without the override longhorn.lab 308s to the
+# controller's self-signed fallback, and with it the FQDN silently stops
+# being redirected too.
+#
+# Deliberately no cluster-issuer annotation: that is what keeps
+# cert-manager from ever attempting an order it cannot complete.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: longhorn-ingress-lan
+  namespace: longhorn-system
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: external
+  rules:
+    - host: longhorn.lab
       http:
         paths:
           - path: /
