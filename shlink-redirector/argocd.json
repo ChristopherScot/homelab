@@ -2,5 +2,7 @@
   "name": "shlink-redirector",
   "team": "me-myself-and-i",
   "namespace": "shlink",
-  "image": "ghcr.io/christopherscot/go-shlink-redirector"
+  "image": "ghcr.io/christopherscot/go-shlink-redirector",
+  "repoURL": "https://github.com/ChristopherScot/go-shlink-redirector",
+  "path": "deploy/shlink-redirector"
 }
