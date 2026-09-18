@@ -14,15 +14,23 @@ metadata:
   name: homelabctl-services
   namespace: argocd
 spec:
-  # create-update, NOT create-delete: a generator that stops listing a
-  # service leaves its Application in place rather than deleting it.
+  # sync, not create-update.
   #
-  # The leaves set prune: true, so a delete here would not merely remove
-  # an Application - it would cascade into deleting everything that
-  # Application manages. Same asymmetry, and the same reasoning, as
-  # app-of-apps.yaml omitting prune on the parent.
+  # create-update was chosen so a generator that stopped listing a
+  # service could not delete its Application. It turned out not to mean
+  # that: it also declines to update fields on an Application that
+  # already exists, so adding repoURL and path to argocd.json left both
+  # live services pointing at a stale path, and no amount of reconciling
+  # fixed it. A policy that silently ignores half a change is worse than
+  # one that applies it.
+  #
+  # What made create-update's protection matter was the cascade
+  # finalizer, which is now off the template: deleting a generated
+  # Application removes the record and leaves the running workload
+  # alone, so the generator can rebuild it. The delete is recoverable,
+  # and the stale spec was not.
   syncPolicy:
-    applicationsSync: create-update
+    applicationsSync: sync
   generators:
     - git:
         repoURL: 'https://github.com/ChristopherScot/homelab'
