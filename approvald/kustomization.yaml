@@ -11,4 +11,4 @@ resources:
   - ingress.yaml
 images:
   - name: ghcr.io/christopherscot/approvald
-    digest: sha256:7c290e452324519f3ba87b387a53320a42c0b3a7d5c33714b59cd0c7ab581530
+    digest: sha256:f8703c0d1646f2f1b183358fcc558ba17de4a720d1d23b16d1c862bcc52fe0fa
