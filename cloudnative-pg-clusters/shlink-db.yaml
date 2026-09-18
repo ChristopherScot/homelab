@@ -34,3 +34,39 @@ spec:
     initdb:
       database: shlink
       owner: shlink
+
+  # Continuous backup to S3, same shared creds and pattern as
+  # vaultwarden-db and paperless-db.
+  #
+  # Added after 2026-09-18, when the shlink namespace was pruned and took
+  # its Longhorn PVCs with it. The only copy of this database was a
+  # five-day-old volume snapshot, because a volume backup dies with the
+  # volume - an object store does not. Barman also archives WAL
+  # continuously, so recovery is point-in-time rather than to the last
+  # nightly snapshot.
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://cscot-homelab-pg-backups/shlink"
+      s3Credentials:
+        accessKeyId:
+          name: shlink-db-backup-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: shlink-db-backup-s3
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+    retentionPolicy: "30d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: shlink-db-daily
+  namespace: shlink
+spec:
+  # CNPG 6-field cron (sec min hour dom mon dow) - 04:45 daily, staggered
+  # off vaultwarden's 04:30 so two clusters do not push to S3 at once.
+  schedule: "0 45 4 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: shlink-db

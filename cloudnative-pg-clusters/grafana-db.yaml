@@ -32,3 +32,34 @@ spec:
     initdb:
       database: grafana
       owner: grafana
+
+  # Continuous backup to S3, same shared creds and pattern as
+  # vaultwarden-db and paperless-db. See shlink-db.yaml for why: a
+  # Longhorn volume backup dies with its volume, an object store does
+  # not.
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://cscot-homelab-pg-backups/grafana"
+      s3Credentials:
+        accessKeyId:
+          name: grafana-db-backup-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: grafana-db-backup-s3
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+    retentionPolicy: "30d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: grafana-db-daily
+  namespace: monitoring
+spec:
+  # CNPG 6-field cron (sec min hour dom mon dow) - 05:00 daily, staggered
+  # off vaultwarden (04:30) and shlink (04:45).
+  schedule: "0 0 5 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: grafana-db
