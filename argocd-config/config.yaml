@@ -1,7 +1,23 @@
+# Argo's own namespace, and the one resource here that must never be
+# pruned: deleting it takes the application-controller, the repo-server
+# and every Application CR with it - which then cascade-delete the
+# workloads they manage, because each Application carries
+# resources-finalizer. A cluster cannot recover itself from that; it has
+# to be rebuilt by hand from bootstrap/primary.sh.
+#
+# That is not hypothetical. It happened on 2026-09-18, when this document
+# was briefly removed from the file while the app still had prune: true.
+# Argo pruned the namespace it lives in, 18 Applications were deleted, and
+# seven PVCs went with them.
+#
+# Prune=false makes the resource exempt: Argo will create and update it,
+# and will never delete it. The app keeps prune: true for everything else.
 apiVersion: v1
 kind: Namespace
 metadata:
   name: argocd
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
 ---
 apiVersion: v1
 kind: ServiceAccount

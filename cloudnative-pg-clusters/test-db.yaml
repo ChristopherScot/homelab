@@ -4,6 +4,8 @@
 apiVersion: v1
 kind: Namespace
 metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
   name: pg-test
 ---
 apiVersion: postgresql.cnpg.io/v1
