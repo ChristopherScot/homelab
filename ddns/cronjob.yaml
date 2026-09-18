@@ -1,3 +1,25 @@
+# Dynamic DNS: keeps the Route 53 A record for ntfy.chrisscotmartin.com
+# pointed at the house's current WAN address.
+#
+# Why this exists: Comcast rotates the WAN IP with no notice. On
+# 2026-09-14 the record still read 76.153.223.132 while the house had
+# moved to 76.110.226.187, so every from-outside path to ntfy died with a
+# TCP timeout — the phone stopped receiving notifications and `toclip`
+# silently stopped working, with nothing surfacing the breakage.
+#
+# ntfy is the only hostname published to the WAN (everything else is
+# *.home.chrisscotmartin.com -> 192.168.50.225, LAN-only), so this single
+# record is the whole public surface. In-cluster consumers talk to
+# ntfy.ntfy.svc.cluster.local and were never affected.
+#
+# The IAM credential is scoped to exactly this one record — see
+# bootstrap/vault-policies.sh and the matching AWS policy. It cannot touch
+# any other name in the zone.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ddns
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
