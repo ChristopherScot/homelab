@@ -1,6 +1,6 @@
-# CNPG (CloudNativePG) Postgres cluster alerts. Six clusters now depend
-# on CNPG (authelia, paperless, shlink, grafana, vaultwarden, plus the
-# pg-test playground). If any cluster degrades — instance down, backup
+# CNPG (CloudNativePG) Postgres cluster alerts. Five clusters depend on
+# CNPG: authelia, paperless, shlink, grafana and vaultwarden - all five
+# now back up to S3. If any cluster degrades — instance down, backup
 # failing, replication lag climbing — we want to know before the
 # downstream app hits errors.
 #
