@@ -1,0 +1,60 @@
+# One store for every database's backup credentials.
+#
+# NEW databases use this. shlink and monitoring still use the
+# per-namespace SecretStores in db-backup-secrets.yaml and the shared
+# kv/cnpg-backups/s3 credential - they are backing up right now, and
+# moving a working backup is a change worth making on its own rather
+# than folded into adding one.
+#
+# Replaces the per-namespace ServiceAccount + SecretStore + Vault role
+# that each backed-up cluster used to need. Those four things were
+# identical everywhere except for the namespace, and the last of them
+# lived in bootstrap/vault-policies.sh - a bash script run by hand,
+# outside GitOps entirely.
+#
+# CRITICALLY, serviceAccountRef names no namespace. For a
+# ClusterSecretStore the referent is the ExternalSecret, so ESO uses the
+# cnpg-backup ServiceAccount in the CONSUMING namespace and Vault sees a
+# real token from that namespace. The per-namespace binding on the Vault
+# role therefore still applies: a service asking for another's path is
+# refused at login with "namespace not authorized", before any secret is
+# read. Verified by trying exactly that from a scratch namespace.
+#
+# Pinning a namespace here would break that - every namespace would
+# authenticate as one identity and the binding would stop meaning
+# anything.
+#
+# ONE Vault role for every namespace, carrying a TEMPLATED policy:
+#
+#   path "aws/creds/{{...metadata.service_account_namespace}}"
+#
+# Vault substitutes the namespace from the authenticated token, so a
+# pokedex token can read aws/creds/pokedex and nothing else. That is
+# what makes one store safe to share - the role's namespace list says
+# who may log in, and the templated policy says what each of them gets.
+# ESO cannot template the role name, which is why the scoping has to
+# happen inside Vault rather than here.
+#
+# conditions restricts which namespaces may use this store at all, so a
+# new namespace cannot reach it by accident. Labelling a namespace takes
+# cluster-admin, which no service account has.
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: cnpg-backup
+spec:
+  conditions:
+    - namespaceSelector:
+        matchLabels:
+          cnpg-backups: enabled
+  provider:
+    vault:
+      server: http://vault.default.svc.cluster.local:8200
+      path: aws
+      version: v1
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: cnpg-backup
+          serviceAccountRef:
+            name: cnpg-backup
