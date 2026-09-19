@@ -32,6 +32,27 @@ spec:
   syncPolicy:
     applicationsSync: sync
 
+    # The cascade finalizer is ON by default, and omitting it from the
+    # template below does NOT remove it.
+    #
+    # The template carries a comment saying it deliberately does not set
+    # resources-finalizer, and explains why: deleting a generated
+    # Application should remove the record and leave the running
+    # workload alone, so the generator can rebuild it. That reasoning is
+    # right and the protection was never in effect - the ApplicationSet
+    # controller adds the finalizer itself unless this field says
+    # otherwise, so all four generated Applications carried it.
+    #
+    # Verified on the live cluster before this change: approvald,
+    # pokedex, pokedex-web and shlink-redirector each had
+    # resources-finalizer.argocd.argoproj.io in .metadata.finalizers.
+    #
+    # With it true, deleting a generated Application deletes only the
+    # record. The workloads keep running and the generator recreates the
+    # Application on its next pass - which is the recoverable repair the
+    # comment below describes.
+    preserveResourcesOnDeletion: true
+
   # Hands /spec/source/kustomize to argocd-image-updater and stops
   # reconciling it.
   #
@@ -103,6 +124,11 @@ spec:
         # access to its own repo via GITHUB_TOKEN - not widening this.
         argocd-image-updater.argoproj.io/write-back-method: argocd
       # No resources-finalizer, unlike a hand-written Application.
+      #
+      # Omitting it here is not what removes it: the controller adds one
+      # by default. preserveResourcesOnDeletion on the syncPolicy above
+      # is what makes this true, and this comment described an intent
+      # rather than a fact until that was set.
       #
       # That finalizer means "deleting this Application deletes what it
       # manages", which is right for one someone wrote and wrong for one
