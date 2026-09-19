@@ -38,7 +38,15 @@ spec:
               mkdir -p /config/plugins
               for src in /managed/*.json; do
                 name=$(basename "$src")
-                dst="/config/plugins/$name"
+                # settings.json is shelfmark's top-level config; every
+                # other managed file is a per-tab plugin. METADATA_PROVIDER
+                # lives in the former, and merging it into plugins/ would
+                # write a file the app never reads - which looks exactly
+                # like the setting not working.
+                case "$name" in
+                  settings.json) dst="/config/$name" ;;
+                  *)             dst="/config/plugins/$name" ;;
+                esac
                 [ -f "$dst" ] || echo '{}' > "$dst"
                 jq -s '.[0] * .[1]' "$dst" "$src" > "$dst.new"
                 mv "$dst.new" "$dst"
