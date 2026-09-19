@@ -249,7 +249,7 @@ vault write auth/kubernetes/role/paperless \
 # Each role binds a dedicated ServiceAccount (cnpg-backup) rather than the
 # external-secrets-sa the app roles use, so the grant cannot be picked up
 # by anything else in the namespace.
-for ns in shlink monitoring; do
+for ns in shlink monitoring pokedex; do
   vault policy write "cnpg-backup-$ns" - <<EOF
 path "kv/data/cnpg-backups/*"     { capabilities = ["read"] }
 path "kv/metadata/cnpg-backups/*" { capabilities = ["read", "list"] }
