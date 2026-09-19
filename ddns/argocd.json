@@ -1,0 +1,8 @@
+{
+  "name": "ddns",
+  "team": "me-myself-and-i",
+  "namespace": "ddns",
+  "image": "ghcr.io/christopherscot/ddns",
+  "repoURL": "https://github.com/ChristopherScot/ddns",
+  "manifestPath": "deploy/ddns"
+}
