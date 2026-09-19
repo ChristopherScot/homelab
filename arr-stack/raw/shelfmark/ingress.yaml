@@ -1,3 +1,7 @@
+# Two ingresses on shelfmark.home, split by path:
+#   - main (/)          Authelia-gated browser access.
+#   - socket (/socket.io) auth-EXEMPT, because the browser cannot reach it
+#                       any other way. See the second document.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -21,6 +25,10 @@ metadata:
       proxy_set_header X-Forwarded-Uri $request_uri;
       proxy_set_header X-Forwarded-For $remote_addr;
     nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
+    # A search can run for a minute or more while the bypasser clears a
+    # challenge; nginx's 60s default closes the connection under it.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
 spec:
   ingressClassName: external
   tls:
@@ -31,6 +39,54 @@ spec:
       http:
         paths:
           - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shelfmark
+                port:
+                  number: 8084
+---
+# Socket.IO, exempt from Authelia.
+#
+# Shelfmark runs search over Socket.IO, whose handshake is an ordinary
+# HTTP request before it upgrades. Gated, that request gets a 302 to
+# auth.home.chrisscotmartin.com - a DIFFERENT ORIGIN - and a browser
+# fetch cannot follow a cross-origin redirect. It fails with "Failed to
+# fetch" and search does nothing, while the page itself loads fine,
+# because a top-level navigation CAN follow that redirect and an XHR
+# cannot. Same reason paperless-api is exempt, and the same symptom.
+#
+# What this exposes: /socket.io/ has no authentication of its own, so
+# anyone who can reach this hostname can drive search and downloads.
+# That is bounded by the ingress class - `external` is the LAN-only
+# controller, and the only service on the internet-facing `public`
+# class is ntfy. Someone already on the LAN is the threat model here,
+# and they could reach the pod's Service directly regardless.
+#
+# The timeouts are for the socket itself: nginx closes an idle upstream
+# connection after 60s by default, which drops a long search mid-flight.
+# jellyfin and ntfy carry the same pair for the same reason.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: shelfmark-socket
+  namespace: media
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+  labels:
+    app: shelfmark
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [shelfmark.home.chrisscotmartin.com]
+      secretName: shelfmark-tls
+  rules:
+    - host: shelfmark.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /socket.io
             pathType: Prefix
             backend:
               service:
