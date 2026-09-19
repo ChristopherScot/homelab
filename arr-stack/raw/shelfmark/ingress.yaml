@@ -58,10 +58,22 @@ spec:
 #
 # What this exposes: /socket.io/ has no authentication of its own, so
 # anyone who can reach this hostname can drive search and downloads.
-# That is bounded by the ingress class - `external` is the LAN-only
-# controller, and the only service on the internet-facing `public`
-# class is ntfy. Someone already on the LAN is the threat model here,
-# and they could reach the pod's Service directly regardless.
+# That is bounded to the LAN by two independent things, either of
+# which would be enough:
+#
+#   - No public DNS. shelfmark.home.chrisscotmartin.com resolves
+#     nowhere on the internet, and there is no *.home wildcard.
+#     ntfy is reachable because it uses ntfy.chrisscotmartin.com,
+#     a different name that IS in public DNS - not because of its
+#     ingress class.
+#   - The router forwards 443 to 192.168.50.231 only, which is the
+#     `public` controller. This ingress is on `external` (.225).
+#     Forcing the hostname at the public IP is refused at TLS with
+#     "unrecognized name", because that controller has no ingress
+#     for it - checked, not assumed.
+#
+# So the threat model is someone already on the LAN, who could reach
+# the pod's Service directly regardless.
 #
 # The timeouts are for the socket itself: nginx closes an idle upstream
 # connection after 60s by default, which drops a long search mid-flight.
