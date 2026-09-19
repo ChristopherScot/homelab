@@ -1,0 +1,8 @@
+{
+  "name": "hlx-live",
+  "team": "me-myself-and-i",
+  "namespace": "hlx-live",
+  "image": "ghcr.io/christopherscot/hlx-live",
+  "repoURL": "https://github.com/ChristopherScot/hlx-live",
+  "manifestPath": "deploy/hlx-live"
+}
