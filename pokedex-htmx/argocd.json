@@ -1,0 +1,8 @@
+{
+  "name": "pokedex-htmx",
+  "team": "me-myself-and-i",
+  "namespace": "pokedex-htmx",
+  "image": "ghcr.io/christopherscot/pokemon-pokedex-htmx",
+  "repoURL": "https://github.com/ChristopherScot/pokemon",
+  "manifestPath": "services/pokedex-htmx/deploy/pokedex-htmx"
+}
