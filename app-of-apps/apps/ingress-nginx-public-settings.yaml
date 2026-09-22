@@ -1,0 +1,27 @@
+# Cluster resources that belong in the ingress-nginx-public namespace but
+# aren't part of the upstream chart. Kept as a separate Application
+# because ingress-nginx-public.yaml is a pure Helm source (repoURL points
+# at the chart repo, not this git repo), so it has nowhere to put a
+# hand-written manifest.
+#
+# Currently just the ServiceMonitor for the controller's request metrics.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ingress-nginx-public-settings
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: ingress-nginx-public
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: ingress-nginx-public
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

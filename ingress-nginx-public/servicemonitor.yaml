@@ -1,0 +1,41 @@
+# Tells Alloy (k8s-monitoring chart, prometheusOperatorObjects feature)
+# to scrape the PUBLIC ingress controller's request-level metrics —
+# nginx_ingress_controller_requests and friends. That series is what the
+# ingress-5xx-spike alert in monitoring/grafana-alertrules-ingress.yaml
+# queries; the alert has been paused since 2026-09-13 for want of it.
+#
+# The private controller is deliberately left alone for now. It serves
+# every *.home service, so turning metrics on there is a much bigger
+# blast radius, and it still runs the chart's admission webhooks — the
+# component the 2026-09-13 note blames for wedging Argo syncs. Prove it
+# here first.
+#
+# Selects the chart's dedicated metrics Service, NOT the LoadBalancer.
+# controller.metrics.enabled=true renders a SECOND ClusterIP Service,
+# <release>-controller-metrics, exposing port 10254; the LoadBalancer
+# keeps serving only 80/443 and gains no new public port. Both Services
+# carry identical app.kubernetes.io labels, so label matching alone
+# would select the LoadBalancer as well. Naming the port "metrics" is
+# what disambiguates them: a ServiceMonitor endpoint only scrapes
+# Services that actually have a port of that name, and the LoadBalancer
+# has only "http" and "https".
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ingress-nginx-public-controller
+  namespace: ingress-nginx-public
+  labels:
+    app.kubernetes.io/name: ingress-nginx
+    app.kubernetes.io/instance: ingress-nginx-public
+spec:
+  namespaceSelector:
+    matchNames: [ingress-nginx-public]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingress-nginx
+      app.kubernetes.io/instance: ingress-nginx-public
+      app.kubernetes.io/component: controller
+  endpoints:
+    - port: metrics
+      interval: 30s
+      scrapeTimeout: 10s

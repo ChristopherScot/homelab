@@ -54,6 +54,21 @@ spec:
           # sync fragility.
           admissionWebhooks:
             enabled: false
+          # Request-level nginx metrics (nginx_ingress_controller_requests
+          # and friends). The controller always listens on :10254, but
+          # without this it serves only Go runtime metrics — verified by
+          # port-forwarding it and finding 29 go_*, 9 process_*, 2
+          # promhttp_* families and zero nginx_*. This adds the metrics
+          # port to the controller Service so a ServiceMonitor has
+          # something to select; the scrape itself is set up in
+          # ingress-nginx-public/servicemonitor.yaml.
+          #
+          # Safe on THIS controller specifically: the 2026-09-13 note on
+          # the paused ingress-5xx-spike alert blames the chart's
+          # admission-create hook for wedging Argo, and this controller
+          # already runs with admissionWebhooks.enabled=false.
+          metrics:
+            enabled: true
           watchNamespaces: ""
           resources:
             requests:
