@@ -15,17 +15,21 @@ spec:
   folderRef: monitoring
   interval: 60s
   rules:
-    # DISABLED 2026-09-13: requires ingress-nginx chart values with
-    # metrics.enabled=true which is currently breaking Argo sync via the
-    # admission-create hook re-run. Re-enable once we've resolved the
-    # ingress-nginx chart's hook stalls (Argo op cancels stuck syncs but
-    # a proper fix is to migrate off the chart's admission hooks entirely
-    # or use a manual metrics service). The controller's :10254/metrics
-    # only exposes Go runtime metrics, not request-level nginx metrics.
+    # Re-enabled 2026-09-22. metrics.enabled=true is now set on the
+    # PUBLIC controller only (app-of-apps/apps/ingress-nginx-public.yaml),
+    # scraped via ingress-nginx-public/servicemonitor.yaml. The hook stall
+    # this was disabled for does not apply there: that controller already
+    # runs admissionWebhooks.enabled=false.
+    #
+    # Verified end to end before unpausing - nginx_ingress_controller_requests
+    # reached VictoriaMetrics with ingress= and status= labels.
+    #
+    # Scope: this only sees the public controller. The private one (every
+    # *.home service) still exports no request metrics, so 5xx there stays
+    # invisible to this rule.
     - uid: ingress-5xx-spike
       title: Ingress 5xx rate spike
       condition: B
-      isPaused: true
       # 5m so we don't page on a single bad request or one flaky refresh.
       for: 5m
       noDataState: OK
