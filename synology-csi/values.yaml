@@ -47,6 +47,16 @@ node:
   # If your kubelet path is not standard, specify it here :
   ## example for miocrok8s distrib : /var/snap/microk8s/common/var/lib/kubelet
   kubeletPath: /var/lib/kubelet
+  # Gate csi-plugin startup on DSM being reachable. The driver logs in
+  # once at startup and never retries, so a plugin that starts while the
+  # NAS is still booting is broken until manually restarted. See the
+  # comment on the initContainer in templates/node.yaml.
+  waitForDsm:
+    enabled: true
+    # Long enough for a NAS to finish booting after a power cut, short
+    # enough that a genuinely dead NAS shows up as CrashLoopBackOff
+    # instead of an Init hang nothing alerts on.
+    timeoutSeconds: 900
 # Specifies affinity, nodeSelector and tolerations for the snapshotter StatefulSet
 snapshotter:
   affinity: { }

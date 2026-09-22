@@ -67,6 +67,10 @@ spec:
       {{- with .affinity }}
       affinity: {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- if $.Values.node.waitForDsm.enabled }}
+      initContainers:
+        {{- include "synology-csi.waitForDsm" $ | nindent 8 }}
+      {{- end }}
       containers:
       {{- with $.Values.images }}
         - name: node-driver-registrar
