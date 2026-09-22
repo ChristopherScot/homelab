@@ -30,6 +30,11 @@ spec:
     - uid: ingress-5xx-spike
       title: Ingress 5xx rate spike
       condition: B
+      # Stated explicitly rather than by deleting the key: the cluster
+      # syncs this with ServerSideApply, which does not remove a field
+      # just because the manifest stopped mentioning it. Dropping
+      # `isPaused: true` left the live rule paused and Argo still Synced.
+      isPaused: false
       # 5m so we don't page on a single bad request or one flaky refresh.
       for: 5m
       noDataState: OK
