@@ -3,12 +3,24 @@
 # Exit immediately if a command exits with a non-zero status
 set -e
 
-# Install k3s with Traefik, Service Load Balancer, and metrics-server disabled,
-# and use etcd as the datastore. metrics-server is replaced by an ArgoCD-managed
-# Helm install (see app-of-apps/apps/metrics-server.yaml) which adds the
-# --kubelet-insecure-tls flag k3s's bundled version is missing.
-echo "Installing k3s with Traefik, Service Load Balancer, and metrics-server disabled, using etcd as the datastore..."
-curl -sfL https://get.k3s.io | sh -s - server --disable traefik --disable servicelb --disable metrics-server --cluster-init
+# Install k3s with Traefik and Service Load Balancer disabled, using etcd as
+# the datastore.
+#
+# metrics-server is deliberately LEFT ENABLED. It used to be disabled here
+# and replaced by an ArgoCD-managed Helm install, for the --kubelet-insecure-tls
+# flag that k3s's bundled copy lacks. That is no longer true: k3s now hands
+# metrics-server a kubelet serving cert it trusts. Verified 2026-09-22 on
+# v1.30.6+k3s1 - the bundled pod scrapes all three kubelets with no
+# --kubelet-insecure-tls and logs no x509 errors, and `kubectl top nodes`
+# and `kubectl top pods` both work.
+#
+# Keeping both was worse than either alone. k3s labels its Deployment
+# k8s-app=metrics-server while the Helm chart selects app.kubernetes.io/name,
+# so whichever lost the race left the Service with no endpoints,
+# v1beta1.metrics.k8s.io Available=False, and API discovery broken
+# cluster-wide - which is how six namespaces got stuck Terminating.
+echo "Installing k3s with Traefik and Service Load Balancer disabled, using etcd as the datastore..."
+curl -sfL https://get.k3s.io | sh -s - server --disable traefik --disable servicelb --cluster-init
 
 # Verify the --disable flags actually reached the installed unit.
 #
@@ -24,7 +36,7 @@ curl -sfL https://get.k3s.io | sh -s - server --disable traefik --disable servic
 # surfaced as six namespaces stuck in Terminating during an incident.
 #
 # A flag that silently does not take is worth ten seconds to check.
-for want in traefik servicelb metrics-server; do
+for want in traefik servicelb; do
   if ! systemctl cat k3s.service 2>/dev/null | grep -q "'$want'"; then
     echo "WARNING: --disable $want did not reach /etc/systemd/system/k3s.service." >&2
     echo "  Add it to ExecStart, then:" >&2

@@ -14,17 +14,20 @@ TOKEN=$2
 
 # Install k3s and join the existing cluster as a controller/master using internal etcd
 echo "Joining the existing k3s cluster as a controller/master using internal etcd..."
-curl -sfL https://get.k3s.io | K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=$TOKEN sh -s - server --disable traefik --disable servicelb --disable metrics-server
+curl -sfL https://get.k3s.io | K3S_URL=https://$MASTER_IP:6443 K3S_TOKEN=$TOKEN sh -s - server --disable traefik --disable servicelb
 
-# Verify the --disable flags reached the installed unit. See the same
-# check in primary.sh for what goes wrong when they do not: a bundled
-# metrics-server that k3s regenerates on every restart, whose labels do
-# not match the Helm chart's Service, which breaks API discovery and
-# leaves namespaces unable to terminate.
+# metrics-server is intentionally not disabled here - see primary.sh for
+# why we stopped replacing it with a Helm install.
 #
-# Every server node runs the addon controller, so one node missing the
-# flag is enough to reintroduce it for the whole cluster.
-for want in traefik servicelb metrics-server; do
+# This node's own warning was the thing that came true. Every server node
+# runs the addon controller, so one node missing the flag reintroduces the
+# addon for the whole cluster. On 2026-09-22 pop-os had the flag and the
+# manifests removed, while node1 and node2 had neither - so k3s kept
+# re-applying its metrics-server, the Helm Service could not select it,
+# and `kubectl top` was down with v1beta1.metrics.k8s.io Available=False.
+#
+# Running only k3s's copy removes the race entirely.
+for want in traefik servicelb; do
   if ! systemctl cat k3s.service 2>/dev/null | grep -q "'$want'"; then
     echo "WARNING: --disable $want did not reach /etc/systemd/system/k3s.service." >&2
     echo "  Fix ExecStart, remove /var/lib/rancher/k3s/server/manifests/$want*," >&2
