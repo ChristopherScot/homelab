@@ -102,6 +102,29 @@ spec:
                   READARR_IP=$(getent hosts readarr.media.svc.cluster.local | awk '{print $1}')
                   echo "==> resolved: sonarr=$SONARR_IP radarr=$RADARR_IP readarr=$READARR_IP"
 
+                  # Minimum seeders, applied once at the Prowlarr level.
+                  #
+                  # Sonarr does not rank releases by seeders - it picks on
+                  # quality profile alone, and with torrentDelay=0 it grabs
+                  # the first acceptable match. minimumSeeders is only a
+                  # floor, and at 1 that floor lets through releases that
+                  # are effectively dead. On 2026-09-28 that is how seven
+                  # of eight Audacity episodes were grabbed from eztv with
+                  # a single seeder and then sat in metaDL indefinitely.
+                  #
+                  # This lives here rather than on each indexer in Sonarr
+                  # because Prowlarr syncs at fullSync and would overwrite
+                  # per-indexer edits on its next sync.
+                  set_seeders() {
+                    local MIN=$1
+                    local CUR=$(curl -sf $H "$PROWLARR/api/v1/appprofile/1")
+                    [ -z "$CUR" ] && { echo "==> no appprofile/1, skipping"; return; }
+                    local WANT=$(echo "$CUR" | jq --argjson m "$MIN" '. + {minimumSeeders:$m}')
+                    echo "==> setting minimumSeeders=$MIN"
+                    curl -sf $H "$PROWLARR/api/v1/appprofile/1" -X PUT -d "$WANT" >/dev/null
+                  }
+                  set_seeders 5
+
                   add_app "Sonarr" "Sonarr" "http://$SONARR_IP:8989" "$SONARR_API_KEY" "fullSync"
                   add_app "Radarr" "Radarr" "http://$RADARR_IP:7878" "$RADARR_API_KEY" "fullSync"
                   add_app "Readarr" "Readarr" "http://$READARR_IP:8787" "$READARR_API_KEY" "fullSync"
