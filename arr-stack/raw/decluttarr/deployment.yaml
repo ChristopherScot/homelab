@@ -1,0 +1,139 @@
+# decluttarr: watches the *arr download queues and removes downloads that
+# are never going to finish, blocklisting them so the *arr grabs a
+# DIFFERENT release instead of the same dead one.
+#
+# Added 2026-09-28 after an evening of doing this by hand. The failure
+# modes it would have caught, all seen that night:
+#
+#   - 16 torrents stuck in metaDL, no metadata, forever   REMOVE_METADATA_MISSING
+#   - Kleo S02 x5, zero seeds, zero peers, never moving    REMOVE_STALLED
+#   - "Silo S03E07 ... HiggsBoson.exe" - a fake release    REMOVE_BAD_FILES
+#   - two torrents in qBit's missingFiles state            REMOVE_MISSING_FILES
+#   - The Audacity sat at 1/9 episodes with nothing queued SEARCH_MISSING
+#
+# The blocklisting is the point. Removing a dead torrent on its own just
+# lets Sonarr re-grab the identical release on the next RSS pass; the
+# blocklist is what forces it to pick something else.
+#
+# Deliberately NOT enabled:
+#   REMOVE_SLOW    - MAM and other private trackers legitimately crawl,
+#                    and we seed those forever on purpose (see qbit-manage).
+#   REMOVE_UNMONITORED - would fight qbit-manage's books-mam-seedonly
+#                    category, which exists to keep seeding after the *arr
+#                    has stopped caring.
+#
+# Complements rather than overlaps qbit-manage: that one only applies
+# per-category share limits, and has no view of the *arr queues.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: decluttarr
+  namespace: media
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: decluttarr
+  template:
+    metadata:
+      labels:
+        app: decluttarr
+    spec:
+      enableServiceLinks: false
+      containers:
+        - name: decluttarr
+          image: ghcr.io/manimatter/decluttarr:v2.1.0
+          env:
+            - name: TZ
+              value: America/New_York
+            - name: LOG_LEVEL
+              value: INFO
+
+            # How often the queues are scanned, in minutes.
+            - name: TIMER
+              value: "10"
+
+            # Strikes before a download is removed. At TIMER=10 this is
+            # ~30 minutes of being demonstrably stuck, which is long
+            # enough that a torrent briefly between peers is not punished.
+            - name: MAX_STRIKES
+              value: "3"
+
+            # Do not re-search the same item more than weekly.
+            - name: MIN_DAYS_BETWEEN_SEARCHES
+              value: "7"
+
+            - name: REMOVE_STALLED
+              value: "True"
+            - name: REMOVE_METADATA_MISSING
+              value: "True"
+            - name: REMOVE_BAD_FILES
+              value: "True"
+            - name: REMOVE_MISSING_FILES
+              value: "True"
+            - name: REMOVE_FAILED_DOWNLOADS
+              value: "True"
+            - name: REMOVE_FAILED_IMPORTS
+              value: "True"
+            - name: REMOVE_ORPHANS
+              value: "True"
+
+            # Fill in what is actually missing once the dead grabs are
+            # cleared - otherwise a blocklisted episode just stays absent.
+            - name: SEARCH_MISSING
+              value: "True"
+
+            - name: SONARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-api-keys
+                  key: sonarr
+            - name: RADARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-api-keys
+                  key: radarr
+            - name: READARR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: arr-api-keys
+                  key: readarr
+            - name: QBIT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-admin
+                  key: username
+            - name: QBIT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: qbittorrent-admin
+                  key: password
+
+            - name: SONARR
+              value: |
+                - base_url: "http://sonarr.media.svc.cluster.local:8989"
+                  api_key: "$(SONARR_API_KEY)"
+            - name: RADARR
+              value: |
+                - base_url: "http://radarr.media.svc.cluster.local:7878"
+                  api_key: "$(RADARR_API_KEY)"
+            - name: READARR
+              value: |
+                - base_url: "http://readarr.media.svc.cluster.local:8787"
+                  api_key: "$(READARR_API_KEY)"
+
+            # qBittorrent lives inside gluetun's netns, so it is reached
+            # through its own Service rather than localhost.
+            - name: QBITTORRENT
+              value: |
+                - base_url: "http://qbittorrent.media.svc.cluster.local:8080"
+                  username: "$(QBIT_USERNAME)"
+                  password: "$(QBIT_PASSWORD)"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
