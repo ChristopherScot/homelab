@@ -21,7 +21,8 @@ metadata:
   namespace: media
 data:
   recyclarr.yml: |
-    # TRaSH guides — HD Bluray + WEB (1080p). Most-recommended homelab default.
+    # TRaSH guides, WEB-1080p on both sides. The TV here is 1080p, so
+    # Bluray and remux only cost disk and seeders without being visible.
     #
     # v8 syntax: profiles are guide-backed via `trash_id` directly on the
     # quality_profiles entry (no more `include: [template: ...]`). Custom
@@ -61,10 +62,36 @@ data:
         quality_definition:
           type: movie
 
+        # WEB only, deliberately not the guide's "HD Bluray + WEB".
+        #
+        # Chris's TV is 1080p, so a Bluray remux buys nothing watchable
+        # and costs a lot: BlackBerry came through as a 12.6GB Bluray
+        # when the WEB release is a fraction of that. Seeder counts run
+        # the same way - for The Audacity S01E07 the 1080p WEB release
+        # had 346 seeders against 30 for the Bluray, so the "better"
+        # quality was also the one that would not download.
+        #
+        # TRaSH has no WEB-only movie template (every English one is
+        # *-bluray-web), so this is a manual profile rather than a
+        # trash_id. Quality names must match Radarr's exactly or
+        # recyclarr fails the sync.
         quality_profiles:
-          - trash_id: d1d67249d3890e49bc12e275d989a7e9  # HD Bluray + WEB
-            reset_unmatched_scores:
-              enabled: true
+          - name: WEB-1080p
+            upgrade:
+              allowed: true
+              until_quality: WEB 1080p
+              until_score: 10000
+            min_format_score: 0
+            quality_sort: top
+            qualities:
+              - name: WEB 1080p
+                qualities:
+                  - WEBDL-1080p
+                  - WEBRip-1080p
+              - name: WEB 720p
+                qualities:
+                  - WEBDL-720p
+                  - WEBRip-720p
 
         # Prefer dual-language releases (original + English dub) so foreign
         # films land with both tracks — Jellyfin's audio-language pref picks
@@ -76,12 +103,12 @@ data:
           - trash_ids:
               - 4b900e171accbfb172729b63323ea8ca  # MULTi
             assign_scores_to:
-              - name: HD Bluray + WEB
+              - name: WEB-1080p
                 score: 500
           - trash_ids:
               - b23eae459cc960816f2d6ba84af45055  # Dubs Only
             assign_scores_to:
-              - name: HD Bluray + WEB
+              - name: WEB-1080p
                 score: -200
 ---
 apiVersion: batch/v1

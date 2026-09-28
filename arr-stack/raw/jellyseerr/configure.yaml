@@ -120,7 +120,7 @@ spec:
                     | jq '[.[] | select(.name=="WEB-1080p")][0].id // 1')
                   RADARR_PROFILE_ID=$(curl -sf -H "X-Api-Key:$RADARR_API_KEY" \
                     "http://radarr.media.svc.cluster.local:7878/api/v3/qualityprofile" \
-                    | jq '[.[] | select(.name=="HD Bluray + WEB")][0].id // 1')
+                    | jq '[.[] | select(.name=="WEB-1080p")][0].id // 1')
                   echo "==> sonarr profile id=$SONARR_PROFILE_ID, radarr profile id=$RADARR_PROFILE_ID"
 
                   # upsert_arr <kind> <payload-jq> applies a settings entry to
@@ -181,7 +181,7 @@ spec:
                       useSsl:false,
                       baseUrl:"",
                       activeProfileId:$pid,
-                      activeProfileName:"HD Bluray + WEB",
+                      activeProfileName:"WEB-1080p",
                       activeDirectory:"/media/movies",
                       is4k:false,
                       isDefault:true,
