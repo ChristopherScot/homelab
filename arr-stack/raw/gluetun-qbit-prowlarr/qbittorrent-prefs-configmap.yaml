@@ -9,6 +9,27 @@
 #
 # Replaces the previous qbittorrent-configure CronJob (which was suspended
 # and required manual triggering — settings drifted from this file).
+#
+# current_network_interface pins libtorrent to the VPN tun device. This is
+# not just a kill-switch nicety, it is what makes UDP work at all.
+#
+# Unbound, qBit listens on 0.0.0.0 and the kernel picks a source interface
+# per packet. Outbound UDP then leaves via eth0, which gluetun's firewall
+# drops (OUTPUT policy DROP; only tun0 and the wireguard endpoint are
+# allowed). The symptom is not an obvious firewall error - every UDP
+# tracker reports "Operation not permitted" and DHT sits at 0 nodes, while
+# HTTPS trackers keep working because those connections are already
+# ESTABLISHED. Downloads then stall in metaDL forever: magnet links need
+# DHT or a live tracker to fetch metadata, and both are UDP.
+#
+# Seen 2026-09-28: 21 of 23 active torrents stuck at 0 B/s with
+# connection_status "firewalled" and dht_nodes 0. qBit's own log shows the
+# regression - on 09-24 00:16 it listened only on 10.2.0.2 (tun0), then at
+# 00:39 switched to "0.0.0.0:37541,[::]:37541" and bound eth0 as well.
+#
+# listen_port is deliberately NOT authoritative here. The GSP docker-mod
+# (see deployment.yaml) polls gluetun and rewrites it whenever Proton
+# rotates the forwarded port, so the live value differs from this file.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -33,6 +54,8 @@ data:
       "max_ratio_act": 0,
       "listen_port": 51413,
       "upnp": false,
+      "current_network_interface": "tun0",
+      "current_interface_address": "",
       "random_port": false,
       "encryption": 1,
       "anonymous_mode": false,
