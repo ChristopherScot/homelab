@@ -95,10 +95,33 @@ data:
         host: redis.authelia.svc.cluster.local
         port: 6379
 
+    # Brute-force regulation. Deliberately lenient: this is a LAN-first
+    # setup where the realistic failure is the account owner fumbling a
+    # password manager, not a credential-stuffing run. Only Authelia
+    # itself is public, and it sits behind the rate-limited public
+    # ingress.
+    #
+    # 3 retries / 5m was too tight to live with. On 2026-09-28 three
+    # fat-fingered attempts produced a 5 minute lockout, and because a
+    # ban rejects the CORRECT password too, it reads as "my password
+    # stopped working" rather than "you are banned" - which sent us
+    # looking for a broken secret that was not broken.
+    #
+    # No exponential backoff: Authelia has no such option. Checked the
+    # v4.39 docs and confirmed against this exact build - the only
+    # regulation keys the binary knows are max_retries, find_time,
+    # ban_time and modes. ban_time is a flat duration, so 1m is a flat
+    # 1m however many times you trip it.
+    #
+    # find_time matches ban_time because Authelia rejects the config
+    # otherwise: "option 'find_time' must be less than or equal to
+    # option 'ban_time'". Its own validate-config catches this, which is
+    # worth running before any change here - a bad ConfigMap takes the
+    # SSO front door down for every service behind it.
     regulation:
-      max_retries: 3
-      find_time: 2m
-      ban_time: 5m
+      max_retries: 10
+      find_time: 1m
+      ban_time: 1m
 
     storage:
       # storage.encryption_key comes from AUTHELIA_STORAGE_ENCRYPTION_KEY env.
