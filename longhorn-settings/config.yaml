@@ -24,12 +24,31 @@ kind: RecurringJob
 metadata:
   name: auto-snapshot
   namespace: longhorn-system
+# Daily at 02:00, keep 3. Was every 6h keeping 8, which is 2 days of
+# history and a 10-link chain.
+#
+# Why this matters far more than it looks: a Longhorn replica is not a
+# copy of current state, it is the whole stack of differencing disks, and
+# a rebuild "syncs all but the most recent differencing disk" - so every
+# retained snapshot is re-sent over the wifi every time a replica
+# rebuilds.
+#
+# Measured on grafana-db-2 on 2026-09-29: an 8MB Postgres database whose
+# chain on disk was 16.1GB across 10 snapshots. Six consecutive 6-hourly
+# snapshots cost a flat 0.66GB each - an 8MB database does not change by
+# 0.66GB, that is Postgres rewriting blocks and Longhorn snapshotting at
+# block granularity. Cluster-wide: 336 snapshots, 106.6GB.
+#
+# 3 daily snapshots keeps same-day rollback, which is what snapshots are
+# for. Durability is unaffected and lives elsewhere: auto-backup weekly
+# retain 4, and s3-daily-backup daily retain 14 (15 present and healthy
+# as of this change).
 spec:
-  cron: "0 */6 * * *"
+  cron: "0 2 * * *"
   task: "snapshot"
   groups:
   - default
-  retain: 8
+  retain: 3
   concurrency: 2
   labels:
     app: longhorn
