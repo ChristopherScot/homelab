@@ -133,6 +133,70 @@ spec:
             # DaemonSet runs but nothing scrapes it (verified via helm template).
             linuxHosts:
               enabled: true
+              # The chart's default allowlist is "the minimal set required
+              # for Kubernetes Monitoring", which leaves out everything you
+              # actually want when a machine disappears. node1 dropped off
+              # the network twice in two days (2026-09-27 and 2026-09-28)
+              # with no shutdown logged, and there was nothing recorded to
+              # say whether it cooked, suspended, or lost power.
+              #
+              # node1 and node2 are identical AMD boxes. Their CPU sensor
+              # is k10temp, exposed as hwmon chip pci0000:00_0000:00:18_3
+              # label Tctl - verified against node2's live /metrics. The
+              # node-exporter was already collecting all of this; the
+              # allowlist was dropping it before it reached the database.
+              metricsTuning:
+                includeMetrics:
+                  # Thermal. Tctl is the CPU die temp on these.
+                  - node_hwmon_temp_celsius
+                  - node_hwmon_temp_max_celsius
+                  - node_hwmon_temp_crit_celsius
+                  - node_hwmon_sensor_label
+                  - node_thermal_zone_temp
+                  # Throttling. If it is overheating it throttles before
+                  # it dies, so these should climb ahead of a thermal
+                  # shutdown and say so plainly.
+                  - node_cpu_core_throttles_total
+                  - node_cpu_package_throttles_total
+                  - node_cpu_scaling_frequency_hertz
+                  # Sleep / suspend / unclean reboot. A suspended machine
+                  # looks exactly like a dead one from here: gone at layer
+                  # 2, nothing in the logs. boot_time_seconds jumping means
+                  # it rebooted; node_time_seconds advancing slower than
+                  # wall clock means it was asleep.
+                  - node_boot_time_seconds
+                  - node_time_seconds
+                  - node_context_switches_total
+                  - node_intr_total
+                  # Power supply / battery, in case this is a laptop-class
+                  # board browning out rather than a thermal event.
+                  - node_power_supply_online
+                  - node_power_supply_present
+                  # Memory exhaustion. node1 is 16 CPUs against 12Gi of
+                  # RAM, so a runaway workload can plausibly wedge the box
+                  # hard enough to stop answering ARP. An OOM kill leaves a
+                  # counter behind even when nothing else survives.
+                  - node_vmstat_oom_kill
+                  - node_memory_MemTotal_bytes
+                  - node_memory_MemFree_bytes
+                  - node_memory_Cached_bytes
+                  - node_memory_SwapFree_bytes
+                  - node_memory_SwapTotal_bytes
+                  # PSI. Stall pressure rises while a machine is dying in a
+                  # way load average alone does not show.
+                  - node_pressure_cpu_waiting_seconds_total
+                  - node_pressure_memory_waiting_seconds_total
+                  - node_pressure_io_waiting_seconds_total
+                  - node_load1
+                  - node_load5
+                  - node_load15
+                  # Disk and NIC health - the other two ways a node goes
+                  # quiet without logging anything.
+                  - node_disk_io_time_seconds_total
+                  - node_disk_read_errors_total
+                  - node_disk_write_errors_total
+                  - node_network_up
+                  - node_network_carrier_changes_total
 
           # ---- Collectors ----
           # alloy-metrics: single-replica deployment avoids the clustering
