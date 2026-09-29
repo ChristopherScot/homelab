@@ -127,17 +127,12 @@ metadata:
 # it had copied. One at a time is slower in theory and finishes in
 # practice.
 #
-# TEMPORARILY 0 (paused) as of 2026-09-29 at Chris's request. 0 disables
-# replica rebuilding outright; Longhorn's docs are explicit that this does
-# not disturb rebuilds already in flight or backup restores, it just stops
-# new ones being started.
-#
-# Why: after node1 came back its wifi was carrying 68Mbps down / 29Mbps up
-# of rebuild traffic, with ~28GB still to copy across 5 volumes. That is
-# the whole link for about an hour.
-#
-# THE COST OF LEAVING THIS AT 0: those 5 volumes stay single-replica. They
-# are attached and serving, and no data is at risk right now, but there is
-# no redundancy - losing the remaining replica loses the volume. Set this
-# back to "1" as soon as the link is free.
-value: "0"
+# Briefly set to 0 on 2026-09-29 to free the wifi link, then put back.
+# Pausing turned out to buy very little: with rebuilds stopped and zero
+# replicas rebuilding, node1's link was still carrying ~76Mbps inbound,
+# all of it longhorn instance-manager serving ordinary replica writes.
+# Five database volumes had their only surviving replica on node1, so
+# every write to them crosses the wifi whether or not anything is
+# rebuilding. The bandwidth was occupied either way, and the pause only
+# bought continued single-replica exposure.
+value: "1"
