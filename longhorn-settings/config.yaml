@@ -107,4 +107,18 @@ metadata:
 # past their per-request budget - and a failed rebuild discards everything
 # it had copied. One at a time is slower in theory and finishes in
 # practice.
-value: "1"
+#
+# TEMPORARILY 0 (paused) as of 2026-09-29 at Chris's request. 0 disables
+# replica rebuilding outright; Longhorn's docs are explicit that this does
+# not disturb rebuilds already in flight or backup restores, it just stops
+# new ones being started.
+#
+# Why: after node1 came back its wifi was carrying 68Mbps down / 29Mbps up
+# of rebuild traffic, with ~28GB still to copy across 5 volumes. That is
+# the whole link for about an hour.
+#
+# THE COST OF LEAVING THIS AT 0: those 5 volumes stay single-replica. They
+# are attached and serving, and no data is at risk right now, but there is
+# no redundancy - losing the remaining replica loses the volume. Set this
+# back to "1" as soon as the link is free.
+value: "0"
