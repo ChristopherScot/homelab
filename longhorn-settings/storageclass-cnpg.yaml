@@ -1,0 +1,56 @@
+# Storage class for CloudNativePG volumes.
+#
+# Two deliberate differences from the default "longhorn" class, both
+# straight out of CNPG's own storage guidance:
+#
+# 1. numberOfReplicas: 1, not 2.
+#
+#    "Defining additional replicas at the storage level can lead to write
+#    amplification, unnecessarily increasing disk I/O and space usage."
+#    CNPG "integrates this resiliency directly into the Postgres Cluster
+#    through the number of instances and the persistent volumes attached
+#    to them."
+#
+#    Every cluster here runs instances: 2, so 2 Longhorn replicas on top
+#    meant FOUR copies of each database and every WAL write hitting four
+#    volumes. Redundancy is the second Postgres instance, which has its
+#    own volume on another node; the pods are kept apart by CNPG's
+#    podAntiAffinityType: preferred.
+#
+# 2. recurringJobSelector pins these to a "cnpg" group that has no jobs
+#    attached, which is how a volume is kept OUT of Longhorn's "default"
+#    group. Longhorn auto-adds any volume with no recurring job to
+#    "default", so opting out means opting in to something else.
+#
+#    These databases do not need Longhorn snapshots or backups. Every
+#    cluster already runs barman with 30d retention and streams WAL
+#    continuously (ContinuousArchiving=True on all of them, verified),
+#    which gives point-in-time recovery to any second. Longhorn's copy is
+#    a crash-consistent block image with fixed restore points - strictly
+#    worse for Postgres, and it was being paid for twice.
+#
+#    What that duplication cost: grafana-db is an 8MB database whose
+#    Longhorn chain reached 16.1GB across 10 snapshots, because every
+#    6-hourly snapshot captured ~0.66GB of churning WAL. A rebuild copies
+#    the whole chain, so it crossed the wifi in full every time.
+#
+# Not applied to existing volumes: a bound PVC's storageClassName is
+# immutable. Existing clusters keep the "longhorn" class and have had
+# numberOfReplicas patched on their Volume CRs instead. This class is for
+# clusters created from here on.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-cnpg
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+parameters:
+  numberOfReplicas: "1"
+  staleReplicaTimeout: "30"
+  dataLocality: "best-effort"
+  fsType: ext4
+  # Empty group with no RecurringJobs bound to it. Keeps these volumes
+  # out of "default" without scheduling anything.
+  recurringJobSelector: '[{"name":"cnpg","isGroup":true}]'

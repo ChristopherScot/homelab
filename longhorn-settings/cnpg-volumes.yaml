@@ -1,0 +1,44 @@
+# Empty recurring-job group for CloudNativePG volumes.
+#
+# This RecurringJob exists so the "cnpg" group exists. Nothing is
+# scheduled by it - its whole purpose is to give Postgres volumes a group
+# to belong to, because Longhorn auto-adds any volume with NO recurring
+# job to the "default" group. Opting out of default means opting in to
+# something else.
+#
+# Why these volumes want no Longhorn snapshots or backups at all: every
+# CNPG cluster here already runs barman with 30d retention and streams
+# WAL continuously (ContinuousArchiving=True on all of them). That gives
+# point-in-time recovery to any second. Longhorn's version is a
+# crash-consistent block image with fixed restore points - strictly worse
+# for Postgres, and it was being paid for twice.
+#
+# The cost of that duplication, measured on 2026-09-29: grafana-db is an
+# 8MB database whose Longhorn chain had grown to 16.1GB across 10
+# snapshots, because each 6-hourly snapshot captured ~0.66GB of churning
+# WAL rather than 8MB of data. Rebuilds copy the entire chain, so all of
+# it crossed the wifi every time a replica was rebuilt.
+#
+# The volumes themselves are labelled into this group imperatively -
+# their PVCs were created by CNPG under the "longhorn" storage class and
+# a bound PVC's storageClassName is immutable, so they cannot be moved to
+# longhorn-cnpg without recreating them. New clusters should set
+# storageClass: longhorn-cnpg (see storageclass-cnpg.yaml) and get both
+# this and numberOfReplicas: 1 automatically.
+apiVersion: longhorn.io/v1beta2
+kind: RecurringJob
+metadata:
+  name: cnpg-noop
+  namespace: longhorn-system
+spec:
+  # Feb 31st never happens, so this never fires. The group is what
+  # matters, not the job.
+  cron: "0 0 31 2 *"
+  task: "snapshot"
+  groups:
+  - cnpg
+  retain: 1
+  concurrency: 1
+  labels:
+    app: longhorn
+    type: cnpg-noop
