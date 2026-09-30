@@ -31,9 +31,12 @@ metadata:
   name: cnpg-noop
   namespace: longhorn-system
 spec:
-  # Feb 31st never happens, so this never fires. The group is what
-  # matters, not the job.
-  cron: "0 0 31 2 *"
+  # Yearly, and retain 1. Longhorn rejects a cron that can never fire
+  # ("invalid schedule ... time difference between two schedules"), so
+  # this is the rarest schedule it will actually accept rather than a
+  # no-op. One snapshot a year on these volumes is noise; the group is
+  # what matters, not the job.
+  cron: "0 0 1 1 *"
   task: "snapshot"
   groups:
   - cnpg
