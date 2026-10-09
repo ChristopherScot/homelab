@@ -38,21 +38,45 @@ spec:
             maxDataPoints: 43200
             conditions:
               - evaluator: { type: gt, params: [85] }
+    # Alerts on the STATE, not a restart rate.
+    #
+    # This used to be `increase(restarts_total[15m]) > 3`, which only
+    # catches the opening burst. CrashLoopBackOff caps its retry at 5
+    # minutes, so a container stuck in steady-state backoff restarts about
+    # 3 times per 15m - sitting exactly ON the threshold. It fires for a
+    # few minutes and then falls silent while the container is still
+    # completely broken, which reads as "resolved".
+    #
+    # pokedex-web proved it: a bad image crashlooped for a week behind a
+    # healthy ReplicaSet that kept serving. The old rule fired for two
+    # evaluations and went quiet - the rate never exceeded 4.0.
+    #
+    # kube_pod_container_status_waiting_reason is 1 for as long as the
+    # container is in CrashLoopBackOff, with no threshold to fall below.
+    # Confirmed against that outage: 1 for all 19 samples between 21:00
+    # and 00:10, where the rate-based rule saw nothing after 22:30.
+    #
+    # Deliberately NOT a Deployment-level rule. Through that whole week
+    # kube_deployment_status_replicas_{updated,available,spec} were all 1,
+    # because the surviving old pod satisfies every one of them. The
+    # failure is only visible at the container.
     - uid: cfmld7mw9c5j4ecr
       title: Pod container crash looping
       condition: B
-      for: 15m
+      # 10m rather than 15m: the state is true immediately, so this only
+      # has to outlast a genuine restart-and-recover.
+      for: 10m
       noDataState: OK
       execErrState: OK
       labels: { component: workloads, severity: warning }
       annotations:
-        summary: '{{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is crash looping ({{ printf "%.0f" $values.A.Value }} restarts in 15m)'
-        description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} restarted more than 3 times in 15 minutes — it is crash looping, not just recovering. Check `kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }} --previous` and the container's last terminated state (OOMKilled, exit code, etc.)."
+        summary: '{{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is in CrashLoopBackOff'
+        description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} has been in CrashLoopBackOff for 10m. This can be true while the service is still UP: a failed rolling update leaves the previous ReplicaSet serving, so nothing else reports a problem. Check `kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }} --previous`, and `kubectl get rs -n {{ $labels.namespace }}` to see whether an old ReplicaSet is covering for it."
       data:
         - refId: A
-          relativeTimeRange: { from: 900, to: 0 }
+          relativeTimeRange: { from: 600, to: 0 }
           datasourceUid: grafanacloud-prom
-          model: { expr: 'max by (namespace, pod, container) (increase(kube_pod_container_status_restarts_total[15m]))', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+          model: { expr: 'max by (namespace, pod, container) (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"})', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
         - refId: B
           relativeTimeRange: { from: 0, to: 0 }
           datasourceUid: __expr__
@@ -63,4 +87,4 @@ spec:
             intervalMs: 1000
             maxDataPoints: 43200
             conditions:
-              - evaluator: { type: gt, params: [3] }
+              - evaluator: { type: gt, params: [0] }
