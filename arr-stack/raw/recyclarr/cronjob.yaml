@@ -53,6 +53,29 @@ data:
               - name: WEB-1080p
                 score: 500
 
+          # Reject audio-description releases outright.
+          #
+          # An AD release replaces the normal mix with one that narrates
+          # the picture. When the release ships only that track - as
+          # Slow Horses S05E01 did, a single eac3 track titled
+          # "Descriptive" - there is nothing to switch to in a player, so
+          # the episode is simply unwatchable.
+          #
+          # Nothing caught it: the file's stream dispositions say
+          # visual_impaired=0 and descriptions=0, so the flags that exist
+          # for exactly this were not set. Only the release TITLE said so,
+          # and no format was scoring that.
+          #
+          # -10000 is TRaSH's own default for this format, and matches how
+          # x265 (HD) is already rejected here - a score low enough that
+          # the profile's minimum can never be met, so it is a hard no
+          # rather than a preference.
+          - trash_ids:
+              - 44ccbcbc74506f208973e1463b11705f  # WiTH AD
+            assign_scores_to:
+              - name: WEB-1080p
+                score: -10000
+
     radarr:
       home-movies:
         base_url: http://radarr.media.svc.cluster.local:7878
@@ -110,6 +133,15 @@ data:
             assign_scores_to:
               - name: WEB-1080p
                 score: -200
+
+          # Same hard reject as the Sonarr side; see the note there. A
+          # film that ships only a descriptive mix is as unwatchable as an
+          # episode that does.
+          - trash_ids:
+              - 127bdbadcf3e4463a8c707759fbaad75  # WiTH AD
+            assign_scores_to:
+              - name: WEB-1080p
+                score: -10000
 ---
 apiVersion: batch/v1
 kind: CronJob
