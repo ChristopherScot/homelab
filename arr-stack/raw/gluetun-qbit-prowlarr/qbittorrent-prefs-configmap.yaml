@@ -27,6 +27,26 @@
 # regression - on 09-24 00:16 it listened only on 10.2.0.2 (tun0), then at
 # 00:39 switched to "0.0.0.0:37541,[::]:37541" and bound eth0 as well.
 #
+# disk_cache is 256MB rather than -1 (automatic).
+#
+# "Automatic" means libtorrent sizes the cache from the HOST's RAM, which
+# it reads from /proc/meminfo - the node's 16GB - with no idea the
+# container is capped at 2Gi. qBittorrent then grows past that cap, the
+# kernel OOM-kills something in the pod's cgroup, and the thing it picks
+# is gluetun: smallest and most restartable, peaking at 116Mi against its
+# own 512Mi limit. gluetun owns the pod's network namespace, so killing it
+# takes qBittorrent's networking with it, the qbittorrent Service loses
+# its endpoints, and decluttarr - which exits when it cannot reach
+# qBittorrent - crashloops too.
+#
+# The shape in the metrics is a sawtooth, not a leak: climb to ~2Gi, get
+# killed, drop to ~300Mi, climb again, every few hours for a week. On
+# 2026-10-10 gluetun's restarts began at 14:00, the same quarter-hour
+# qBittorrent reached 1877Mi.
+#
+# memory_working_set_limit is already 512, and was being ignored - it
+# caps qBittorrent's own bookkeeping, not libtorrent's disk cache.
+#
 # listen_port is deliberately NOT authoritative here. The GSP docker-mod
 # (see deployment.yaml) polls gluetun and rewrites it whenever Proton
 # rotates the forwarded port, so the live value differs from this file.
@@ -52,6 +72,7 @@ data:
       "max_ratio_enabled": false,
       "max_ratio": 2.0,
       "max_ratio_act": 0,
+      "disk_cache": 256,
       "listen_port": 51413,
       "upnp": false,
       "current_network_interface": "tun0",
