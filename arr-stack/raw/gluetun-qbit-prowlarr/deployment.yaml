@@ -156,6 +156,31 @@ spec:
               # can reach in-cluster services (Sonarr/Radarr at 10.43.x.x and
               # the NAS at 192.168.50.220) without going through the VPN.
               value: 10.42.0.0/16,10.43.0.0/16,192.168.50.0/24
+            # Gluetun's DNS blocklists, all off.
+            #
+            # BLOCK_MALICIOUS defaults to ON, and it is what was killing
+            # this container. Gluetun downloads the list at startup and
+            # builds it in memory; the allocation spike lands right at
+            # "[dns] ready" and the container is OOMKilled six seconds
+            # into its life, over and over - 501 restarts by the time this
+            # was looked at.
+            #
+            # The spike never showed up in metrics: a six-second container
+            # is invisible to a sixty-second scrape, so
+            # container_memory_working_set_bytes reported a 2Mi peak
+            # against a 512Mi limit while the kernel was killing it for
+            # exceeding that limit. The lifespan and the exit code were
+            # the only honest signals.
+            #
+            # Nothing here needs the blocklists. Traffic through this
+            # netns is torrent and indexer traffic, not browsing, and
+            # Pi-hole already does this job for the things that do browse.
+            - name: BLOCK_MALICIOUS
+              value: "off"
+            - name: BLOCK_SURVEILLANCE
+              value: "off"
+            - name: BLOCK_ADS
+              value: "off"
           volumeMounts:
             - name: gluetun-config
               mountPath: /gluetun
@@ -177,7 +202,11 @@ spec:
               memory: 64Mi
             limits:
               # 512Mi: gluetun's DoT block lists OOM'd it at 256Mi.
-              memory: 512Mi
+              # 768Mi, up from 512Mi. The blocklists are off now, which
+              # is the actual fix, but gluetun still allocates in bursts
+              # at startup and 512Mi left no room for one. This is a
+              # margin, not a workaround.
+              memory: 768Mi
           livenessProbe:
             exec:
               # If gluetun's healthcheck server isn't responding the tunnel is
