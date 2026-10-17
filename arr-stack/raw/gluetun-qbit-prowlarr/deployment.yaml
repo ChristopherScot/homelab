@@ -214,6 +214,19 @@ spec:
               command: ["/gluetun-entrypoint", "healthcheck"]
             periodSeconds: 30
             failureThreshold: 3
+            # 5s, not the 1s default. The check is a TCP+TLS dial to
+            # cloudflare.com:443 and github.com:443 - resolved by name,
+            # over the VPN - so one second is a tight budget for DNS plus
+            # a handshake on a link that is already slow by design.
+            #
+            # A timeout here kills the container. That is what started the
+            # 2026-10-15 outage: three Unhealthy events with
+            # "lookup github.com: i/o timeout" restarted gluetun, and the
+            # restart hit the blocklist download that was OOMKilling it,
+            # so it never came back. The blocklists are off now and a
+            # restart is cheap again, but there is no reason to keep the
+            # trigger this twitchy.
+            timeoutSeconds: 5
 
         - name: qbittorrent
           image: lscr.io/linuxserver/qbittorrent:5.1.4
