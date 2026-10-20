@@ -81,6 +81,14 @@ spec:
               mountPath: /config
             - name: ingest
               mountPath: /books
+            # Torrent results go out to qBittorrent, which completes them
+            # into /media/downloads/complete and reports that absolute
+            # path back over the API. Shelfmark then reads the file from
+            # that same path to move it into /books, so it needs the media
+            # PVC mounted at the identical mountPath qBittorrent uses —
+            # otherwise the probe is ENOENT and the import never happens.
+            - name: media
+              mountPath: /media
           resources:
             requests:
               cpu: 50m
@@ -94,6 +102,9 @@ spec:
         - name: ingest
           persistentVolumeClaim:
             claimName: acw-ingest-longhorn
+        - name: media
+          persistentVolumeClaim:
+            claimName: media-data
         - name: managed-settings
           secret:
             secretName: shelfmark-settings
