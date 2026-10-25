@@ -75,10 +75,16 @@ You are working in $dir on $repo issue #$num. Non-interactive: nobody can
 answer questions, so make reasonable decisions and record them in the PR body.
 
 1. Read the issue:  gh issue view $num --repo $repo
-2. Decide if it is fixable in code from this repo alone. If it needs a human
-   (credentials, a cluster operation, an external account, a decision only the
-   owner can make), write "SKIPPED: <reason>" and stop. Do not improvise
-   infrastructure changes or destructive cluster operations.
+2. Decide if you can resolve it. Infrastructure and cluster work is in scope:
+   this repo is GitOps, so prefer expressing the change as a manifest Argo
+   will reconcile over an imperative kubectl command.
+   Two things are still out of scope — write "SKIPPED: <reason>" and stop:
+     - anything needing a credential or account only the owner can create
+       (a GitHub App key, an OAuth login, a paid signup)
+     - irreversible data loss: deleting a PV/PVC with reclaim Retain, dropping
+       a database or table, force-pushing a shared branch, deleting a volume
+       or snapshot. Propose it in the PR body instead and let a human run it.
+   Reversible cluster changes are fine to make.
 3. Otherwise branch: fix/issue-$num
 4. Implement the smallest correct fix.
 5. Add a regression test that FAILS without your fix. Verify this by reverting

@@ -66,8 +66,9 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- reviewing $repo#$pr ($(date -Is))"
-    verdict=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
-      --permission-mode acceptEdits --add-dir "$dir" <<PROMPT
+    # Heredoc written to a file first: nesting one inside $( ) trips bash's
+    # parser on ordinary apostrophes in the prompt text.
+    cat > "$STATE_DIR/prompt.txt" <<PROMPT
 You are reviewing $repo pull request #$pr in $dir. You have NOT seen how this
 change was written and you must not go looking for the author's reasoning —
 judge the diff on its own merits.
@@ -84,27 +85,55 @@ judge the diff on its own merits.
 6. Reject over-engineering as firmly as under-engineering: needless
    interfaces, premature abstraction, indirection the ticket did not call
    for. DRY and orthogonal, not clever.
+7. Judge blast radius separately from correctness. A change can be perfectly
+   written and still be too risky to land unattended at 4am. Treat as RISKY:
+   anything touching secrets, auth or RBAC; storage, volumes or data
+   migration; networking or ingress; the deploy pipeline itself; deletions
+   of live resources; or any change whose failure mode you cannot see being
+   caught by this repo's tests. If you are unsure how bad a bad outcome
+   would be, that uncertainty IS the signal — flag it.
 
 Then print exactly one final line, nothing after it:
-  VERDICT: MERGE     - correct, tested, idiomatic, no reviewer objections
-  VERDICT: NO-MERGE  - any reviewer objection, failing//ineffective test, or doubt
-Above that line, give a short rationale.
+  VERDICT: MERGE     - correct, tested, idiomatic, and safe to land unattended
+  VERDICT: NO-MERGE  - any reviewer objection, failing/ineffective test, or doubt
+  VERDICT: RISKY     - the code may be fine, but the blast radius wants a human
+Above that line, give a short rationale. For RISKY, say plainly what could
+break and what you would check before landing it.
 PROMPT
-)
+    verdict=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
+      --permission-mode acceptEdits --add-dir "$dir" < "$STATE_DIR/prompt.txt")
     rc=$?
     [ $rc -eq 124 ] && { echo "TIMEOUT on $repo#$pr"; continue; }
 
     echo "$verdict" | tail -20
-    decision=$(printf '%s' "$verdict" | grep -oE '^VERDICT: (MERGE|NO-MERGE)' | tail -1 | awk '{print $2}')
+    decision=$(printf '%s' "$verdict" | grep -oE '^VERDICT: (MERGE|NO-MERGE|RISKY)' | tail -1 | awk '{print $2}')
 
     case "$decision" in
       MERGE)
         if gh pr merge "$pr" --repo "$repo" --squash --delete-branch >/dev/null 2>&1; then
           echo "MERGED $repo#$pr"
+          # Recorded so the post-merge sweep below can revert it if main
+          # goes red. Merging is only safe because undoing it is cheap.
+          echo "$repo $pr" >> "$STATE_DIR/merged-$(date +%Y%m%d)"
           gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1, independent panel): merged." >/dev/null 2>&1
         else
           echo "MERGE FAILED $repo#$pr"
         fi
+        ;;
+      RISKY)
+        # Deliberately louder than NO-MERGE: the code may be correct, so
+        # this is the case most likely to be waved through on a skim.
+        echo "RISKY $repo#$pr — flagged for human decision"
+        gh pr edit "$pr" --repo "$repo" --add-label "risky" >/dev/null 2>&1 \
+          || gh label create risky --repo "$repo" --color B60205 \
+               --description "Nightly review flagged this as too high blast-radius to auto-merge" >/dev/null 2>&1 \
+          && gh pr edit "$pr" --repo "$repo" --add-label "risky" >/dev/null 2>&1
+        gh pr comment "$pr" --repo "$repo" --body "## Nightly review (pod 1): RISKY — not merged
+
+The change may well be correct; the concern is blast radius, not quality.
+This one wants a human decision before it lands.
+
+$(printf '%s' "$verdict" | tail -30)" >/dev/null 2>&1
         ;;
       NO-MERGE)
         echo "HELD $repo#$pr"
@@ -119,5 +148,48 @@ $(printf '%s' "$verdict" | tail -30)" >/dev/null 2>&1
     esac
   done
 done
+
+# Post-merge sweep: a green PR check is not the same as a green main — the
+# merge itself can break things (squashed semantic conflict, two PRs fine
+# apart and broken together). Wait for main's CI, and revert anything that
+# turned it red. Reverting fast beats agonising over the merge decision.
+MERGED_FILE="$STATE_DIR/merged-$(date +%Y%m%d)"
+if [ -s "$MERGED_FILE" ]; then
+  echo "=== post-merge verification $(date -Is) ==="
+  sort -u "$MERGED_FILE" | while read -r repo pr; do
+    [ -z "$repo" ] && continue
+
+    # Give main's run time to start and finish before judging it.
+    status=""
+    for _ in $(seq 1 40); do
+      status=$(gh run list --repo "$repo" --branch main --limit 1 \
+                 --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null)
+      if [[ "$status" == completed\ * ]]; then
+        break
+      fi
+      sleep 30
+    done
+
+    if [[ "$status" == "completed success" ]]; then
+      echo "   ok      $repo#$pr (main green)"
+    elif [[ "$status" == completed\ * ]]; then
+      outcome="${status#completed }"
+      echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
+      if gh pr revert "$pr" --repo "$repo" --merge >/dev/null 2>&1; then
+        echo "   REVERTED $repo#$pr"
+        gh pr comment "$pr" --repo "$repo" --body \
+          "Nightly: this merge turned main $outcome, so it has been reverted automatically. The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
+      else
+        # A failed revert is worse than a failed merge: main stays broken
+        # and nobody is watching until morning. Say so loudly in the log.
+        echo "   REVERT FAILED $repo#$pr — main left broken, needs a human"
+        gh pr comment "$pr" --repo "$repo" --body \
+          "Nightly: this merge turned main $outcome and the automatic revert FAILED. main needs manual attention." >/dev/null 2>&1
+      fi
+    else
+      echo "   UNKNOWN $repo#$pr (main CI still '$status' after 20m; not reverting)"
+    fi
+  done
+fi
 
 echo "=== nightly-merge complete $(date -Is) ==="

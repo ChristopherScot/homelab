@@ -17,10 +17,14 @@
 # its PVC, its Vault-mounted token, and its ~/.claude skills and agents.
 #
 # NOTE: these run unattended, which is a departure from the premise in
-# rbac.yaml that a human is always in the loop. The authoring pod is told
-# not to touch infrastructure, and merges are gated on CI, but the standing
-# risk is real: review agents have been confidently wrong before. PRs that
-# fail the gate are left open and commented rather than merged.
+# rbac.yaml that a human is always in the loop. Infrastructure work is in
+# scope by design — the pods keep cluster-admin and are asked to express
+# changes as manifests Argo reconciles. What stays out of scope is the
+# irreversible: deleting Retain-policy volumes, dropping databases,
+# force-pushing shared branches. Those get proposed in the PR body.
+# Merges are gated on green CI as well as the review panel, but the
+# standing risk is real: review agents have been confidently wrong before.
+# PRs that fail the gate are left open and commented rather than merged.
 ---
 apiVersion: v1
 kind: ServiceAccount
