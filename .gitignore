@@ -2,3 +2,6 @@
 
 # Agent / tooling state
 .claude/
+
+# One-off GitHub branch-protection helper; run by hand, not part of the deploy.
+scripts/protect-branches.sh
