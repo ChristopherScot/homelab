@@ -100,7 +100,17 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
 
     case "$decision" in
       MERGE)
-        if gh pr merge "$pr" --repo "$repo" --squash --delete-branch >/dev/null 2>&1; then
+        # Merge method is per-repo and squash is disabled across all of
+        # these, so asking for it unconditionally fails every merge
+        # ("Squash merges are not allowed on this repository"). Pick a
+        # method the repo actually permits.
+        method="--merge"
+        case "$(gh api "repos/$repo" --jq '"\(.allow_squash_merge) \(.allow_merge_commit)"' 2>/dev/null)" in
+          "true "*) method="--squash" ;;
+          *" true") method="--merge" ;;
+          *)        method="--rebase" ;;
+        esac
+        if gh pr merge "$pr" --repo "$repo" $method --delete-branch >/dev/null 2>&1; then
           echo "MERGED $repo#$pr"
           # Recorded so the post-merge sweep below can revert it if main
           # goes red. Merging is only safe because undoing it is cheap.
