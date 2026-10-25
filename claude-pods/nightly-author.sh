@@ -96,6 +96,26 @@ for t in "${TICKETS[@]}"; do
 
   rc=$?
   [ $rc -eq 124 ] && echo "TIMEOUT after ${PER_TICKET_TIMEOUT}s on $t"
+
+  # Belt and braces on the issue link. The prompt asks for "Closes #N",
+  # but a prompt is not a guarantee, and an unlinked PR leaves the ticket
+  # open to be picked up again tomorrow night — the same work, twice.
+  # Cheap to verify, cheap to repair.
+  opened=$(gh pr list --repo "$repo" --head "fix/issue-$num" --state open \
+             --json number --jq '.[0].number' 2>/dev/null)
+  if [ -n "$opened" ]; then
+    body=$(gh pr view "$opened" --repo "$repo" --json body --jq .body 2>/dev/null)
+    if ! printf '%s' "$body" | grep -qiE "(close[sd]?|fix(e[sd])?|resolve[sd]?) +#$num\b"; then
+      echo "   PR #$opened did not link the issue; adding it"
+      gh pr edit "$opened" --repo "$repo" \
+        --body "Closes #$num
+
+$body" >/dev/null 2>&1 && echo "   linked #$opened -> issue #$num"
+    else
+      echo "   PR #$opened links issue #$num"
+    fi
+  fi
+
   echo "--- $t done rc=$rc"
 done
 
