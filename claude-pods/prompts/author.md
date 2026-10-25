@@ -30,10 +30,12 @@ answer questions, so make reasonable decisions and record them in the PR body.
    over-abstracted fix is a worse outcome than a plain one. Simplify existing
    code only where it is in the path of this fix.
    Re-run the tests after every round.
-8. Push the branch and open a PR with gh pr create. Start the body with
-   "Closes #$num" on its own line — GitHub only auto-closes the issue when
-   the PR body carries that keyword, and without it the ticket stays open
-   after the merge and gets picked up again tomorrow night. Then: what changed,
+8. Push the branch and open a PR with gh pr create. If the repo has a
+   template at .github/pull_request_template.md, follow its structure.
+   The body MUST start with "Closes #$num" on its own line: GitHub only
+   auto-closes the issue when the body carries that keyword, and without
+   it the ticket stays open after the merge and gets picked up again
+   tomorrow night. Then: what changed,
    why, how the regression test was verified to fail without the fix, and any
    reviewer finding you declined with your reasoning.
 9. Do not merge. Do not touch main.
