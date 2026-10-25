@@ -141,7 +141,9 @@ RUN GOBIN=/usr/local/bin /usr/local/go/bin/go install github.com/go-delve/delve/
 # croc — secure relay-based file transfer between any two networks (no inbound
 # connectivity needed). Used to pull files into a pod from a laptop on a
 # different network: `croc send <file>` there, `croc --yes <code>` here.
-ARG CROC_VERSION=v10.4.4
+# v10.4.4 was deleted upstream, which 404'd the download and broke every
+# image build from 2026-09-18 on. Pins to a tag that exists.
+ARG CROC_VERSION=v11.5.5
 RUN curl -fsSL "https://github.com/schollz/croc/releases/download/${CROC_VERSION}/croc_${CROC_VERSION}_Linux-64bit.tar.gz" \
       | tar -xz -C /tmp croc && mv /tmp/croc /usr/local/bin/croc \
     && chmod +x /usr/local/bin/croc
