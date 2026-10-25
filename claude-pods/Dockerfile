@@ -6,7 +6,7 @@
 # grammar builds + cascaded into LSP/parse errors.
 FROM node:22-trixie-slim
 
-ARG CLAUDE_CODE_VERSION=2.1.152
+ARG CLAUDE_CODE_VERSION=2.1.310
 # kubectl pinned near the cluster's k3s 1.30 (avoid large version skew).
 ARG KUBECTL_VERSION=v1.30.6
 # helm kept on v3 (v4 is a breaking major; chart compat).
@@ -168,6 +168,16 @@ RUN npm install -g \
       agent-browser \
       typescript ts-node tsx
 
+# Let the `node` user (uid 1000) own the global npm tree so Claude Code's
+# auto-update can actually write. Without this it fails every launch with
+# "no write permission to npm prefix" and the pod silently stays pinned to
+# whatever version the image shipped — which is how these pods ended up too
+# old to run newer models.
+RUN chown -R 1000:1000 \
+      /usr/local/lib/node_modules \
+      /usr/local/bin \
+      /usr/local/share
+
 # Neovim: LazyVim distribution — full IDE-grade setup (LSP, autocomplete via
 # mason, treesitter, telescope, lazygit integration, formatters, DAP debugging,
 # neotest) preconfigured + maintained. We enable language + tooling EXTRAS via
@@ -294,9 +304,14 @@ COPY entrypoint.sh /usr/local/bin/entrypoint
 # kbrowser: provision a Kernel cloud browser + wire agent-browser to it over CDP
 # (this image has no local browser). Reads KERNEL_API_KEY from the env.
 COPY kbrowser.sh /usr/local/bin/kbrowser
+
+# Nightly ticket->PR pipeline, driven by the CronJobs in nightly-cronjobs.yaml:
+# pod 0 authors + reviews at 00:00, pod 1 gives an independent verdict at 04:00.
+COPY nightly-author.sh /usr/local/bin/nightly-author
+COPY nightly-merge.sh /usr/local/bin/nightly-merge
 # dbuild: rootless in-pod image build + push (buildkit under rootlesskit).
 COPY dbuild.sh /usr/local/bin/dbuild
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild /usr/local/bin/nightly-author /usr/local/bin/nightly-merge
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the

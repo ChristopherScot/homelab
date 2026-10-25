@@ -1,0 +1,121 @@
+# Nightly ticket→PR pipeline, split across the two session pods.
+#
+#   00:00  pod 0  reads open issues, writes fixes, runs a 4-reviewer panel
+#                 for 3 rounds, opens PRs. Never merges.
+#   04:00  pod 1  takes a COLD look at those PRs — fresh clone, no sight of
+#                 pod 0's reasoning — and merges only on a unanimous panel
+#                 pass with green CI.
+#
+# Why two pods rather than one job doing both: a reviewer that has just
+# argued for a change will defend it. Pod 1's panel has never seen that
+# argument, so its agreement is worth something. The 4h gap gives pod 0
+# room to finish; pod 1 additionally skips any branch touched in the last
+# 30 minutes.
+#
+# These CronJobs hold no logic themselves — they kubectl-exec the scripts
+# baked into the pod image, so the work runs inside the session pod with
+# its PVC, its Vault-mounted token, and its ~/.claude skills and agents.
+#
+# NOTE: these run unattended, which is a departure from the premise in
+# rbac.yaml that a human is always in the loop. The authoring pod is told
+# not to touch infrastructure, and merges are gated on CI, but the standing
+# risk is real: review agents have been confidently wrong before. PRs that
+# fail the gate are left open and commented rather than merged.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: nightly-runner
+  namespace: claude-pods
+---
+# Only what the trigger needs: find the pod, exec one script in it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: nightly-runner
+  namespace: claude-pods
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: nightly-runner
+  namespace: claude-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: nightly-runner
+subjects:
+  - kind: ServiceAccount
+    name: nightly-runner
+    namespace: claude-pods
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-author
+  namespace: claude-pods
+spec:
+  schedule: "0 0 * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Hard ceiling on the whole run: pod 1 looks at 04:00, so pod 0 must
+      # be finished well before then regardless of how the work goes.
+      activeDeadlineSeconds: 12600
+      template:
+        spec:
+          serviceAccountName: nightly-runner
+          restartPolicy: Never
+          containers:
+            - name: trigger
+              image: bitnami/kubectl:1.30
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  exec kubectl exec -n claude-pods claude-session-0 -- \
+                    /usr/local/bin/nightly-author
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-merge
+  namespace: claude-pods
+spec:
+  schedule: "0 4 * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 10800
+      template:
+        spec:
+          serviceAccountName: nightly-runner
+          restartPolicy: Never
+          containers:
+            - name: trigger
+              image: bitnami/kubectl:1.30
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  exec kubectl exec -n claude-pods claude-session-1 -- \
+                    /usr/local/bin/nightly-merge
