@@ -10,7 +10,22 @@
 # to do.
 set -uo pipefail
 
+# Preferred model, with a fallback. Fable is first choice, but it sits
+# behind a monthly spend cap that Opus does not — and a capped model fails
+# every ticket with "You've hit your monthly spend limit" rather than
+# degrading. Probed once per run so the job starts using Fable again by
+# itself when the cap resets, instead of needing an edit.
 MODEL="${NIGHTLY_MODEL:-claude-fable-5-1}"
+MODEL_FALLBACK="${NIGHTLY_MODEL_FALLBACK:-opus}"
+pick_model() {
+  local probe
+  probe=$(cd /workspace && timeout 120 claude -p --model "$MODEL" "Reply with exactly: OK" 2>&1 | tail -2)
+  if printf '%s' "$probe" | grep -qiE "spend limit|rate limit|not support this model|unavailable"; then
+    echo "model $MODEL unavailable ($(printf '%s' "$probe" | head -1)); falling back to $MODEL_FALLBACK" >&2
+    MODEL="$MODEL_FALLBACK"
+  fi
+  echo "using model: $MODEL" >&2
+}
 MAX_TICKETS="${NIGHTLY_MAX_TICKETS:-3}"
 ROUNDS="${NIGHTLY_ROUNDS:-3}"
 PER_TICKET_TIMEOUT="${NIGHTLY_TICKET_TIMEOUT:-3600}"
@@ -43,6 +58,8 @@ echo "=== nightly-author $(date -Is) model=$MODEL max=$MAX_TICKETS rounds=$ROUND
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
 export GH_TOKEN
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
+
+pick_model
 
 # Clear the sentinel up front: pod 1 keys off it, and a stale one from
 # yesterday would let it review a half-finished run as if it were complete.
