@@ -17,6 +17,24 @@ STATE_DIR="${NIGHTLY_STATE_DIR:-/workspace/.nightly}"
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
 LOG="$STATE_DIR/merge-$(date +%Y%m%d).log"
 
+# Prompts live as plain files so they can be edited and reviewed on their
+# own. Expand $VAR references in them without running the text through a
+# shell — the prompts contain backticks and quotes, and `eval` on them
+# would be both fragile and an injection path from issue titles.
+PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
+render_prompt() {
+  local f="$1"
+  if [ ! -r "$f" ]; then
+    echo "FATAL: prompt not readable: $f" >&2
+    exit 1
+  fi
+  python3 -c '
+import os, re, sys
+src = open(sys.argv[1]).read()
+sys.stdout.write(re.sub(r"\$(\w+)", lambda m: os.environ.get(m.group(1), m.group(0)), src))
+' "$f"
+}
+
 mkdir -p "$STATE_DIR"
 exec > >(tee -a "$LOG") 2>&1
 echo "=== nightly-merge $(date -Is) model=$MODEL ==="
@@ -68,38 +86,10 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     echo "--- reviewing $repo#$pr ($(date -Is))"
     # Heredoc written to a file first: nesting one inside $( ) trips bash's
     # parser on ordinary apostrophes in the prompt text.
-    cat > "$STATE_DIR/prompt.txt" <<PROMPT
-You are reviewing $repo pull request #$pr in $dir. You have NOT seen how this
-change was written and you must not go looking for the author's reasoning —
-judge the diff on its own merits.
-
-1. gh pr checkout $pr --repo $repo
-2. Read the full diff against the base branch, and the issue it closes.
-3. Run the project's own test command (make test, else go test ./...).
-4. Convince yourself the regression test actually fails without the fix:
-   revert the non-test changes, run the test, confirm it fails, restore.
-   If it passes without the fix, the test proves nothing — that is a reject.
-5. Invoke each of these subagents on the diff: go-idioms-reviewer,
-   100-go-mistakes-reviewer, pragmatic-programmer-reviewer,
-   philosophy-of-software-design-reviewer. (Non-Go repo: the latter two.)
-6. Reject over-engineering as firmly as under-engineering: needless
-   interfaces, premature abstraction, indirection the ticket did not call
-   for. DRY and orthogonal, not clever.
-7. Judge blast radius separately from correctness. A change can be perfectly
-   written and still be too risky to land unattended at 4am. Treat as RISKY:
-   anything touching secrets, auth or RBAC; storage, volumes or data
-   migration; networking or ingress; the deploy pipeline itself; deletions
-   of live resources; or any change whose failure mode you cannot see being
-   caught by this repo's tests. If you are unsure how bad a bad outcome
-   would be, that uncertainty IS the signal — flag it.
-
-Then print exactly one final line, nothing after it:
-  VERDICT: MERGE     - correct, tested, idiomatic, and safe to land unattended
-  VERDICT: NO-MERGE  - any reviewer objection, failing/ineffective test, or doubt
-  VERDICT: RISKY     - the code may be fine, but the blast radius wants a human
-Above that line, give a short rationale. For RISKY, say plainly what could
-break and what you would check before landing it.
-PROMPT
+    # Prompt lives in prompts/review.md so it can be edited without touching
+    # this script. Exported so render_prompt's subprocess can see them.
+    export dir repo pr
+    render_prompt "$PROMPT_DIR/review.md" > "$STATE_DIR/prompt.txt"
     verdict=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
       --permission-mode acceptEdits --add-dir "$dir" < "$STATE_DIR/prompt.txt")
     rc=$?

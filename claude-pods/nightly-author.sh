@@ -18,6 +18,24 @@ OWNER="${NIGHTLY_OWNER:-ChristopherScot}"
 STATE_DIR="${NIGHTLY_STATE_DIR:-/workspace/.nightly}"
 LOG="$STATE_DIR/author-$(date +%Y%m%d).log"
 
+# Prompts live as plain files so they can be edited and reviewed on their
+# own. Expand $VAR references in them without running the text through a
+# shell — the prompts contain backticks and quotes, and `eval` on them
+# would be both fragile and an injection path from issue titles.
+PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
+render_prompt() {
+  local f="$1"
+  if [ ! -r "$f" ]; then
+    echo "FATAL: prompt not readable: $f" >&2
+    exit 1
+  fi
+  python3 -c '
+import os, re, sys
+src = open(sys.argv[1]).read()
+sys.stdout.write(re.sub(r"\$(\w+)", lambda m: os.environ.get(m.group(1), m.group(0)), src))
+' "$f"
+}
+
 mkdir -p "$STATE_DIR"
 exec > >(tee -a "$LOG") 2>&1
 echo "=== nightly-author $(date -Is) model=$MODEL max=$MAX_TICKETS rounds=$ROUNDS ==="
@@ -68,46 +86,13 @@ for t in "${TICKETS[@]}"; do
   git -C "$dir" checkout --quiet "$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)" 2>/dev/null
   git -C "$dir" reset --hard --quiet origin/HEAD 2>/dev/null
 
+  # Prompt lives in prompts/author.md so it can be edited without touching
+  # this script. Exported so render_prompt's subprocess can see them.
+  export dir repo num ROUNDS
+  render_prompt "$PROMPT_DIR/author.md" > "$STATE_DIR/prompt.txt"
   timeout "$PER_TICKET_TIMEOUT" claude -p --model "$MODEL" \
     --permission-mode acceptEdits \
-    --add-dir "$dir" <<PROMPT
-You are working in $dir on $repo issue #$num. Non-interactive: nobody can
-answer questions, so make reasonable decisions and record them in the PR body.
-
-1. Read the issue:  gh issue view $num --repo $repo
-2. Decide if you can resolve it. Infrastructure and cluster work is in scope:
-   this repo is GitOps, so prefer expressing the change as a manifest Argo
-   will reconcile over an imperative kubectl command.
-   Two things are still out of scope — write "SKIPPED: <reason>" and stop:
-     - anything needing a credential or account only the owner can create
-       (a GitHub App key, an OAuth login, a paid signup)
-     - irreversible data loss: deleting a PV/PVC with reclaim Retain, dropping
-       a database or table, force-pushing a shared branch, deleting a volume
-       or snapshot. Propose it in the PR body instead and let a human run it.
-   Reversible cluster changes are fine to make.
-3. Otherwise branch: fix/issue-$num
-4. Implement the smallest correct fix.
-5. Add a regression test that FAILS without your fix. Verify this by reverting
-   the fix, running the test to see it fail, then restoring the fix. A test
-   that passes either way certifies nothing.
-6. Run the project's own test command (make test if there is a Makefile,
-   otherwise go test ./...). It must pass.
-7. Then run $ROUNDS rounds of review. Each round, invoke these subagents on
-   your diff: go-idioms-reviewer, 100-go-mistakes-reviewer,
-   pragmatic-programmer-reviewer, philosophy-of-software-design-reviewer.
-   (For a non-Go repo, use only the latter two.)
-   Apply findings you agree with. Where you disagree, say why in the PR body
-   rather than silently complying.
-   Aim for DRY, orthogonal code with honest abstraction boundaries. Do NOT
-   add layers, interfaces or indirection the ticket does not need — an
-   over-abstracted fix is a worse outcome than a plain one. Simplify existing
-   code only where it is in the path of this fix.
-   Re-run the tests after every round.
-8. Push the branch and open a PR with gh pr create. In the body: what changed,
-   why, how the regression test was verified to fail without the fix, and any
-   reviewer finding you declined with your reasoning.
-9. Do not merge. Do not touch main.
-PROMPT
+    --add-dir "$dir" < "$STATE_DIR/prompt.txt"
 
   rc=$?
   [ $rc -eq 124 ] && echo "TIMEOUT after ${PER_TICKET_TIMEOUT}s on $t"
