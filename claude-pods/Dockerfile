@@ -308,15 +308,17 @@ COPY entrypoint.sh /usr/local/bin/entrypoint
 COPY kbrowser.sh /usr/local/bin/kbrowser
 
 # Nightly ticket->PR pipeline, driven by the CronJobs in nightly-cronjobs.yaml:
-# pod 0 authors + reviews at 00:00, pod 1 gives an independent verdict at 04:00.
+# pod 0 authors at 00:00, pod 2 hunts for bugs at 02:00, pod 1 gives an
+# independent merge verdict at 04:00.
 # The prompts ship as their own files (prompts/) rather than heredocs inside
 # the scripts, so they can be edited and diffed without touching shell code.
 COPY nightly-author.sh /usr/local/bin/nightly-author
 COPY nightly-merge.sh /usr/local/bin/nightly-merge
+COPY nightly-test.sh /usr/local/bin/nightly-test
 COPY prompts/ /usr/local/share/claude-pods/prompts/
 # dbuild: rootless in-pod image build + push (buildkit under rootlesskit).
 COPY dbuild.sh /usr/local/bin/dbuild
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild /usr/local/bin/nightly-author /usr/local/bin/nightly-merge
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild /usr/local/bin/nightly-author /usr/local/bin/nightly-merge /usr/local/bin/nightly-test
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the
