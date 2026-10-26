@@ -2,12 +2,18 @@
 #
 #   00:00  pod 0  reads open issues, writes fixes, runs a 4-reviewer panel
 #                 for 3 rounds, opens PRs. Never merges.
-#   02:00  pod 2  tries to BREAK those PRs — boundaries, races, partial
-#                 state, bad input — and files an issue per reproduced bug.
-#                 Fixes nothing. Its findings land before pod 1 decides.
+#   02:00  pod 2  RUNS the software the PR changes — CLIs, services, UIs
+#                 via agent-browser, manifests via kubectl/helm/tofu — and
+#                 checks it does what the PR, the comments and the issue
+#                 claim. Files an issue per reproduced bug and publishes a
+#                 TESTED: PASS/FAIL/BLOCKED verdict as a PR label. Fixes
+#                 nothing. These tests are manual and non-deterministic, so
+#                 they cannot live in CI — this is the only place that
+#                 signal exists.
 #   04:00  pod 1  takes a COLD look at those PRs — fresh clone, no sight of
 #                 pod 0's reasoning — and merges only on a unanimous panel
-#                 pass with green CI.
+#                 pass, green CI, AND pod 2's tested-pass label. No verdict
+#                 means untested, which is not approved.
 #
 # Why separate pods rather than one job doing all three: a reviewer that
 # has just argued for a change will defend it. Pod 1's panel has never
