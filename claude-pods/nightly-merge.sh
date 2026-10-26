@@ -83,6 +83,32 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
       continue
     fi
 
+    # Pod 2's integration testing gates the merge. Its tests are manual and
+    # non-deterministic — they exercise the running software, so they cannot
+    # live in CI — which means this is the only place that signal is
+    # enforced. No verdict means not tested, never "nothing found": a pod 2
+    # that timed out or crashed must not read as approval.
+    labels=$(gh pr view "$pr" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)
+    case ",$labels," in
+      *,tested-pass,*)    tested=PASS ;;
+      *,tested-fail,*)    tested=FAIL ;;
+      *,tested-blocked,*) tested=BLOCKED ;;
+      *)                  tested="" ;;
+    esac
+    case "${tested:-NONE}" in
+      PASS) : ;;
+      FAIL)
+        echo "NO-MERGE $repo#$pr: pod 2 integration testing FAILED"
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2's integration testing reported FAIL. See its comment above." >/dev/null 2>&1
+        continue
+        ;;
+      *)
+        echo "NO-MERGE $repo#$pr: no pod 2 verdict (${tested:-none}) — untested, not approved"
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — no integration-test verdict from pod 2 (reported: \`${tested:-none}\`). An untested change is not an approved one; leaving this for a human." >/dev/null 2>&1
+        continue
+        ;;
+    esac
+
     # CI must be green on its own merits before any agent opinion counts.
     checks=$(gh pr checks "$pr" --repo "$repo" 2>&1)
     if echo "$checks" | grep -qiE '\b(fail|failure|error)\b'; then

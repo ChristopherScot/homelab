@@ -87,11 +87,33 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     export dir repo pr
     render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
 
-    timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
-      --permission-mode acceptEdits --add-dir "$dir" < "$STATE_DIR/test-prompt.txt"
+    out=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
+      --permission-mode acceptEdits --add-dir "$dir" < "$STATE_DIR/test-prompt.txt")
     rc=$?
-    [ $rc -eq 124 ] && echo "TIMEOUT on $repo#$pr"
-    echo "--- $repo#$pr done rc=$rc"
+    printf '%s\n' "$out" | tail -25
+
+    # The verdict gates the merge, so record it where pod 1 will look. A
+    # timeout or crash is NOT a pass: absence of a verdict must read as
+    # "not tested", never as "nothing found".
+    verdict=$(printf '%s' "$out" | grep -oE '^TESTED: (PASS|FAIL|BLOCKED)' | tail -1 | awk '{print $2}')
+    if [ $rc -eq 124 ]; then
+      echo "TIMEOUT on $repo#$pr"
+      verdict="BLOCKED"
+    fi
+    # Publish the verdict ON THE PR, not to local state: pod 1 runs in a
+    # different pod with its own PVC and cannot read this filesystem.
+    # A label is also visible to a human scanning the PR list.
+    verdict="${verdict:-BLOCKED}"
+    for l in tested-pass tested-fail tested-blocked; do
+      gh pr edit "$pr" --repo "$repo" --remove-label "$l" >/dev/null 2>&1
+    done
+    want="tested-$(printf '%s' "$verdict" | tr '[:upper:]' '[:lower:]')"
+    gh label create "$want" --repo "$repo" --color ededed \
+      --description "Nightly integration-test verdict from pod 2" >/dev/null 2>&1
+    gh pr edit "$pr" --repo "$repo" --add-label "$want" >/dev/null 2>&1 \
+      && echo "   labelled $repo#$pr $want"
+    echo "${repo} ${pr} ${verdict}" >> "$STATE_DIR/tested-$(date +%Y%m%d)"
+    echo "--- $repo#$pr done rc=$rc verdict=${verdict:-BLOCKED}"
 
     # Leave no scratch tests behind: the next stage checks out this same
     # clone, and a stray failing file would be blamed on the PR.
