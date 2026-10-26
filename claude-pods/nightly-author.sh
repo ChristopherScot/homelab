@@ -120,6 +120,14 @@ for t in "${TICKETS[@]}"; do
   # Cheap to verify, cheap to repair.
   opened=$(gh pr list --repo "$repo" --head "fix/issue-$num" --state open \
              --json number --jq '.[0].number' 2>/dev/null)
+  # A ticket can legitimately end with no PR: the pod may have closed it as
+  # obsolete, or skipped it as needing a human. Record which, so a night
+  # with no PRs is readable rather than looking like a silent failure.
+  if [ -z "$opened" ]; then
+    state=$(gh issue view "$num" --repo "$repo" --json state --jq .state 2>/dev/null)
+    echo "   no PR for #$num (issue is now ${state:-unknown})"
+  fi
+
   if [ -n "$opened" ]; then
     body=$(gh pr view "$opened" --repo "$repo" --json body --jq .body 2>/dev/null)
     if ! printf '%s' "$body" | grep -qiE "(close[sd]?|fix(e[sd])?|resolve[sd]?) +#$num\b"; then
