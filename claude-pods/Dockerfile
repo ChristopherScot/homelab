@@ -168,12 +168,21 @@ RUN npm install -g \
 # node_modules. Identical content, separate inodes. Hardlink them — same
 # bytes on disk once instead of twice, no behaviour change. Note the .exe
 # name is cosmetic; both are ELF, and this one is the binary that runs.
+#
+# The chown MUST share this layer. A hardlink does not survive a later
+# RUN: the overlay copies both paths up into the new layer as independent
+# files, silently undoing the dedupe. Linking and chowning together was
+# the difference between 3.3G and 3.0G.
+#
+# The chown itself lets Claude Code's auto-update write as uid 1000.
+# Without it every launch fails with "no write permission to npm prefix"
+# and the pod stays pinned to whatever the image shipped — which is how
+# these pods ended up too old to run newer models.
 RUN set -eu; \
     a=/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe; \
     b=/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude; \
-    if [ -f "$a" ] && [ -f "$b" ] && cmp -s "$a" "$b"; then ln -f "$a" "$b"; fi
-
-RUN chown -R 1000:1000 \
+    if [ -f "$a" ] && [ -f "$b" ] && cmp -s "$a" "$b"; then ln -f "$a" "$b"; fi; \
+    chown -R 1000:1000 \
       /usr/local/lib/node_modules \
       /usr/local/bin \
       /usr/local/share
