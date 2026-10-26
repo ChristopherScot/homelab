@@ -11,7 +11,7 @@ metadata:
   namespace: claude-pods
 spec:
   serviceName: claude-session
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app: claude-session
