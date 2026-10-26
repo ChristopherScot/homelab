@@ -148,18 +148,6 @@ RUN curl -fsSL "https://github.com/schollz/croc/releases/download/${CROC_VERSION
       | tar -xz -C /tmp croc && mv /tmp/croc /usr/local/bin/croc \
     && chmod +x /usr/local/bin/croc
 
-# VS Code CLI for `code tunnel` — remote VS Code over Microsoft's tunnel infra
-# (no inbound network needed, same survivability story as the RC loop). Connect
-# from desktop VS Code (Remote Tunnels extension) or vscode.dev/tunnel/<name>.
-# First boot needs a one-time GitHub device-code login: `tmux attach -t vscode`,
-# follow the URL, detach. Login state + downloaded VS Code Server live under
-# $HOME (persistent PVC), so the tunnel auto-resumes across restarts.
-RUN curl -fsSL "https://update.code.visualstudio.com/latest/cli-linux-x64/stable" \
-      -o /tmp/vscode-cli.tar.gz \
-    && tar -xz -C /usr/local/bin -f /tmp/vscode-cli.tar.gz \
-    && rm /tmp/vscode-cli.tar.gz \
-    && chmod +x /usr/local/bin/code
-
 # Claude Code CLI + TypeScript toolchain (node base already present).
 # agent-browser = browser-automation CLI for agents. NO `agent-browser install`
 # here: it would download a local Chrome, but this image ships no browser/display
@@ -175,6 +163,16 @@ RUN npm install -g \
 # "no write permission to npm prefix" and the pod silently stays pinned to
 # whatever version the image shipped — which is how these pods ended up too
 # old to run newer models.
+# claude-code ships its ~280MB binary twice: bin/claude.exe (what
+# /usr/local/bin/claude symlinks to) and the platform package under
+# node_modules. Identical content, separate inodes. Hardlink them — same
+# bytes on disk once instead of twice, no behaviour change. Note the .exe
+# name is cosmetic; both are ELF, and this one is the binary that runs.
+RUN set -eu; \
+    a=/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe; \
+    b=/usr/local/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai/claude-code-linux-x64/claude; \
+    if [ -f "$a" ] && [ -f "$b" ] && cmp -s "$a" "$b"; then ln -f "$a" "$b"; fi
+
 RUN chown -R 1000:1000 \
       /usr/local/lib/node_modules \
       /usr/local/bin \
