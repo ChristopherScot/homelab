@@ -61,6 +61,30 @@ done
 # record the primary repo dir so `rclaude` opens there by default
 [ -n "$primary" ] && echo "$primary" > /workspace/.primary-repo
 
+# Pre-trust every cloned repo. The image bakes trust for /workspace, but the
+# RC session opens in the PRIMARY REPO, and Claude Code asks per directory —
+# so the always-on `claude --remote-control` loop sat at "Is this a project
+# you trust?" forever and the pod never appeared in the session list at all.
+# Nothing attaches to that tmux session, so nobody ever saw the prompt.
+# These are repos this pod just cloned from the owner's own account.
+node -e '
+const fs = require("fs"), os = require("os"), path = require("path");
+const f = path.join(os.homedir(), ".claude.json");
+let d = {};
+try { d = JSON.parse(fs.readFileSync(f, "utf8")); } catch (e) {}
+d.projects = d.projects || {};
+// Strip the trailing slash the shell glob adds: Claude Code keys these by
+// exact path ("/workspace/homelab"), so "/workspace/homelab/" writes an
+// entry it never reads and the trust prompt comes back anyway.
+const dirs = ["/workspace", ...process.argv.slice(1).map(s => s.replace(/\/+$/, ""))];
+for (const dir of dirs) {
+  const p = (d.projects[dir] = d.projects[dir] || {});
+  p.hasTrustDialogAccepted = true;
+  p.hasCompletedProjectOnboarding = true;
+}
+fs.writeFileSync(f, JSON.stringify(d, null, 2));
+' /workspace/*/ 2>/dev/null || true
+
 # Install tmux plugins (resurrect/continuum) via tpm if missing.
 # tpm install needs a running tmux server with the conf sourced.
 if [ -d "$HOME/.tmux/plugins/tpm" ] && [ ! -d "$HOME/.tmux/plugins/tmux-resurrect" ]; then
