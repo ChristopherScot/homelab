@@ -19,7 +19,22 @@ QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
 LOG="$STATE_DIR/test-$(date +%Y%m%d).log"
 
 mkdir -p "$STATE_DIR"
-exec > >(tee -a "$LOG") 2>&1
+# Tee to the PVC log AND to pid 1's stdout, so the run shows up in Loki.
+#
+# These scripts run under `kubectl exec`, which is a separate process from
+# the container's pid 1 (`sleep infinity`, which stops writing after the
+# entrypoint finishes). Their output goes to the exec stream and never
+# reaches container stdout, so Alloy had nothing to collect and a whole
+# 2am run left no trace in Grafana — queryable only as a file inside a
+# PVC. Writing to /proc/1/fd/1 puts it where the log collector looks.
+#
+# Falls back to the file alone if that fd is not writable, rather than
+# losing the log entirely.
+if [ -w /proc/1/fd/1 ]; then
+  exec > >(tee -a "$LOG" > /proc/1/fd/1) 2>&1
+else
+  exec > >(tee -a "$LOG") 2>&1
+fi
 echo "=== nightly-test $(date -Is) ==="
 
 # Preferred model with a fallback: a capped model fails every PR rather

@@ -60,7 +60,22 @@ process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
 }
 
 mkdir -p "$STATE_DIR"
-exec > >(tee -a "$LOG") 2>&1
+# Tee to the PVC log AND to pid 1's stdout, so the run shows up in Loki.
+#
+# These scripts run under `kubectl exec`, which is a separate process from
+# the container's pid 1 (`sleep infinity`, which stops writing after the
+# entrypoint finishes). Their output goes to the exec stream and never
+# reaches container stdout, so Alloy had nothing to collect and a whole
+# 2am run left no trace in Grafana — queryable only as a file inside a
+# PVC. Writing to /proc/1/fd/1 puts it where the log collector looks.
+#
+# Falls back to the file alone if that fd is not writable, rather than
+# losing the log entirely.
+if [ -w /proc/1/fd/1 ]; then
+  exec > >(tee -a "$LOG" > /proc/1/fd/1) 2>&1
+else
+  exec > >(tee -a "$LOG") 2>&1
+fi
 echo "=== nightly-merge $(date -Is) model=$MODEL ==="
 
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
