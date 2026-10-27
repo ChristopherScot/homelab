@@ -133,7 +133,17 @@ tmux start-server 2>/dev/null
 # claude.ai/code list from the per-work-session RC envs ("<repo>" or "<name>"),
 # and the boot timestamp makes the freshest one obvious after a roll (each roll
 # spins up a new persistent RC; the latest timestamp is the live one).
-RC_NAME="$(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)")-persistent $(date '+%m-%d %H:%M')"
+# Name by ORDINAL and ROLE, not just the primary repo. Pods 0 and 2 both
+# clone homelab first, so both came up as "homelab-persistent <time>" and
+# were indistinguishable in the claude.ai/code session list — exactly when
+# you need to tell the author pod from the tester.
+case "$ORD" in
+  0) RC_ROLE="author" ;;
+  1) RC_ROLE="review" ;;
+  2) RC_ROLE="test"   ;;
+  *) RC_ROLE="agent" ;;
+esac
+RC_NAME="pod$ORD-$RC_ROLE $(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)") $(date '+%m-%d %H:%M')"
 RC_DIR="$(cat /workspace/.primary-repo 2>/dev/null || echo /workspace)"
 [ -d "$RC_DIR" ] || RC_DIR=/workspace
 tmux new-session -d -s rc -c "$RC_DIR" \
