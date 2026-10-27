@@ -323,10 +323,10 @@ COPY nightly-author.sh /usr/local/bin/nightly-author
 COPY nightly-merge.sh /usr/local/bin/nightly-merge
 COPY nightly-test.sh /usr/local/bin/nightly-test
 COPY prompts/ /usr/local/share/claude-pods/prompts/
-# Scoped Bash allow-list for the unattended runs: acceptEdits alone
-# permits edits but not commands, so gh/go/kubectl would each stop for
-# an approval no one is there to give.
-COPY nightly-settings.json /usr/local/share/claude-pods/nightly-settings.json
+# The scoped Bash allow-list ships inside prompts/ (copied above). It
+# lives there rather than beside the manifests because Argo parses every
+# .json under claude-pods/ as a Kubernetes manifest — a settings file
+# there has no 'kind' and breaks the whole Application's sync.
 # dbuild: rootless in-pod image build + push (buildkit under rootlesskit).
 COPY dbuild.sh /usr/local/bin/dbuild
 RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild /usr/local/bin/nightly-author /usr/local/bin/nightly-merge /usr/local/bin/nightly-test
