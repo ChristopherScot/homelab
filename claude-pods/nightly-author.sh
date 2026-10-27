@@ -41,7 +41,7 @@ PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
 # acceptEdits allows file edits but NOT shell commands, so without an
 # explicit allow-list every gh / go test / kubectl call stops for an
 # approval nobody is there to give. Scoped list, not bypassPermissions.
-NIGHTLY_SETTINGS="${NIGHTLY_SETTINGS:-/usr/local/share/claude-pods/nightly-settings.json}"
+NIGHTLY_SETTINGS="${NIGHTLY_SETTINGS:-/usr/local/share/claude-pods/prompts/nightly-settings.json}"
 render_prompt() {
   local f="$1"
   if [ ! -r "$f" ]; then
