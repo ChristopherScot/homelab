@@ -105,9 +105,20 @@ spec:
             - name: repos
               mountPath: /run/secrets/repos
               readOnly: true
+          # Requests are a SCHEDULING RESERVATION, not a quota: 500m CPU
+          # was held against ~5m actual use, so three pods parked 1.5
+          # cores the scheduler could not give anything else. There is
+          # deliberately no CPU limit, so a nightly run still bursts to
+          # whatever the node has spare — the request only sets the floor
+          # under contention.
+          #
+          # Memory is the opposite: 2Gi is a hard ceiling and exceeding it
+          # is an OOM kill, so it stays. Observed steady state is ~300Mi,
+          # and nothing has been OOM-killed, but a build plus a browser
+          # plus a Go test run is the spike worth keeping headroom for.
           resources:
             requests:
-              cpu: 500m
+              cpu: 100m
               memory: 512Mi
             limits:
               memory: 2Gi
