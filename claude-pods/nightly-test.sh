@@ -47,10 +47,15 @@ render_prompt() {
     echo "FATAL: prompt not readable: $f" >&2
     exit 1
   fi
-  python3 -c '
-import os, re, sys
-src = open(sys.argv[1]).read()
-sys.stdout.write(re.sub(r"\$(\w+)", lambda m: os.environ.get(m.group(1), m.group(0)), src))
+  # node, not python3: python3 is not installed in this image. It appeared
+  # to work when probed through an interactive shell, but `kubectl exec`
+  # gets a plain PATH and every ticket died on "python3: command not
+  # found" before a prompt was ever rendered.
+  node -e '
+const fs = require("fs");
+const src = fs.readFileSync(process.argv[1], "utf8");
+process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
+  Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : m));
 ' "$f"
 }
 
