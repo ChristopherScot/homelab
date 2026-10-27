@@ -23,6 +23,12 @@ extraVolumes:
   - name: cwa-ingest
     mountPath: /cwa-book-ingest
     claimName: acw-ingest-longhorn
+  # Audiobook library. The on-import hook routes .m4b/.m4a/etc here
+  # instead of /cwa-book-ingest, so audiobooks reach Audiobookshelf and
+  # never enter the Calibre library.
+  - name: audiobooks
+    mountPath: /audiobooks
+    claimName: audiobooks-longhorn-rwo
   # On-import CustomScript, mounted read-exec from a ConfigMap.
   - name: on-import
     mountPath: /scripts

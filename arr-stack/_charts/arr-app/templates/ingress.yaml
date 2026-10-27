@@ -35,6 +35,9 @@ metadata:
       proxy_set_header X-Forwarded-For $remote_addr;
     nginx.ingress.kubernetes.io/auth-response-headers: "Remote-User,Remote-Name,Remote-Email,Remote-Groups"
     {{- end }}
+    {{- with .Values.ingress.annotations }}
+{{ toYaml . | indent 4 }}
+    {{- end }}
 spec:
   ingressClassName: external
   tls:

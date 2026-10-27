@@ -208,3 +208,26 @@ spec:
     requests:
       storage: 1Gi
 # prowlarr-public-config-longhorn moved into the arr-app Helm chart.
+---
+# Audiobook library — separate from books-longhorn-rwo on purpose.
+# autocaliweb's ingest processor hardcodes
+# supported_audiobook_formats = {'m4b','m4a','mp4'} and imports anything
+# matching into the Calibre library, so an audiobook that reaches the
+# shared acw-ingest queue ends up as a Calibre entry. Both producers
+# write here directly instead — shelfmark via DESTINATION_AUDIOBOOK and
+# readarr via its on-import hook — so audiobooks never enter that queue.
+# Calibre stays a pure ebook library, and Audiobookshelf gets a volume it
+# can delete from.
+# RWO for the same reason as books-longhorn-rwo: the RWX share-manager
+# added 30-50 ms per pread. Consumers colocate via podAffinity.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: audiobooks-longhorn-rwo
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 50Gi
