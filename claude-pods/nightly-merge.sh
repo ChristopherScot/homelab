@@ -37,6 +37,10 @@ LOG="$STATE_DIR/merge-$(date +%Y%m%d).log"
 # shell — the prompts contain backticks and quotes, and `eval` on them
 # would be both fragile and an injection path from issue titles.
 PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
+# acceptEdits allows file edits but NOT shell commands, so without an
+# explicit allow-list every gh / go test / kubectl call stops for an
+# approval nobody is there to give. Scoped list, not bypassPermissions.
+NIGHTLY_SETTINGS="${NIGHTLY_SETTINGS:-/usr/local/share/claude-pods/nightly-settings.json}"
 render_prompt() {
   local f="$1"
   if [ ! -r "$f" ]; then
@@ -134,7 +138,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     export dir repo pr
     render_prompt "$PROMPT_DIR/review.md" > "$STATE_DIR/prompt.txt"
     verdict=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
-      --permission-mode acceptEdits --add-dir "$dir" < "$STATE_DIR/prompt.txt")
+      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/prompt.txt")
     rc=$?
     [ $rc -eq 124 ] && { echo "TIMEOUT on $repo#$pr"; continue; }
 
