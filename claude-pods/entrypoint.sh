@@ -24,6 +24,24 @@ git config --global credential.helper store
 cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
 chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
 
+# Authenticate the gh CLI into its own store (~/.config/gh/hosts.yml).
+#
+# Exporting GH_TOKEN from a $ZSH_CUSTOM drop-in only works in an
+# INTERACTIVE shell. The nightly CronJobs invoke scripts via `sh -c`, and
+# Claude itself shells out non-interactively, so neither saw the token and
+# every `gh` call came back "not logged into any GitHub hosts" — while a
+# human attaching to the pod saw it working fine.
+#
+# hosts.yml is read by every gh invocation regardless of shell, so this
+# covers the pods' own scripts, Claude's subprocesses, and interactive use
+# from one place.
+if [ -r /run/secrets/git/token ]; then
+  GH_TOKEN="$(cat /run/secrets/git/token)" gh auth login --with-token \
+    < /run/secrets/git/token >/dev/null 2>&1 \
+    && gh auth setup-git >/dev/null 2>&1 \
+    && echo "gh: authenticated as $(gh api user --jq .login 2>/dev/null)"
+fi
+
 # GCP auth: if the deploy key is mounted, activate it so gcloud is ready for
 # ephemeral deploys on boot. Raw JSON (no base64).
 if [ -f /run/secrets/gcp/key.json ]; then

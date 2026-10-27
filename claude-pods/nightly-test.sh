@@ -37,6 +37,10 @@ pick_model() {
 }
 
 PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
+# acceptEdits allows file edits but NOT shell commands, so without an
+# explicit allow-list every gh / go test / kubectl call stops for an
+# approval nobody is there to give. Scoped list, not bypassPermissions.
+NIGHTLY_SETTINGS="${NIGHTLY_SETTINGS:-/usr/local/share/claude-pods/nightly-settings.json}"
 render_prompt() {
   local f="$1"
   if [ ! -r "$f" ]; then
@@ -88,7 +92,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
 
     out=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
-      --permission-mode acceptEdits --add-dir "$dir" < "$STATE_DIR/test-prompt.txt")
+      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/test-prompt.txt")
     rc=$?
     printf '%s\n' "$out" | tail -25
 
