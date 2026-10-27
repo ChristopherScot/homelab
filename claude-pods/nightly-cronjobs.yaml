@@ -95,14 +95,22 @@ spec:
           restartPolicy: Never
           containers:
             - name: trigger
-              image: bitnami/kubectl:1.30
-              command:
-                - sh
-                - -c
-                - |
-                  set -eu
-                  exec kubectl exec -n claude-pods claude-session-0 -- \
-                    /usr/local/bin/nightly-author
+              # registry.k8s.io is upstream and keeps its version tags.
+              # bitnami/kubectl:1.30 was deleted from Docker Hub, so every
+              # job sat in ImagePullBackOff until its deadline killed it —
+              # three silent failures a night, reported as DeadlineExceeded
+              # rather than as a missing image.
+              #
+              # No `sh -c` wrapper: this image's entrypoint IS kubectl and
+              # it ships no shell, so a shell form exits 128 before running.
+              image: registry.k8s.io/kubectl:v1.30.14
+              args:
+                - exec
+                - -n
+                - claude-pods
+                - claude-session-0
+                - --
+                - /usr/local/bin/nightly-author
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -128,14 +136,22 @@ spec:
           restartPolicy: Never
           containers:
             - name: trigger
-              image: bitnami/kubectl:1.30
-              command:
-                - sh
-                - -c
-                - |
-                  set -eu
-                  exec kubectl exec -n claude-pods claude-session-2 -- \
-                    /usr/local/bin/nightly-test
+              # registry.k8s.io is upstream and keeps its version tags.
+              # bitnami/kubectl:1.30 was deleted from Docker Hub, so every
+              # job sat in ImagePullBackOff until its deadline killed it —
+              # three silent failures a night, reported as DeadlineExceeded
+              # rather than as a missing image.
+              #
+              # No `sh -c` wrapper: this image's entrypoint IS kubectl and
+              # it ships no shell, so a shell form exits 128 before running.
+              image: registry.k8s.io/kubectl:v1.30.14
+              args:
+                - exec
+                - -n
+                - claude-pods
+                - claude-session-2
+                - --
+                - /usr/local/bin/nightly-test
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -159,11 +175,19 @@ spec:
           restartPolicy: Never
           containers:
             - name: trigger
-              image: bitnami/kubectl:1.30
-              command:
-                - sh
-                - -c
-                - |
-                  set -eu
-                  exec kubectl exec -n claude-pods claude-session-1 -- \
-                    /usr/local/bin/nightly-merge
+              # registry.k8s.io is upstream and keeps its version tags.
+              # bitnami/kubectl:1.30 was deleted from Docker Hub, so every
+              # job sat in ImagePullBackOff until its deadline killed it —
+              # three silent failures a night, reported as DeadlineExceeded
+              # rather than as a missing image.
+              #
+              # No `sh -c` wrapper: this image's entrypoint IS kubectl and
+              # it ships no shell, so a shell form exits 128 before running.
+              image: registry.k8s.io/kubectl:v1.30.14
+              args:
+                - exec
+                - -n
+                - claude-pods
+                - claude-session-1
+                - --
+                - /usr/local/bin/nightly-merge
