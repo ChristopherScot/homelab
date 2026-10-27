@@ -11,8 +11,13 @@ data:
     server:
       address: tcp://0.0.0.0:9091
       buffers:
-        read: 4096
-        write: 4096
+        # 4096 (the default) is too small for the forward-auth subrequest on
+        # an Audiobookshelf OIDC callback: ABS redirects back with setToken +
+        # accessToken JWTs in the query string, nginx passes the whole URL as
+        # X-Forwarded-Uri, and Authelia answers 431 -> nginx 500
+        # ("auth request unexpected status: 431").
+        read: 16384
+        write: 16384
 
     log:
       level: info

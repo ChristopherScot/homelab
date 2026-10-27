@@ -57,6 +57,11 @@ ingress:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    # The OIDC callback returns with two JWTs in the query string, which nginx
+    # forwards to Authelia as X-Forwarded-Uri. The default 4k/8k header buffers
+    # overflow and the auth subrequest fails with 431.
+    nginx.ingress.kubernetes.io/client-header-buffer-size: "16k"
+    nginx.ingress.kubernetes.io/large-client-header-buffers: "4 16k"
   homepage:
     enabled: true
     # No widgetType → chart emits gethomepage.dev/href instead of widget
