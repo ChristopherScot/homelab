@@ -1,7 +1,7 @@
 # Two ingresses on shelfmark.home, split by path:
 #   - main (/)          Authelia-gated browser access.
-#   - socket (/socket.io) auth-EXEMPT, because the browser cannot reach it
-#                       any other way. See the second document.
+#   - socket (/socket.io, /api) auth-EXEMPT, because the browser cannot
+#                       reach them any other way. See the second document.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -49,12 +49,19 @@ spec:
 # Socket.IO, exempt from Authelia.
 #
 # Shelfmark runs search over Socket.IO, whose handshake is an ordinary
-# HTTP request before it upgrades. Gated, that request gets a 302 to
+# HTTP request before it upgrades. Its REST calls under /api are plain
+# XHR from the same page. Gated, either request gets a 302 to
 # auth.home.chrisscotmartin.com - a DIFFERENT ORIGIN - and a browser
 # fetch cannot follow a cross-origin redirect. It fails with "Failed to
 # fetch" and search does nothing, while the page itself loads fine,
 # because a top-level navigation CAN follow that redirect and an XHR
 # cannot. Same reason paperless-api is exempt, and the same symptom.
+#
+# /api was added after this broke on a phone: the session cookie lapses
+# while the tab sits open, the next XHR is answered with that 302, and
+# the UI dies on a cross-origin fetch rather than prompting a login.
+# Reloading the page fixes it, which is what makes it read as flaky
+# rather than as an expired session.
 #
 # What this exposes: /socket.io/ has no authentication of its own, so
 # anyone who can reach this hostname can drive search and downloads.
@@ -99,6 +106,13 @@ spec:
       http:
         paths:
           - path: /socket.io
+            pathType: Prefix
+            backend:
+              service:
+                name: shelfmark
+                port:
+                  number: 8084
+          - path: /api
             pathType: Prefix
             backend:
               service:
