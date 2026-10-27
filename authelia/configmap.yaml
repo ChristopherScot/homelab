@@ -256,13 +256,24 @@ data:
             authorization_policy: one_factor
             claims_policy: audiobookshelf
             redirect_uris:
-              - https://audiobooks.home.chrisscotmartin.com/auth/openid/callback
+                # Root-path callback (ABS "Subfolder for Redirect URLs" empty).
+                - https://audiobooks.home.chrisscotmartin.com/auth/openid/callback
+                # Subfolder callbacks, for when that ABS setting is /audiobookshelf.
+                # Both are registered so the ABS-side value can change without an
+                # Authelia redeploy. mobile-redirect is the ABS mobile app's callback.
+                - https://audiobooks.home.chrisscotmartin.com/audiobookshelf/auth/openid/callback
+                - https://audiobooks.home.chrisscotmartin.com/auth/openid/mobile-redirect
+                - https://audiobooks.home.chrisscotmartin.com/audiobookshelf/auth/openid/mobile-redirect
             scopes:
               - openid
               - profile
               - email
             userinfo_signed_response_alg: none
-            token_endpoint_auth_method: client_secret_post
+            # Audiobookshelf sends the client secret as an HTTP Basic Authorization
+            # header, not in the POST body. Authelia rejects the token exchange if
+            # this does not match ("Client authentication failed ... configured to
+            # only support 'client_secret_post'").
+            token_endpoint_auth_method: client_secret_basic
             # ABS uses PKCE (S256) on both the web and mobile flows.
             require_pkce: true
             pkce_challenge_method: S256
