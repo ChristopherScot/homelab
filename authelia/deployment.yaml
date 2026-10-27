@@ -105,6 +105,8 @@ spec:
                 path: oidc_vault_client_secret_hashed
               - key: oidc_kavita_client_secret_hashed
                 path: oidc_kavita_client_secret_hashed
+              - key: oidc_audiobookshelf_client_secret_hashed
+                path: oidc_audiobookshelf_client_secret_hashed
         # Authelia writes notifications (e.g. 2FA QR codes when SMTP isn't
         # configured) to a file. emptyDir is fine — kubectl logs/exec recovers.
         - name: notifications
