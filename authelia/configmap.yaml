@@ -282,3 +282,16 @@ data:
             # ABS uses PKCE (S256) on both the web and mobile flows.
             require_pkce: true
             pkce_challenge_method: S256
+            # Authelia's default consent_mode is `explicit`, which shows an
+            # "authorize Audiobookshelf?" page on EVERY login and makes that
+            # consent session single-use. ABS's callback handling re-submits
+            # it, and the second submit fails:
+            #   "Error occurred performing consent during the Consent FLow
+            #    stage of the Authorization Flow as the consent session has
+            #    already been responded to"
+            # which surfaces in the app as an error on the login redirect.
+            # Hit by both users, only on this client. `pre-configured` stores
+            # the grant for the duration below, so the page is shown once and
+            # there is no live consent session to double-submit.
+            consent_mode: pre-configured
+            pre_configured_consent_duration: 1y
