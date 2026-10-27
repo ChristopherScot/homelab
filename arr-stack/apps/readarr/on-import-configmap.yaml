@@ -1,12 +1,21 @@
-# On-Import hook for Readarr: copies each successfully-imported book into
-# the CWA ingest folder (/cwa-book-ingest) so autocaliweb processes it into
-# the Calibre library -> Kavita. Without this, Readarr imports land as loose
-# files in /media/books and never reach Calibre (the Shelfmark path is the
-# only one that fed CWA before).
+# On-Import hook for Readarr: routes each successfully-imported file by
+# format.
+#
+#   ebooks (.epub/.azw3/.mobi/...) -> /cwa-book-ingest -> autocaliweb ->
+#                                     Calibre library
+#   audiobooks (.m4b/.m4a/.mp3/...) -> /audiobooks/<Author>/<Title>/ ->
+#                                      Audiobookshelf
+#
+# The split has to happen HERE rather than downstream, because
+# autocaliweb's ingest_processor hardcodes
+# supported_audiobook_formats = {'m4b','m4a','mp4'} and imports anything
+# matching into the Calibre library. Anything audio that reaches
+# /cwa-book-ingest becomes a Calibre entry, which is what we're avoiding.
 #
 # Readarr fires this CustomScript ONLY on a complete import (eventType
-# Download), and CWA's own ingest readiness-check (file-stable timeout)
-# guards against partial files — so partial books cannot be ingested.
+# Download), and both consumers additionally guard against partial files:
+# CWA has its ingest readiness-check, and Audiobookshelf's watcher resets
+# its debounce timer while a file is still being written.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -21,11 +30,13 @@ data:
     #   readarr_addedbookpaths     = newly imported file path(s), '|'-separated
     set -eu
     INGEST=/cwa-book-ingest
+    AUDIOBOOKS=/audiobooks
     LOG() { echo "[readarr-on-import] $*"; }
 
     # Connection test from the Readarr UI.
     if [ "${readarr_eventtype:-}" = "Test" ]; then
       LOG "test ok; ingest dir present: $([ -d "$INGEST" ] && echo yes || echo NO)"
+      LOG "test ok; audiobook dir present: $([ -d "$AUDIOBOOKS" ] && echo yes || echo NO)"
       exit 0
     fi
 
@@ -45,6 +56,15 @@ data:
       LOG "no readarr_addedbookpaths provided; nothing to copy"; exit 0
     fi
 
+    # Author name for the audiobook folder layout. readarr_author_path is
+    # /media/books/<Author>. basename of an empty string is ".", so guard
+    # the unset case explicitly rather than relying on :- below.
+    author=""
+    if [ -n "${readarr_author_path:-}" ]; then
+      author=$(basename "$readarr_author_path")
+      [ "$author" = "." ] && author=""
+    fi
+
     IFS='|'
     for f in $paths; do
       [ -z "$f" ] && continue
@@ -52,14 +72,43 @@ data:
         LOG "skip (not a file): $f"; continue
       fi
       base=$(basename "$f")
-      tmp="$INGEST/.partial.$base"
-      dst="$INGEST/$base"
-      # Copy to a hidden temp name first, then atomic rename, so CWA's
-      # watcher never sees a half-copied file (belt-and-suspenders with
-      # CWA's own readiness check).
-      LOG "copying: $base"
-      cp "$f" "$tmp"
-      mv "$tmp" "$dst"
-      LOG "delivered to ingest: $dst"
+      # Lowercase extension, POSIX-portable (no ${var,,} in sh).
+      ext=$(printf '%s' "${base##*.}" | tr '[:upper:]' '[:lower:]')
+
+      case "$ext" in
+        m4b|m4a|mp3|mp4|ogg|opus|flac|aax|aaxc)
+          if [ ! -d "$AUDIOBOOKS" ]; then
+            LOG "ERROR: audiobook dir $AUDIOBOOKS not mounted; skipping $base"
+            continue
+          fi
+          # Audiobookshelf wants one folder per book: <Author>/<Title>/.
+          # Title comes from the filename without its extension.
+          title="${base%.*}"
+          a="${author:-Unknown Author}"
+          destdir="$AUDIOBOOKS/$a/$title"
+          mkdir -p "$destdir"
+          tmp="$destdir/.partial.$base"
+          dst="$destdir/$base"
+          if [ -f "$dst" ]; then
+            LOG "already present, skipping: $dst"
+            continue
+          fi
+          LOG "copying audiobook: $base -> $a/$title/"
+          cp "$f" "$tmp"
+          mv "$tmp" "$dst"
+          LOG "delivered to audiobook library: $dst"
+          ;;
+        *)
+          tmp="$INGEST/.partial.$base"
+          dst="$INGEST/$base"
+          # Copy to a hidden temp name first, then atomic rename, so CWA's
+          # watcher never sees a half-copied file (belt-and-suspenders with
+          # CWA's own readiness check).
+          LOG "copying ebook: $base"
+          cp "$f" "$tmp"
+          mv "$tmp" "$dst"
+          LOG "delivered to ingest: $dst"
+          ;;
+      esac
     done
     LOG "done"

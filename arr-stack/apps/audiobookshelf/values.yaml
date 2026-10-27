@@ -1,0 +1,77 @@
+# yaml-language-server: $schema=../../_charts/arr-app/values.schema.json
+name: audiobookshelf
+image: ghcr.io/advplyr/audiobookshelf:2.37.2
+port: 80
+
+config:
+  size: 10Gi
+
+env:
+  # The image defaults METADATA_PATH to /metadata, which would land on the
+  # container overlay and be lost on restart. Keep it on the config PVC so
+  # cover art and cached artwork survive.
+  - name: METADATA_PATH
+    value: /config/metadata
+
+extraVolumes:
+  # Audiobook library. Mounted read-WRITE on purpose: the UI's "delete from
+  # file system" (DELETE /api/items/:id?hard=1) calls fs.remove() on the
+  # item path, which a read-only mount would fail.
+  - name: audiobooks
+    mountPath: /audiobooks
+    claimName: audiobooks-longhorn-rwo
+
+# Colocate with autocaliweb: audiobooks-longhorn-rwo is RWO, and the
+# routers that write it (readarr's on-import hook, the shelfmark sidecar)
+# already pin to that node.
+affinity:
+  podAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchLabels:
+            app: autocaliweb
+        topologyKey: kubernetes.io/hostname
+
+probes:
+  readiness:
+    httpGet: { path: /healthcheck, port: 80 }
+    initialDelaySeconds: 15
+    periodSeconds: 10
+  liveness:
+    httpGet: { path: /healthcheck, port: 80 }
+    initialDelaySeconds: 30
+    periodSeconds: 30
+    failureThreshold: 6
+
+ingress:
+  host: audiobooks.home.chrisscotmartin.com
+  # Same gate as books.home (autocaliweb): one_factor, group:users — i.e.
+  # every household Authelia user. The matching rule lives in
+  # authelia/configmap.yaml; without it the default deny policy returns a
+  # hard 403 instead of a login redirect.
+  authelia: one_factor
+  annotations:
+    # Audiobooks are ~1.2 GB. Without these nginx buffers the response to
+    # disk and times out mid-download, same as the webdav ingress.
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  homepage:
+    enabled: true
+    # No widgetType → chart emits gethomepage.dev/href instead of widget
+    # annotations (the audiobookshelf widget needs an API token plumbed
+    # through Vault + homepage-vars, not worth it for a href tile).
+    displayName: Audiobookshelf
+    description: Listen to and download audiobooks
+    icon: audiobookshelf.png
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 256Mi
+  limits:
+    # Downloads stream via Express res.download() (sendFile), so a 1.2 GB
+    # m4b never buffers in memory the way autocaliweb's calibredb-export-
+    # to-/tmp path does. 1Gi is ample.
+    memory: 1Gi

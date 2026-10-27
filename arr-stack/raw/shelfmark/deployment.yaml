@@ -20,6 +20,18 @@ spec:
         app: shelfmark
     spec:
       enableServiceLinks: false
+      # DESTINATION_AUDIOBOOK writes audiobooks-longhorn-rwo, which is RWO
+      # like books-longhorn-rwo. Every other consumer of these volumes
+      # (autocaliweb, readarr, webdav) already colocates on whichever node
+      # Longhorn attaches them to; shelfmark previously ran unpinned
+      # because it only touched the RWX ingest PVC.
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: autocaliweb
+              topologyKey: kubernetes.io/hostname
       initContainers:
         # Shelfmark stores per-tab settings as separate JSON files under
         # /config/plugins/. For each managed JSON in /managed/ (rendered
@@ -89,6 +101,12 @@ spec:
             # otherwise the probe is ENOENT and the import never happens.
             - name: media
               mountPath: /media
+            # Audiobook library. DESTINATION_AUDIOBOOK (set in
+            # settings-externalsecret.yaml) points here, so audiobooks are
+            # written straight to Audiobookshelf's library and never enter
+            # the Calibre ingest queue.
+            - name: audiobooks
+              mountPath: /audiobooks
           resources:
             requests:
               cpu: 50m
@@ -108,6 +126,9 @@ spec:
         - name: managed-settings
           secret:
             secretName: shelfmark-settings
+        - name: audiobooks
+          persistentVolumeClaim:
+            claimName: audiobooks-longhorn-rwo
 ---
 apiVersion: v1
 kind: Service
