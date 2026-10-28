@@ -135,13 +135,12 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     continue
   fi
 
-  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt \
-    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt)"' 2>/dev/null)
+  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
+    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
   [ "${#PRS[@]}" -eq 0 ] && continue
 
   for entry in "${PRS[@]}"; do
-    pr="${entry%% *}"
-    updated="${entry##* }"
+    read -r pr updated sha <<<"$entry"
 
     # Don't judge a branch that is still moving: if pod 0 overran, the diff
     # under review may not be the diff that ends up on the branch.
@@ -156,12 +155,19 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # live in CI — which means this is the only place that signal is
     # enforced. No verdict means not tested, never "nothing found": a pod 2
     # that timed out or crashed must not read as approval.
-    labels=$(gh pr view "$pr" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)
-    case ",$labels," in
-      *,tested-pass,*)    tested=PASS ;;
-      *,tested-fail,*)    tested=FAIL ;;
-      *,tested-blocked,*) tested=BLOCKED ;;
-      *)                  tested="" ;;
+    #
+    # Read on this head commit, not from a label: a label stays on the
+    # pull request through a force-push, so a pass earned on code that
+    # has since been replaced would read as a pass for the replacement.
+    # A status belongs to the commit it was posted against, so a new
+    # head simply has none and falls through to the untested path.
+    state=$(gh api "repos/$repo/commits/$sha/status" \
+      --jq '.statuses[] | select(.context == "nightly/integration") | .state' 2>/dev/null | tail -1)
+    case "$state" in
+      success) tested=PASS ;;
+      failure) tested=FAIL ;;
+      error)   tested=BLOCKED ;;
+      *)       tested="" ;;
     esac
     case "${tested:-NONE}" in
       PASS) : ;;
@@ -171,8 +177,17 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         continue
         ;;
       *)
-        echo "NO-MERGE $repo#$pr: no pod 2 verdict (${tested:-none}) — untested, not approved"
-        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — no integration-test verdict from pod 2 (reported: \`${tested:-none}\`). An untested change is not an approved one; leaving this for a human." >/dev/null 2>&1
+        # Whether anything was ever tested here reads differently to a
+        # human than whether THIS commit was, and the second is the one
+        # that looks like a system failure when it is not.
+        if gh pr view "$pr" --repo "$repo" --json labels \
+          --jq '[.labels[].name] | index("tested-pass") // empty' 2>/dev/null | grep -q .; then
+          echo "NO-MERGE $repo#$pr: tested earlier, but not at $sha — the branch moved"
+          gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2 passed an earlier commit on this branch, but nothing has tested \`${sha:0:7}\`. A pass does not carry forward across a push; leaving this for a human or the next night's run." >/dev/null 2>&1
+        else
+          echo "NO-MERGE $repo#$pr: no pod 2 verdict at $sha — untested, not approved"
+          gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — no integration-test verdict from pod 2 for \`${sha:0:7}\`. An untested change is not an approved one; leaving this for a human." >/dev/null 2>&1
+        fi
         continue
         ;;
     esac

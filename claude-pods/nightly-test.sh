@@ -131,13 +131,12 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     continue
   fi
 
-  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt \
-    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt)"' 2>/dev/null)
+  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
+    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
   [ "${#PRS[@]}" -eq 0 ] && continue
 
   for entry in "${PRS[@]}"; do
-    pr="${entry%% *}"
-    updated="${entry##* }"
+    read -r pr updated sha <<<"$entry"
 
     # Don't test a branch pod 0 may still be pushing to.
     upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
@@ -188,8 +187,28 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     fi
     # Publish the verdict ON THE PR, not to local state: pod 1 runs in a
     # different pod with its own PVC and cannot read this filesystem.
-    # A label is also visible to a human scanning the PR list.
     verdict="${verdict:-BLOCKED}"
+
+    # A commit status, because it is the only channel that says WHICH
+    # commit was tested. A label does not: pod 1 skipping a PR for one
+    # night, pod 0 pushing to it, and pod 2 not reaching it again leaves
+    # last night's pass sitting on code nobody ran. The status stays
+    # behind on the commit it was earned by, so the new head has none and
+    # pod 1's no-verdict path covers it.
+    #
+    # The SHA is the one read before the agent started, so a push during
+    # the run is not credited with having been tested.
+    case "$verdict" in
+      PASS) state=success ;;
+      FAIL) state=failure ;;
+      *)    state=error ;;
+    esac
+    gh api -X POST "repos/$repo/statuses/$sha" \
+      -f state="$state" -f context=nightly/integration \
+      -f description="pod 2 integration test: $verdict" >/dev/null 2>&1 \
+      || echo "   STATUS FAILED $repo#$pr $sha $state"
+    # Also a label, for a human scanning the PR list. The status above
+    # is what gates the merge.
     want="tested-$(printf '%s' "$verdict" | tr '[:upper:]' '[:lower:]')"
     gh label create "$want" --repo "$repo" --color ededed \
       --description "Nightly integration-test verdict from pod 2" >/dev/null 2>&1
