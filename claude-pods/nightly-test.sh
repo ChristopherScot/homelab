@@ -152,7 +152,11 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- testing $repo#$pr ($(date -Is))"
-    export dir repo pr
+    # Cleared first: a file left by an earlier run would be read as this
+    # run's verdict.
+    VERDICT_FILE="$STATE_DIR/verdict-$name-$pr"
+    rm -f "$VERDICT_FILE"
+    export dir repo pr VERDICT_FILE
     render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
 
     out=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
@@ -163,36 +167,47 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     # The verdict gates the merge, so record it where pod 1 will look. A
     # timeout or crash is NOT a pass: absence of a verdict must read as
     # "not tested", never as "nothing found".
-    # Anywhere on the line, with markdown stripped first: the prompt
-    # asks for the verdict on its own final line, but "Verdict posted:
-    # **TESTED: PASS** on PR #52" is a reasonable thing to write and an
-    # anchored ^TESTED: read it as no verdict at all.
     #
-    # A line naming two outcomes is the prompt being quoted back, not a
-    # verdict, so it is skipped - otherwise "end with TESTED: PASS or
-    # TESTED: FAIL" reports a rejection nobody made. Last match wins, so
-    # a verdict restated at the end still decides.
-    verdict=$(printf '%s' "$out" | tr -d '*_`' \
-      | grep -E 'TESTED: (PASS|FAIL|BLOCKED)' \
-      | grep -vE 'TESTED: (PASS|FAIL|BLOCKED).*TESTED: (PASS|FAIL|BLOCKED)' \
-      | grep -oE 'TESTED: (PASS|FAIL|BLOCKED)' | tail -1 | awk '{print $2}')
-    if [ $rc -eq 124 ]; then
-      echo "TIMEOUT on $repo#$pr"
-      verdict="BLOCKED"
+    # Read from a file the agent writes rather than found in what it
+    # says. Searching the prose cannot tell a verdict from an account of
+    # one: "I cannot say TESTED: PASS because the build failed" contains
+    # the same characters as a pass, and an agent that announces the
+    # verdict it intends and then times out contains them too. Anything
+    # but one of the three words is not a verdict.
+    verdict=$(tr -d '[:space:]' < "$VERDICT_FILE" 2>/dev/null)
+    case "$verdict" in
+      PASS|FAIL|BLOCKED) ;;
+      *) verdict="" ;;
+    esac
+    # Any abnormal exit, not only the timeout's 124: a crash or an
+    # OOM kill ends the run just as incompletely, and the agent is not
+    # around to say so.
+    if [ $rc -ne 0 ]; then
+      echo "ABNORMAL EXIT rc=$rc on $repo#$pr"
+      verdict=""
     fi
     # Publish the verdict ON THE PR, not to local state: pod 1 runs in a
     # different pod with its own PVC and cannot read this filesystem.
     # A label is also visible to a human scanning the PR list.
     verdict="${verdict:-BLOCKED}"
-    for l in tested-pass tested-fail tested-blocked; do
-      gh pr edit "$pr" --repo "$repo" --remove-label "$l" >/dev/null 2>&1
-    done
     want="tested-$(printf '%s' "$verdict" | tr '[:upper:]' '[:lower:]')"
     gh label create "$want" --repo "$repo" --color ededed \
       --description "Nightly integration-test verdict from pod 2" >/dev/null 2>&1
-    gh pr edit "$pr" --repo "$repo" --add-label "$want" >/dev/null 2>&1 \
-      && echo "   labelled $repo#$pr $want"
-    echo "${repo} ${pr} ${verdict}" >> "$STATE_DIR/tested-$(date +%Y%m%d)"
+    # Added before the others are removed, so a failure here leaves last
+    # night's verdict standing rather than erasing it: pod 1 reads no
+    # label as untested, which would turn a FAIL into "nobody looked".
+    if gh pr edit "$pr" --repo "$repo" --add-label "$want" 2>"$STATE_DIR/label-err"; then
+      for l in tested-pass tested-fail tested-blocked; do
+        [ "$l" = "$want" ] && continue
+        gh pr edit "$pr" --repo "$repo" --remove-label "$l" >/dev/null 2>&1
+      done
+      echo "   labelled $repo#$pr $want"
+      # Logged only once the PR carries it. This file is the only record
+      # of the night, so it must not claim a verdict pod 1 cannot see.
+      echo "$(date -Is) ${repo} ${pr} ${verdict}" >> "$STATE_DIR/tested-$(date +%Y%m%d)"
+    else
+      echo "   LABEL FAILED $repo#$pr $want: $(tr -d '\n' < "$STATE_DIR/label-err")"
+    fi
     echo "--- $repo#$pr done rc=$rc verdict=${verdict:-BLOCKED}"
 
     # Leave no scratch tests behind: the next stage checks out this same
