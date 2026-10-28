@@ -151,9 +151,12 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- testing $repo#$pr ($(date -Is))"
-    # Cleared first: a file left by an earlier run would be read as this
-    # run's verdict.
-    VERDICT_FILE="$STATE_DIR/verdict-$name-$pr"
+    # Inside the clone, which is the only directory --add-dir grants the
+    # agent: $STATE_DIR is a sibling of it, so a verdict asked for there
+    # could only be written by the agent reaching for a shell redirect.
+    # Cleared first, because a file left by an earlier run would be read
+    # as this run's verdict.
+    VERDICT_FILE="$dir/.nightly-verdict"
     rm -f "$VERDICT_FILE"
     export dir repo pr VERDICT_FILE
     render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
@@ -163,16 +166,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     rc=$?
     printf '%s\n' "$out" | tail -25
 
-    # The verdict gates the merge, so record it where pod 1 will look. A
-    # timeout or crash is NOT a pass: absence of a verdict must read as
-    # "not tested", never as "nothing found".
+    # The verdict gates the merge, so record it where pod 1 will look:
+    # absence of a verdict must read as "not tested", never as "nothing
+    # found".
     #
     # Read from a file the agent writes rather than found in what it
-    # says. Searching the prose cannot tell a verdict from an account of
-    # one: "I cannot say TESTED: PASS because the build failed" contains
-    # the same characters as a pass, and an agent that announces the
-    # verdict it intends and then times out contains them too. Anything
-    # but one of the three words is not a verdict.
+    # says: prose that discusses a verdict cannot be told from prose that
+    # gives one. Anything but one of the three words is not a verdict.
     verdict=$(tr -d '[:space:]' < "$VERDICT_FILE" 2>/dev/null)
     case "$verdict" in
       PASS|FAIL|BLOCKED) ;;
@@ -190,11 +190,9 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     verdict="${verdict:-BLOCKED}"
 
     # A commit status, because it is the only channel that says WHICH
-    # commit was tested. A label does not: pod 1 skipping a PR for one
-    # night, pod 0 pushing to it, and pod 2 not reaching it again leaves
-    # last night's pass sitting on code nobody ran. The status stays
-    # behind on the commit it was earned by, so the new head has none and
-    # pod 1's no-verdict path covers it.
+    # commit was tested - a label belongs to the pull request and
+    # outlives the code it was about. A commit nothing has tested has no
+    # status, which is the no-verdict path pod 1 already refuses.
     #
     # The SHA is the one read before the agent started, so a push during
     # the run is not credited with having been tested.
@@ -212,9 +210,8 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     want="tested-$(printf '%s' "$verdict" | tr '[:upper:]' '[:lower:]')"
     gh label create "$want" --repo "$repo" --color ededed \
       --description "Nightly integration-test verdict from pod 2" >/dev/null 2>&1
-    # Added before the others are removed, so a failure here leaves last
-    # night's verdict standing rather than erasing it: pod 1 reads no
-    # label as untested, which would turn a FAIL into "nobody looked".
+    # Added before the others are removed, so a failure here leaves the
+    # previous verdict standing rather than erasing it.
     if gh pr edit "$pr" --repo "$repo" --add-label "$want" 2>"$STATE_DIR/label-err"; then
       for l in tested-pass tested-fail tested-blocked; do
         [ "$l" = "$want" ] && continue

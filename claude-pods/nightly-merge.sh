@@ -161,8 +161,10 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # has since been replaced would read as a pass for the replacement.
     # A status belongs to the commit it was posted against, so a new
     # head simply has none and falls through to the untested path.
+    # The combined status reports one entry per context, the latest, so
+    # a SHA retested after a fix reads as the retest.
     state=$(gh api "repos/$repo/commits/$sha/status" \
-      --jq '.statuses[] | select(.context == "nightly/integration") | .state' 2>/dev/null | tail -1)
+      --jq '.statuses[] | select(.context == "nightly/integration") | .state' 2>/dev/null | head -1)
     case "$state" in
       success) tested=PASS ;;
       failure) tested=FAIL ;;
@@ -177,17 +179,8 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         continue
         ;;
       *)
-        # Whether anything was ever tested here reads differently to a
-        # human than whether THIS commit was, and the second is the one
-        # that looks like a system failure when it is not.
-        if gh pr view "$pr" --repo "$repo" --json labels \
-          --jq '[.labels[].name] | index("tested-pass") // empty' 2>/dev/null | grep -q .; then
-          echo "NO-MERGE $repo#$pr: tested earlier, but not at $sha — the branch moved"
-          gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2 passed an earlier commit on this branch, but nothing has tested \`${sha:0:7}\`. A pass does not carry forward across a push; leaving this for a human or the next night's run." >/dev/null 2>&1
-        else
-          echo "NO-MERGE $repo#$pr: no pod 2 verdict at $sha — untested, not approved"
-          gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — no integration-test verdict from pod 2 for \`${sha:0:7}\`. An untested change is not an approved one; leaving this for a human." >/dev/null 2>&1
-        fi
+        echo "NO-MERGE $repo#$pr: no pod 2 verdict at $sha — untested, not approved"
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — no integration-test verdict from pod 2 for \`${sha:0:7}\`. An untested change is not an approved one; leaving this for a human." >/dev/null 2>&1
         continue
         ;;
     esac
@@ -236,7 +229,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
           *" true") method="--merge" ;;
           *)        method="--rebase" ;;
         esac
-        if gh pr merge "$pr" --repo "$repo" $method --delete-branch >/dev/null 2>&1; then
+        # Pinned to the commit whose verdict was read: the review agent
+        # above can run for most of an hour, and a push landing in that
+        # window would otherwise be merged carrying a pass earned on the
+        # commit it replaced. GitHub refuses the merge instead, which the
+        # failure path below already handles.
+        if gh pr merge "$pr" --repo "$repo" $method \
+          --match-head-commit "$sha" --delete-branch >/dev/null 2>&1; then
           echo "MERGED $repo#$pr"
           # Recorded so the post-merge sweep below can revert it if main
           # goes red. Merging is only safe because undoing it is cheap.
