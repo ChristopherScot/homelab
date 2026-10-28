@@ -67,24 +67,22 @@ ingress:
     # Audiobooks are ~1.2 GB. Without these nginx buffers the response to
     # disk and times out mid-download, same as the webdav ingress.
     nginx.ingress.kubernetes.io/proxy-body-size: "0"
-    # 36000 (10h), not 600: two observed downloads of the 1.33 GB m4b took
-    # 551s and 521s, i.e. ~2.5 MB/s end to end, leaving under 50s of headroom
-    # before nginx closed the connection. The largest book in the library is
-    # 1.59 GB (House of Earth and Blood), which needs ~640s at that rate and
-    # would have failed outright - the browser shows a dead or partial
-    # download with no error, because nginx drops the connection rather than
-    # returning a status.
+    # 6400, not 600: two observed downloads of the 1.33 GB m4b took 551s and
+    # 521s, i.e. ~2.5 MB/s end to end, leaving under 50s of headroom before
+    # nginx closed the connection. The largest book in the library is 1.59 GB
+    # (House of Earth and Blood), which needs ~640s at that rate and would
+    # have failed outright - the browser shows a dead or partial download
+    # with no error, because nginx drops the connection rather than returning
+    # a status.
     #
-    # Deliberately far above the ~640s worst case rather than just clear of
-    # it: a phone on weak wifi, or several concurrent downloads sharing that
-    # ~2.5 MB/s, can be an order of magnitude slower, and the failure mode is
-    # silent. There is no cost to a high ceiling here - nginx still tears the
-    # connection down as soon as the client goes away, so this only bounds
-    # how slow a download may legitimately be, not how long a dead socket
-    # lingers. jellyfin and shelfmark carry 3600 for the same reason; this
-    # goes further because these are single large files, not streams.
-    nginx.ingress.kubernetes.io/proxy-read-timeout: "36000"
-    nginx.ingress.kubernetes.io/proxy-send-timeout: "36000"
+    # 6400 is 10x that ~640s requirement: enough slack for a phone on weak
+    # wifi or several concurrent downloads sharing the same ~2.5 MB/s, while
+    # still being a number derived from the measurement rather than an
+    # arbitrary ceiling. No cost to the headroom - nginx tears the connection
+    # down as soon as the client goes away, so this bounds only how slow a
+    # download may legitimately be, not how long a dead socket lingers.
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "6400"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "6400"
     nginx.ingress.kubernetes.io/proxy-buffering: "off"
     # The OIDC callback returns with two JWTs in the query string, which nginx
     # forwards to Authelia as X-Forwarded-Uri. The default 4k/8k header buffers
