@@ -163,7 +163,15 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     # The verdict gates the merge, so record it where pod 1 will look. A
     # timeout or crash is NOT a pass: absence of a verdict must read as
     # "not tested", never as "nothing found".
-    verdict=$(printf '%s' "$out" | grep -oE '^TESTED: (PASS|FAIL|BLOCKED)' | tail -1 | awk '{print $2}')
+    # Not anchored to line-start, and markdown is stripped first. The
+    # prompt asks for the verdict as the final line, but the agent wrote
+    # "Verdict posted: **TESTED: PASS** on PR #52" - a reasonable thing
+    # to write, which an anchored ^TESTED: missed. Two genuine PASSes
+    # were recorded as BLOCKED, and pod 1 then correctly refused to
+    # merge changes nobody had rejected.
+    #
+    # Last match wins, so a verdict restated at the end still decides.
+    verdict=$(printf '%s' "$out" | tr -d '*_`' | grep -oE 'TESTED: (PASS|FAIL|BLOCKED)' | tail -1 | awk '{print $2}')
     if [ $rc -eq 124 ]; then
       echo "TIMEOUT on $repo#$pr"
       verdict="BLOCKED"
