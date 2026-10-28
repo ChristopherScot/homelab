@@ -163,15 +163,19 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     # The verdict gates the merge, so record it where pod 1 will look. A
     # timeout or crash is NOT a pass: absence of a verdict must read as
     # "not tested", never as "nothing found".
-    # Not anchored to line-start, and markdown is stripped first. The
-    # prompt asks for the verdict as the final line, but the agent wrote
-    # "Verdict posted: **TESTED: PASS** on PR #52" - a reasonable thing
-    # to write, which an anchored ^TESTED: missed. Two genuine PASSes
-    # were recorded as BLOCKED, and pod 1 then correctly refused to
-    # merge changes nobody had rejected.
+    # Anywhere on the line, with markdown stripped first: the prompt
+    # asks for the verdict on its own final line, but "Verdict posted:
+    # **TESTED: PASS** on PR #52" is a reasonable thing to write and an
+    # anchored ^TESTED: read it as no verdict at all.
     #
-    # Last match wins, so a verdict restated at the end still decides.
-    verdict=$(printf '%s' "$out" | tr -d '*_`' | grep -oE 'TESTED: (PASS|FAIL|BLOCKED)' | tail -1 | awk '{print $2}')
+    # A line naming two outcomes is the prompt being quoted back, not a
+    # verdict, so it is skipped - otherwise "end with TESTED: PASS or
+    # TESTED: FAIL" reports a rejection nobody made. Last match wins, so
+    # a verdict restated at the end still decides.
+    verdict=$(printf '%s' "$out" | tr -d '*_`' \
+      | grep -E 'TESTED: (PASS|FAIL|BLOCKED)' \
+      | grep -vE 'TESTED: (PASS|FAIL|BLOCKED).*TESTED: (PASS|FAIL|BLOCKED)' \
+      | grep -oE 'TESTED: (PASS|FAIL|BLOCKED)' | tail -1 | awk '{print $2}')
     if [ $rc -eq 124 ]; then
       echo "TIMEOUT on $repo#$pr"
       verdict="BLOCKED"
