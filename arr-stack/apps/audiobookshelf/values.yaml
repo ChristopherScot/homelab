@@ -45,11 +45,24 @@ probes:
 
 ingress:
   host: audiobooks.home.chrisscotmartin.com
-  # Same gate as books.home (autocaliweb): one_factor, group:users — i.e.
-  # every household Authelia user. The matching rule lives in
-  # authelia/configmap.yaml; without it the default deny policy returns a
-  # hard 403 instead of a login redirect.
-  authelia: one_factor
+  # NOT forward-auth gated, for the same reason as jellyfin: the
+  # Audiobookshelf Android app is an API client, not a browser, and cannot
+  # follow the Authelia redirect chain. Its very first call is GET /status
+  # for server discovery; behind Authelia that answers 302 to auth.home
+  # instead of JSON and the app fails with "Server redirected somewhere
+  # else" before any login is even attempted. Verified: every endpoint the
+  # app needs (/status, /ping, /healthcheck, /login, /auth/openid) returns
+  # 200/301/400 straight from the pod and 302 through a gated ingress.
+  #
+  # ABS enforces its own auth server-side (authMethods local + openid), so
+  # unlike shelfmark this is not an unauthenticated service - a caller still
+  # needs an ABS login. The OIDC "Login with OpenId" button keeps working
+  # for browsers; it just is not forced by the ingress any more.
+  #
+  # The Authelia access_control rule for audiobooks.home is now unused but
+  # left in place, as removing it would 403 the host if this is ever
+  # re-gated.
+  authelia: none
   annotations:
     # Audiobooks are ~1.2 GB. Without these nginx buffers the response to
     # disk and times out mid-download, same as the webdav ingress.
