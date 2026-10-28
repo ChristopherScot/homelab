@@ -175,7 +175,15 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
       PASS) : ;;
       FAIL)
         echo "NO-MERGE $repo#$pr: pod 2 integration testing FAILED"
-        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2's integration testing reported FAIL. See its comment above." >/dev/null 2>&1
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2's integration testing reported FAIL. See its comment on this PR." >/dev/null 2>&1
+        continue
+        ;;
+      BLOCKED)
+        # Separate from no verdict at all: pod 2 reached this and could
+        # not run it, which is a missing credential or a broken build
+        # rather than a pod that never arrived.
+        echo "NO-MERGE $repo#$pr: pod 2 could not run it at $sha"
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2 could not run \`${sha:0:7}\` (will not build, or needs something it does not have). See its comment on this PR." >/dev/null 2>&1
         continue
         ;;
       *)

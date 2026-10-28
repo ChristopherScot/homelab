@@ -76,6 +76,17 @@ process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
 
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
 export GH_TOKEN
+
+# The agent inherits GH_TOKEN so it can run gh, and it is allowed to run
+# env and cat. Its output reaches a public pull request, so the token is
+# taken out of anything quoted back rather than trusted not to appear.
+redact() {
+  if [ -n "$GH_TOKEN" ]; then
+    sed "s|$GH_TOKEN|[redacted]|g"
+  else
+    cat
+  fi
+}
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
 
 # Refuse to start on a credential that cannot work.
@@ -151,11 +162,10 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- testing $repo#$pr ($(date -Is))"
-    # Inside the clone, which is the only directory --add-dir grants the
-    # agent: $STATE_DIR is a sibling of it, so a verdict asked for there
-    # could only be written by the agent reaching for a shell redirect.
-    # Cleared first, because a file left by an earlier run would be read
-    # as this run's verdict.
+    # Inside the clone, so git clean sweeps it at the end of the loop
+    # and the agent is never pointed at $STATE_DIR, where the log of its
+    # own run lives. Cleared first, because a file left by an earlier
+    # run would be read as this run's verdict.
     VERDICT_FILE="$dir/.nightly-verdict"
     rm -f "$VERDICT_FILE"
     export dir repo pr VERDICT_FILE
@@ -164,7 +174,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     out=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/test-prompt.txt")
     rc=$?
-    printf '%s\n' "$out" | tail -25
+    printf '%s\n' "$out" | tail -25 | redact
 
     # The verdict gates the merge, so record it where pod 1 will look:
     # absence of a verdict must read as "not tested", never as "nothing
@@ -224,6 +234,15 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     else
       echo "   LABEL FAILED $repo#$pr $want: $(tr -d '\n' < "$STATE_DIR/label-err")"
     fi
+
+    # Posted by the script, not left to the agent: pod 1 tells a human to
+    # read pod 2's comment, and an agent that died or chose not to
+    # comment would leave them reading nothing. The last of the output is
+    # what it was doing when it stopped, which is the useful part when
+    # the verdict is BLOCKED.
+    gh pr comment "$pr" --repo "$repo" --body "$(printf 'Nightly integration test (pod 2): **%s** for `%s`.\n\n<details><summary>what it reported</summary>\n\n```\n%s\n```\n\n</details>' \
+      "$verdict" "${sha:0:7}" "$(printf '%s' "$out" | tail -40 | redact)")" >/dev/null 2>&1 \
+      || echo "   COMMENT FAILED $repo#$pr"
     echo "--- $repo#$pr done rc=$rc verdict=${verdict:-BLOCKED}"
 
     # Leave no scratch tests behind: the next stage checks out this same
