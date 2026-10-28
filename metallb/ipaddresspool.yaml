@@ -15,3 +15,32 @@ metadata:
 spec:
   ipAddressPools:
     - primary-pool-ipv4
+  # Only the WIRED nodes may hold a VIP. pop-os (192.168.50.179) carries the
+  # cluster on wlp2s0 because its enp1s0 has no carrier, and the machine
+  # cannot move closer to the router. When that WiFi link blips, MetalLB's
+  # memberlist declares the node dead:
+  #
+  #   node2  -> 192.168.50.179:7946  i/o timeout
+  #   node1  -> 192.168.50.179:7946  i/o timeout
+  #
+  # L2 ownership is then recomputed and the VIP moves, which sends a
+  # gratuitous ARP and RESETS EVERY ESTABLISHED TCP CONNECTION through it.
+  # On 2026-10-27 192.168.50.225 moved four times between 17:36 and 17:53
+  # and twice more around 22:17-22:21. Speaker restarts tell the same story:
+  # node2 12, node1 10, pop-os 1.
+  #
+  # The user-visible symptom was Audiobookshelf dropping playback, going
+  # stale, and intermittently "can't connect to server" for two clients at
+  # once - but it hits everything behind .225 and .231 equally; a dropped
+  # Sonarr page just is not noticeable.
+  #
+  # This pool covers .225 (external) and .231 (public/ntfy), so both entry
+  # points are stabilised by this one selector. pop-os keeps running
+  # workloads and keeps its etcd membership; it is only barred from holding
+  # a VIP. Raising memberlist timeouts was rejected: it delays detection of
+  # real failures without removing the flap.
+  nodeSelectors:
+    - matchLabels:
+        kubernetes.io/hostname: node1
+    - matchLabels:
+        kubernetes.io/hostname: node2
