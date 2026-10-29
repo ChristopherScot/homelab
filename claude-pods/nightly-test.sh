@@ -238,8 +238,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     # Posted by the script, not left to the agent: pod 1 tells a human to
     # read pod 2's comment, and an agent that died or chose not to
     # comment would leave them reading nothing. The last of the output is
-    # what it was doing when it stopped, which is the useful part when
-    # the verdict is BLOCKED.
+    # what it was doing when it stopped.
     gh pr comment "$pr" --repo "$repo" --body "$(printf 'Nightly integration test (pod 2): **%s** for `%s`.\n\n<details><summary>what it reported</summary>\n\n```\n%s\n```\n\n</details>' \
       "$verdict" "${sha:0:7}" "$(printf '%s' "$out" | tail -40 | redact)")" >/dev/null 2>&1 \
       || echo "   COMMENT FAILED $repo#$pr"
