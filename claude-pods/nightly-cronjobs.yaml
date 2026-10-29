@@ -8,13 +8,12 @@
 #                 claim. Files an issue per reproduced bug and publishes
 #                 its verdict as a commit status on the head it tested.
 #                 Fixes nothing. These tests are manual and
-#                 non-deterministic, so
-#                 they cannot live in CI — this is the only place that
-#                 signal exists.
+#                 non-deterministic, so they cannot live in CI — this is
+#                 the only place that signal exists.
 #   04:00  pod 1  takes a COLD look at those PRs — fresh clone, no sight of
 #                 pod 0's reasoning — and merges only on a unanimous panel
 #                 pass, green CI, AND pod 2's nightly/integration status
-#                 on the commit being merged - a label would outlive the
+#                 on the commit being merged — a label would outlive the
 #                 code it was about. No verdict means untested, which is
 #                 not approved.
 #

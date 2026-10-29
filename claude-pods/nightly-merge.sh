@@ -81,11 +81,8 @@ echo "=== nightly-merge $(date -Is) model=$MODEL ==="
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
 export GH_TOKEN
 
-# The agent inherits GH_TOKEN so it can run gh, and it is allowed to run
-# env and cat. Its output is quoted into public pull requests below, so
-# the token is taken out rather than trusted not to appear. Safe for a
-# GitHub token because those are [A-Za-z0-9_]; a secret containing a
-# backslash or the sed delimiter would need a different approach.
+# Takes GH_TOKEN out of agent output quoted into public pull requests
+# below. See redact() in nightly-test.sh for why, and for its limits.
 redact() {
   if [ -n "$GH_TOKEN" ]; then
     sed "s|$GH_TOKEN|[redacted]|g"
@@ -192,9 +189,9 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         continue
         ;;
       BLOCKED)
-        # Separate from no verdict at all: pod 2 reached this and could
-        # not run it, which is a missing credential or a broken build
-        # rather than a pod that never arrived.
+        # Separate from no status at all: pod 2 posted a verdict it
+        # could not earn - a broken build, a missing credential, or its
+        # own run dying.
         echo "NO-MERGE $repo#$pr: pod 2 could not run it at $sha"
         gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2 could not run \`${sha:0:7}\` (will not build, or needs something it does not have). See its comment on this PR." >/dev/null 2>&1
         continue
