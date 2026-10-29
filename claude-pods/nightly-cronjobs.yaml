@@ -5,15 +5,17 @@
 #   02:00  pod 2  RUNS the software the PR changes — CLIs, services, UIs
 #                 via agent-browser, manifests via kubectl/helm/tofu — and
 #                 checks it does what the PR, the comments and the issue
-#                 claim. Files an issue per reproduced bug and publishes a
-#                 TESTED: PASS/FAIL/BLOCKED verdict as a PR label. Fixes
-#                 nothing. These tests are manual and non-deterministic, so
-#                 they cannot live in CI — this is the only place that
-#                 signal exists.
+#                 claim. Files an issue per reproduced bug and publishes
+#                 its verdict as a commit status on the head it tested.
+#                 Fixes nothing. These tests are manual and
+#                 non-deterministic, so they cannot live in CI — this is
+#                 the only place that signal exists.
 #   04:00  pod 1  takes a COLD look at those PRs — fresh clone, no sight of
 #                 pod 0's reasoning — and merges only on a unanimous panel
-#                 pass, green CI, AND pod 2's tested-pass label. No verdict
-#                 means untested, which is not approved.
+#                 pass, green CI, AND pod 2's nightly/integration status
+#                 on the commit being merged — a label would outlive the
+#                 code it was about. No verdict means untested, which is
+#                 not approved.
 #
 # Why separate pods rather than one job doing all three: a reviewer that
 # has just argued for a change will defend it. Pod 1's panel has never

@@ -80,6 +80,24 @@ echo "=== nightly-merge $(date -Is) model=$MODEL ==="
 
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
 export GH_TOKEN
+
+# Wraps agent output for a public pull request. Unfenced, its markdown
+# renders: a bare @name notifies that person, and #52 cross-links an
+# issue back to this PR. Four backticks, because the agent's own output
+# may contain a three-backtick fence.
+fence() {
+  printf '````\n%s\n````' "$(printf '%s' "$1" | tail -30 | redact)"
+}
+
+# Takes GH_TOKEN out of agent output quoted into public pull requests
+# below. See redact() in nightly-test.sh for why, and for its limits.
+redact() {
+  if [ -n "$GH_TOKEN" ]; then
+    sed "s|$GH_TOKEN|[redacted]|g"
+  else
+    cat
+  fi
+}
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
 
 # Refuse to start on a credential that cannot work.
@@ -135,13 +153,12 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     continue
   fi
 
-  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt \
-    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt)"' 2>/dev/null)
+  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
+    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
   [ "${#PRS[@]}" -eq 0 ] && continue
 
   for entry in "${PRS[@]}"; do
-    pr="${entry%% *}"
-    updated="${entry##* }"
+    read -r pr updated sha <<<"$entry"
 
     # Don't judge a branch that is still moving: if pod 0 overran, the diff
     # under review may not be the diff that ends up on the branch.
@@ -156,23 +173,40 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # live in CI — which means this is the only place that signal is
     # enforced. No verdict means not tested, never "nothing found": a pod 2
     # that timed out or crashed must not read as approval.
-    labels=$(gh pr view "$pr" --repo "$repo" --json labels --jq '[.labels[].name] | join(",")' 2>/dev/null)
-    case ",$labels," in
-      *,tested-pass,*)    tested=PASS ;;
-      *,tested-fail,*)    tested=FAIL ;;
-      *,tested-blocked,*) tested=BLOCKED ;;
-      *)                  tested="" ;;
+    #
+    # Read on this head commit, not from a label: a label stays on the
+    # pull request through a force-push, so a pass earned on code that
+    # has since been replaced would read as a pass for the replacement.
+    # A status belongs to the commit it was posted against, so a new
+    # head simply has none and falls through to the untested path.
+    # The combined status reports one entry per context, the latest, so
+    # a SHA retested after a fix reads as the retest.
+    state=$(gh api "repos/$repo/commits/$sha/status" \
+      --jq '.statuses[] | select(.context == "nightly/integration") | .state' 2>/dev/null | head -1)
+    case "$state" in
+      success) tested=PASS ;;
+      failure) tested=FAIL ;;
+      error)   tested=BLOCKED ;;
+      *)       tested="" ;;
     esac
     case "${tested:-NONE}" in
       PASS) : ;;
       FAIL)
         echo "NO-MERGE $repo#$pr: pod 2 integration testing FAILED"
-        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2's integration testing reported FAIL. See its comment above." >/dev/null 2>&1
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2's integration testing reported FAIL. See its comment on this PR." >/dev/null 2>&1
+        continue
+        ;;
+      BLOCKED)
+        # Separate from no status at all: pod 2 posted a verdict it
+        # could not earn - a broken build, a missing credential, or its
+        # own run dying.
+        echo "NO-MERGE $repo#$pr: pod 2 could not run it at $sha"
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — pod 2 could not run \`${sha:0:7}\` (will not build, or needs something it does not have). See its comment on this PR." >/dev/null 2>&1
         continue
         ;;
       *)
-        echo "NO-MERGE $repo#$pr: no pod 2 verdict (${tested:-none}) — untested, not approved"
-        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — no integration-test verdict from pod 2 (reported: \`${tested:-none}\`). An untested change is not an approved one; leaving this for a human." >/dev/null 2>&1
+        echo "NO-MERGE $repo#$pr: no pod 2 verdict at $sha — untested, not approved"
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1): not merged — no integration-test verdict from pod 2 for \`${sha:0:7}\`. An untested change is not an approved one; leaving this for a human." >/dev/null 2>&1
         continue
         ;;
     esac
@@ -221,7 +255,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
           *" true") method="--merge" ;;
           *)        method="--rebase" ;;
         esac
-        if gh pr merge "$pr" --repo "$repo" $method --delete-branch >/dev/null 2>&1; then
+        # Pinned to the commit whose verdict was read: the review agent
+        # above can run for most of an hour, and a push landing in that
+        # window would otherwise be merged carrying a pass earned on the
+        # commit it replaced. GitHub refuses the merge instead, which the
+        # failure path below already handles.
+        if gh pr merge "$pr" --repo "$repo" $method \
+          --match-head-commit "$sha" --delete-branch >/dev/null 2>&1; then
           echo "MERGED $repo#$pr"
           # Recorded so the post-merge sweep below can revert it if main
           # goes red. Merging is only safe because undoing it is cheap.
@@ -244,13 +284,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
 The change may well be correct; the concern is blast radius, not quality.
 This one wants a human decision before it lands.
 
-$(printf '%s' "$verdict" | tail -30)" >/dev/null 2>&1
+$(fence "$verdict")" >/dev/null 2>&1
         ;;
       NO-MERGE)
         echo "HELD $repo#$pr"
         gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1, independent panel): held for human review.
 
-$(printf '%s' "$verdict" | tail -30)" >/dev/null 2>&1
+$(fence "$verdict")" >/dev/null 2>&1
         ;;
       *)
         # No parseable verdict means the run broke, not that the PR is good.

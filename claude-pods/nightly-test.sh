@@ -76,6 +76,19 @@ process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
 
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
 export GH_TOKEN
+
+# The agent inherits GH_TOKEN so it can run gh, and it is allowed to run
+# env and cat. Its output reaches a public pull request, so the token is
+# taken out of anything quoted back rather than trusted not to appear.
+# Safe for a GitHub token because those are [A-Za-z0-9_]; a secret
+# containing a backslash or the sed delimiter would need another way.
+redact() {
+  if [ -n "$GH_TOKEN" ]; then
+    sed "s|$GH_TOKEN|[redacted]|g"
+  else
+    cat
+  fi
+}
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
 
 # Refuse to start on a credential that cannot work.
@@ -131,13 +144,12 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     continue
   fi
 
-  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt \
-    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt)"' 2>/dev/null)
+  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
+    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
   [ "${#PRS[@]}" -eq 0 ] && continue
 
   for entry in "${PRS[@]}"; do
-    pr="${entry%% *}"
-    updated="${entry##* }"
+    read -r pr updated sha <<<"$entry"
 
     # Don't test a branch pod 0 may still be pushing to.
     upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
@@ -152,35 +164,89 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- testing $repo#$pr ($(date -Is))"
-    export dir repo pr
+    # Inside the clone, so git clean sweeps it at the end of the loop
+    # and the agent is never pointed at $STATE_DIR, where the log of its
+    # own run lives. Cleared first, because a file left by an earlier
+    # run would be read as this run's verdict.
+    # prompts/test.md tells the agent this same path.
+    VERDICT_FILE="$dir/.nightly-verdict"
+    rm -f "$VERDICT_FILE"
+    export dir repo pr VERDICT_FILE
     render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
 
     out=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/test-prompt.txt")
     rc=$?
-    printf '%s\n' "$out" | tail -25
+    printf '%s\n' "$out" | tail -25 | redact
 
-    # The verdict gates the merge, so record it where pod 1 will look. A
-    # timeout or crash is NOT a pass: absence of a verdict must read as
-    # "not tested", never as "nothing found".
-    verdict=$(printf '%s' "$out" | grep -oE '^TESTED: (PASS|FAIL|BLOCKED)' | tail -1 | awk '{print $2}')
-    if [ $rc -eq 124 ]; then
-      echo "TIMEOUT on $repo#$pr"
-      verdict="BLOCKED"
+    # The verdict gates the merge, so record it where pod 1 will look:
+    # absence of a verdict must read as "not tested", never as "nothing
+    # found".
+    #
+    # Read from a file the agent writes rather than found in what it
+    # says: prose that discusses a verdict cannot be told from prose that
+    # gives one. Anything but one of the three words is not a verdict.
+    verdict=$(tr -d '[:space:]' < "$VERDICT_FILE" 2>/dev/null)
+    case "$verdict" in
+      PASS|FAIL|BLOCKED) ;;
+      *) verdict="" ;;
+    esac
+    # Any abnormal exit, not only the timeout's 124: a crash or an
+    # OOM kill ends the run just as incompletely, and the agent is not
+    # around to say so.
+    if [ $rc -ne 0 ]; then
+      echo "ABNORMAL EXIT rc=$rc on $repo#$pr"
+      verdict=""
     fi
     # Publish the verdict ON THE PR, not to local state: pod 1 runs in a
     # different pod with its own PVC and cannot read this filesystem.
-    # A label is also visible to a human scanning the PR list.
     verdict="${verdict:-BLOCKED}"
-    for l in tested-pass tested-fail tested-blocked; do
-      gh pr edit "$pr" --repo "$repo" --remove-label "$l" >/dev/null 2>&1
-    done
+
+    # A commit status, because it is the only channel that says WHICH
+    # commit was tested - a label belongs to the pull request and
+    # outlives the code it was about. A commit nothing has tested has no
+    # status, which is the no-verdict path pod 1 already refuses.
+    #
+    # The SHA is the one read before the agent started, so a push during
+    # the run is not credited with having been tested.
+    case "$verdict" in
+      PASS) state=success ;;
+      FAIL) state=failure ;;
+      *)    state=error ;;
+    esac
+    gh api -X POST "repos/$repo/statuses/$sha" \
+      -f state="$state" -f context=nightly/integration \
+      -f description="pod 2 integration test: $verdict" >/dev/null 2>&1 \
+      || echo "   STATUS FAILED $repo#$pr $sha $state"
+    # Also a label, for a human scanning the PR list. The status above
+    # is what gates the merge.
     want="tested-$(printf '%s' "$verdict" | tr '[:upper:]' '[:lower:]')"
     gh label create "$want" --repo "$repo" --color ededed \
       --description "Nightly integration-test verdict from pod 2" >/dev/null 2>&1
-    gh pr edit "$pr" --repo "$repo" --add-label "$want" >/dev/null 2>&1 \
-      && echo "   labelled $repo#$pr $want"
-    echo "${repo} ${pr} ${verdict}" >> "$STATE_DIR/tested-$(date +%Y%m%d)"
+    # Added before the others are removed, so a failure here leaves the
+    # previous verdict standing rather than erasing it.
+    if gh pr edit "$pr" --repo "$repo" --add-label "$want" 2>"$STATE_DIR/label-err"; then
+      for l in tested-pass tested-fail tested-blocked; do
+        [ "$l" = "$want" ] && continue
+        gh pr edit "$pr" --repo "$repo" --remove-label "$l" >/dev/null 2>&1
+      done
+      echo "   labelled $repo#$pr $want"
+      # Logged only once the PR carries it. This file is the only record
+      # of the night, so it must not claim a verdict pod 1 cannot see.
+      echo "$(date -Is) ${repo} ${pr} ${verdict}" >> "$STATE_DIR/tested-$(date +%Y%m%d)"
+    else
+      echo "   LABEL FAILED $repo#$pr $want: $(tr -d '\n' < "$STATE_DIR/label-err")"
+    fi
+
+    # Posted by the script, not left to the agent: pod 1 tells a human to
+    # read pod 2's comment, and an agent that died or chose not to
+    # comment would leave them reading nothing. The last of the output is
+    # what it was doing when it stopped.
+    # Four backticks: the agent's own output may contain a three-backtick
+    # fence, which would close the wrapper early.
+    gh pr comment "$pr" --repo "$repo" --body "$(printf 'Nightly integration test (pod 2): **%s** for `%s`.\n\n<details><summary>what it reported</summary>\n\n````\n%s\n````\n\n</details>' \
+      "$verdict" "${sha:0:7}" "$(printf '%s' "$out" | tail -40 | redact)")" >/dev/null 2>&1 \
+      || echo "   COMMENT FAILED $repo#$pr"
     echo "--- $repo#$pr done rc=$rc verdict=${verdict:-BLOCKED}"
 
     # Leave no scratch tests behind: the next stage checks out this same
