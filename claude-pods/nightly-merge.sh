@@ -81,6 +81,14 @@ echo "=== nightly-merge $(date -Is) model=$MODEL ==="
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
 export GH_TOKEN
 
+# Wraps agent output for a public pull request. Unfenced, its markdown
+# renders: a bare @name notifies that person, and #52 cross-links an
+# issue back to this PR. Four backticks, because the agent's own output
+# may contain a three-backtick fence.
+fence() {
+  printf '````\n%s\n````' "$(printf '%s' "$1" | tail -30 | redact)"
+}
+
 # Takes GH_TOKEN out of agent output quoted into public pull requests
 # below. See redact() in nightly-test.sh for why, and for its limits.
 redact() {
@@ -276,13 +284,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
 The change may well be correct; the concern is blast radius, not quality.
 This one wants a human decision before it lands.
 
-$(printf '%s' "$verdict" | tail -30 | redact)" >/dev/null 2>&1
+$(fence "$verdict")" >/dev/null 2>&1
         ;;
       NO-MERGE)
         echo "HELD $repo#$pr"
         gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1, independent panel): held for human review.
 
-$(printf '%s' "$verdict" | tail -30 | redact)" >/dev/null 2>&1
+$(fence "$verdict")" >/dev/null 2>&1
         ;;
       *)
         # No parseable verdict means the run broke, not that the PR is good.
