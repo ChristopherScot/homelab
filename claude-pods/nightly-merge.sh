@@ -80,6 +80,19 @@ echo "=== nightly-merge $(date -Is) model=$MODEL ==="
 
 GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
 export GH_TOKEN
+
+# The agent inherits GH_TOKEN so it can run gh, and it is allowed to run
+# env and cat. Its output is quoted into public pull requests below, so
+# the token is taken out rather than trusted not to appear. Safe for a
+# GitHub token because those are [A-Za-z0-9_]; a secret containing a
+# backslash or the sed delimiter would need a different approach.
+redact() {
+  if [ -n "$GH_TOKEN" ]; then
+    sed "s|$GH_TOKEN|[redacted]|g"
+  else
+    cat
+  fi
+}
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
 
 # Refuse to start on a credential that cannot work.
@@ -266,13 +279,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
 The change may well be correct; the concern is blast radius, not quality.
 This one wants a human decision before it lands.
 
-$(printf '%s' "$verdict" | tail -30)" >/dev/null 2>&1
+$(printf '%s' "$verdict" | tail -30 | redact)" >/dev/null 2>&1
         ;;
       NO-MERGE)
         echo "HELD $repo#$pr"
         gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1, independent panel): held for human review.
 
-$(printf '%s' "$verdict" | tail -30)" >/dev/null 2>&1
+$(printf '%s' "$verdict" | tail -30 | redact)" >/dev/null 2>&1
         ;;
       *)
         # No parseable verdict means the run broke, not that the PR is good.

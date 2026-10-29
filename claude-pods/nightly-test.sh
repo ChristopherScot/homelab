@@ -80,6 +80,8 @@ export GH_TOKEN
 # The agent inherits GH_TOKEN so it can run gh, and it is allowed to run
 # env and cat. Its output reaches a public pull request, so the token is
 # taken out of anything quoted back rather than trusted not to appear.
+# Safe for a GitHub token because those are [A-Za-z0-9_]; a secret
+# containing a backslash or the sed delimiter would need another way.
 redact() {
   if [ -n "$GH_TOKEN" ]; then
     sed "s|$GH_TOKEN|[redacted]|g"
@@ -239,7 +241,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     # read pod 2's comment, and an agent that died or chose not to
     # comment would leave them reading nothing. The last of the output is
     # what it was doing when it stopped.
-    gh pr comment "$pr" --repo "$repo" --body "$(printf 'Nightly integration test (pod 2): **%s** for `%s`.\n\n<details><summary>what it reported</summary>\n\n```\n%s\n```\n\n</details>' \
+    gh pr comment "$pr" --repo "$repo" --body "$(printf 'Nightly integration test (pod 2): **%s** for `%s`.\n\n<details><summary>what it reported</summary>\n\n````\n%s\n````\n\n</details>' \
       "$verdict" "${sha:0:7}" "$(printf '%s' "$out" | tail -40 | redact)")" >/dev/null 2>&1 \
       || echo "   COMMENT FAILED $repo#$pr"
     echo "--- $repo#$pr done rc=$rc verdict=${verdict:-BLOCKED}"
