@@ -100,7 +100,6 @@ process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
 # losing the log entirely.
 log_to() {
   local log="$1"
-  mkdir -p "$(dirname "$log")"
   if [ -w /proc/1/fd/1 ]; then
     exec > >(tee -a "$log" > /proc/1/fd/1) 2>&1
   else
@@ -144,7 +143,7 @@ cred_ok() {
 
 # Returns 0 once this pod has a usable credential — repairing it from a
 # healthy peer if it must, which overwrites ~/.claude/.credentials.json —
-# or 1 if no pod has one.
+# or 1 if none could be found, or found but not copied.
 preflight_credential() {
   local me="${HOSTNAME:-unknown}"
   if cred_ok "$me"; then

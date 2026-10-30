@@ -36,8 +36,8 @@ done
 # 1. Sourcing defines the functions the scripts call and has no other
 #    effect: no output, no exit, under the same `set -u` the scripts run
 #    with. The list here is what the scripts use, not what the library
-#    happens to declare: renaming a function in one place and not the
-#    other is exactly what should fail.
+#    happens to declare: renaming a function in the library without
+#    updating the scripts is exactly what should fail.
 out=$(bash -uo pipefail -c '
   source "$1" || exit 1
   for fn in pick_model render_prompt log_to require_gh_token cred_ok preflight_credential; do
