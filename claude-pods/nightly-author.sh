@@ -10,9 +10,8 @@
 # to do.
 set -uo pipefail
 
-# Everything the three pods do alike — model pick, prompt rendering, the
-# Loki tee, the GitHub token, the credential preflight — lives in the
-# shared library, so a fix there reaches all three.
+# Shared preamble for the three nightly pods — see lib/nightly-common.sh.
+# A fix there reaches all three.
 NIGHTLY_LIB="${NIGHTLY_LIB:-/usr/local/share/claude-pods/lib/nightly-common.sh}"
 # shellcheck source=lib/nightly-common.sh
 source "$NIGHTLY_LIB" || { echo "FATAL: cannot source $NIGHTLY_LIB" >&2; exit 1; }

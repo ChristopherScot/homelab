@@ -54,8 +54,18 @@ cat > "$tmp/stub.sh" <<'EOF'
 echo "sourced by $(basename "$0")"
 exit 0
 EOF
+# A script that does NOT source the stub runs for real. On a session pod
+# that means a live GitHub token, a working kubectl and this very clone
+# being checked out and reset under whoever is using it (this happened).
+# Shadow the tools such a run would need, so it dies at the credential
+# preflight instead, with nothing touched.
+mkdir -p "$tmp/bin"
+for tool in kubectl gh claude; do
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/$tool"
+  chmod +x "$tmp/bin/$tool"
+done
 for s in "${scripts[@]}"; do
-  out=$(NIGHTLY_LIB="$tmp/stub.sh" NIGHTLY_STATE_DIR="$tmp/state" HOME="$tmp/home" \
+  out=$(PATH="$tmp/bin:$PATH" NIGHTLY_LIB="$tmp/stub.sh" NIGHTLY_STATE_DIR="$tmp/state" HOME="$tmp/home" \
           bash "$pods/$s.sh" 2>&1)
   rc=$?
   [ "$rc" -eq 0 ] && [ "$out" = "sourced by $s.sh" ] \

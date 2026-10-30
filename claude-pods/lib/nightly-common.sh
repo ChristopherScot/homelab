@@ -4,18 +4,31 @@
 # doing anything of their own.
 #
 # One copy, because three copies held in step by hand did not stay in
-# step. The redaction rule reached pod 2 and not pod 1, and a fix to the
-# credential preflight meant the same edit in three files (#59). Anything
-# every pod needs lives here; anything one pod needs lives in its script.
+# step: a helper added to one pod's script missed the others, and a fix
+# to the credential preflight meant the same edit in three files (#59).
+# Anything every pod needs lives here; anything one pod needs lives in
+# its script.
 #
 # Sourced, never run. Sourcing it defines defaults and functions and does
 # nothing else — no output, no exec, no exit — so a test can source it
 # too. The image ships it at /usr/local/share/claude-pods/lib/ and the
 # scripts find it through NIGHTLY_LIB.
 #
+# The scripts then call, in this order: log_to (before anything prints,
+# or it is lost to Loki), require_gh_token, preflight_credential, and
+# only then pick_model — its probe cannot tell a capped model from a dead
+# credential, so the credential has to be known good first.
+#
 # The defaults below are set for the scripts that source this file; read
 # on its own, some of them look unused to a linter.
 # shellcheck disable=SC2034
+
+NS="${NIGHTLY_NS:-claude-pods}"
+# Only repos under this GitHub owner are worked on; each pod's repo list
+# is filtered to it.
+OWNER="${NIGHTLY_OWNER:-ChristopherScot}"
+# Per-run state and logs, on the pod's PVC.
+STATE_DIR="${NIGHTLY_STATE_DIR:-/workspace/.nightly}"
 
 # --- Model -----------------------------------------------------------------
 # Preferred model, with a fallback. Fable is first choice, but it sits
@@ -25,6 +38,7 @@
 # itself when the cap resets, instead of needing an edit.
 MODEL="${NIGHTLY_MODEL:-claude-fable-5-1}"
 MODEL_FALLBACK="${NIGHTLY_MODEL_FALLBACK:-opus}"
+# Sets MODEL to the first of MODEL, MODEL_FALLBACK that answers a probe.
 pick_model() {
   local probe
   probe=$(cd /workspace && timeout 120 claude -p --model "$MODEL" "Reply with exactly: OK" 2>&1 | tail -2)
@@ -45,6 +59,9 @@ PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
 # explicit allow-list every gh / go test / kubectl call stops for an
 # approval nobody is there to give. Scoped list, not bypassPermissions.
 NIGHTLY_SETTINGS="${NIGHTLY_SETTINGS:-/usr/local/share/claude-pods/prompts/nightly-settings.json}"
+# render_prompt FILE: prints FILE with its $VAR references expanded from
+# the environment. Exits the script if FILE is unreadable: with no prompt,
+# every ticket would fail the same way.
 render_prompt() {
   local f="$1"
   if [ ! -r "$f" ]; then
@@ -64,9 +81,6 @@ process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
 }
 
 # --- Where the run's output goes -------------------------------------------
-OWNER="${NIGHTLY_OWNER:-ChristopherScot}"
-STATE_DIR="${NIGHTLY_STATE_DIR:-/workspace/.nightly}"
-
 # log_to FILE: from here on, everything the script prints goes to FILE on
 # the PVC AND to pid 1's stdout, so the run shows up in Loki.
 #
@@ -95,7 +109,7 @@ log_to() {
 require_gh_token() {
   GH_TOKEN="$(cat /run/secrets/git/token 2>/dev/null)"
   export GH_TOKEN
-  if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; return 1; fi
+  if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token" >&2; return 1; fi
 }
 
 # --- Claude credential -----------------------------------------------------
@@ -111,7 +125,7 @@ require_gh_token() {
 # from. Without this check the run burns its whole window failing every
 # ticket on "OAuth session expired".
 cred_ok() {
-  kubectl exec -n "${NIGHTLY_NS:-claude-pods}" "$1" -- node -e '
+  kubectl exec -n "$NS" "$1" -- node -e '
     const f = process.env.HOME + "/.claude/.credentials.json";
     let d; try { d = require(f).claudeAiOauth; } catch (e) { process.exit(1); }
     if (!d || !d.accessToken || !d.refreshToken) process.exit(1);
@@ -119,6 +133,9 @@ cred_ok() {
   ' >/dev/null 2>&1
 }
 
+# Returns 0 once this pod has a usable credential — repairing it from a
+# healthy peer if it must, which overwrites ~/.claude/.credentials.json —
+# or 1 if no pod has one.
 preflight_credential() {
   local me="${HOSTNAME:-unknown}"
   if cred_ok "$me"; then
@@ -127,13 +144,13 @@ preflight_credential() {
   fi
   echo "credential: INVALID on $me — looking for a healthy peer" >&2
   local peer
-  for peer in $(kubectl get pods -n "${NIGHTLY_NS:-claude-pods}" -l app=claude-session \
+  for peer in $(kubectl get pods -n "$NS" -l app=claude-session \
                   --field-selector status.phase=Running \
                   -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
     [ "$peer" = "$me" ] && continue
     if cred_ok "$peer"; then
-      kubectl exec -n "${NIGHTLY_NS:-claude-pods}" "$peer" -- cat /home/node/.claude/.credentials.json 2>/dev/null \
-        | kubectl exec -i -n "${NIGHTLY_NS:-claude-pods}" "$me" -- sh -c 'umask 077; cat > "$HOME/.claude/.credentials.json"' 2>/dev/null
+      kubectl exec -n "$NS" "$peer" -- cat /home/node/.claude/.credentials.json 2>/dev/null \
+        | kubectl exec -i -n "$NS" "$me" -- sh -c 'umask 077; cat > "$HOME/.claude/.credentials.json"' 2>/dev/null
       if cred_ok "$me"; then
         echo "credential: repaired from $peer" >&2
         return 0
