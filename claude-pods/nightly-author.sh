@@ -21,6 +21,7 @@ ROUNDS="${NIGHTLY_ROUNDS:-3}"
 PER_TICKET_TIMEOUT="${NIGHTLY_TICKET_TIMEOUT:-3600}"
 LOG="$STATE_DIR/author-$(date +%Y%m%d).log"
 
+mkdir -p "$STATE_DIR"
 log_to "$LOG"
 echo "=== nightly-author $(date -Is) model=$MODEL max=$MAX_TICKETS rounds=$ROUNDS ==="
 

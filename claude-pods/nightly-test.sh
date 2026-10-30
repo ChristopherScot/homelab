@@ -22,6 +22,7 @@ PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-2700}"
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
 LOG="$STATE_DIR/test-$(date +%Y%m%d).log"
 
+mkdir -p "$STATE_DIR"
 log_to "$LOG"
 echo "=== nightly-test $(date -Is) ==="
 

@@ -50,23 +50,17 @@ out=$(bash -uo pipefail -c '
 #    announces itself and exits proves both: had the script done anything
 #    of its own before sourcing — the tee, the token check — that would
 #    show in the output or the exit status instead.
-cat > "$tmp/stub.sh" <<'EOF'
-echo "sourced by $(basename "$0")"
-exit 0
-EOF
-# A script that does NOT source the stub runs for real. On a session pod
-# that means a live GitHub token, a working kubectl and this very clone
-# being checked out and reset under whoever is using it (this happened).
-# Shadow the tools such a run would need, so it dies at the credential
-# preflight instead, with nothing touched.
-mkdir -p "$tmp/bin"
-for tool in kubectl gh claude; do
-  printf '#!/usr/bin/env bash\nexit 1\n' > "$tmp/bin/$tool"
-  chmod +x "$tmp/bin/$tool"
-done
+#    The stand-in uses only shell builtins, because the script runs with
+#    NO external commands available: a script that does not source it
+#    runs for real, and on a session pod that means a live GitHub token,
+#    a working kubectl and this very clone being checked out and reset
+#    under whoever is using it (this happened). With an empty PATH an
+#    unconverted script dies at its first `date` or `mkdir`, touching
+#    nothing — and the property under test is stated exactly: nothing but
+#    builtins runs before the library is sourced.
+printf '%s\n' 'echo "sourced by ${0##*/}"' 'exit 0' > "$tmp/stub.sh"
 for s in "${scripts[@]}"; do
-  out=$(PATH="$tmp/bin:$PATH" NIGHTLY_LIB="$tmp/stub.sh" NIGHTLY_STATE_DIR="$tmp/state" HOME="$tmp/home" \
-          bash "$pods/$s.sh" 2>&1)
+  out=$(env -i NIGHTLY_LIB="$tmp/stub.sh" PATH=/nonexistent "$BASH" "$pods/$s.sh" 2>&1)
   rc=$?
   [ "$rc" -eq 0 ] && [ "$out" = "sourced by $s.sh" ] \
     || fail "$s.sh did not source NIGHTLY_LIB before doing anything else (rc=$rc): $out"

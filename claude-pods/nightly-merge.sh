@@ -20,6 +20,7 @@ PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-1800}"
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
 LOG="$STATE_DIR/merge-$(date +%Y%m%d).log"
 
+mkdir -p "$STATE_DIR"
 log_to "$LOG"
 echo "=== nightly-merge $(date -Is) model=$MODEL ==="
 

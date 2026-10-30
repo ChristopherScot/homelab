@@ -23,7 +23,7 @@
 # on its own, some of them look unused to a linter.
 # shellcheck disable=SC2034
 
-NS="${NIGHTLY_NS:-claude-pods}"
+NIGHTLY_NS="${NIGHTLY_NS:-claude-pods}"
 # Only repos under this GitHub owner are worked on; each pod's repo list
 # is filtered to it.
 OWNER="${NIGHTLY_OWNER:-ChristopherScot}"
@@ -125,7 +125,7 @@ require_gh_token() {
 # from. Without this check the run burns its whole window failing every
 # ticket on "OAuth session expired".
 cred_ok() {
-  kubectl exec -n "$NS" "$1" -- node -e '
+  kubectl exec -n "$NIGHTLY_NS" "$1" -- node -e '
     const f = process.env.HOME + "/.claude/.credentials.json";
     let d; try { d = require(f).claudeAiOauth; } catch (e) { process.exit(1); }
     if (!d || !d.accessToken || !d.refreshToken) process.exit(1);
@@ -144,13 +144,13 @@ preflight_credential() {
   fi
   echo "credential: INVALID on $me — looking for a healthy peer" >&2
   local peer
-  for peer in $(kubectl get pods -n "$NS" -l app=claude-session \
+  for peer in $(kubectl get pods -n "$NIGHTLY_NS" -l app=claude-session \
                   --field-selector status.phase=Running \
                   -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
     [ "$peer" = "$me" ] && continue
     if cred_ok "$peer"; then
-      kubectl exec -n "$NS" "$peer" -- cat /home/node/.claude/.credentials.json 2>/dev/null \
-        | kubectl exec -i -n "$NS" "$me" -- sh -c 'umask 077; cat > "$HOME/.claude/.credentials.json"' 2>/dev/null
+      kubectl exec -n "$NIGHTLY_NS" "$peer" -- cat /home/node/.claude/.credentials.json 2>/dev/null \
+        | kubectl exec -i -n "$NIGHTLY_NS" "$me" -- sh -c 'umask 077; cat > "$HOME/.claude/.credentials.json"' 2>/dev/null
       if cred_ok "$me"; then
         echo "credential: repaired from $peer" >&2
         return 0
