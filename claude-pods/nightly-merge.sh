@@ -59,6 +59,58 @@ process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
 ' "$f"
 }
 
+# Lands PR $2 (number or URL) in repo $1 (owner/name) and deletes its
+# branch; exit status is gh's. Merge method is per-repo and squash is
+# disabled across all of these, so asking for it unconditionally fails
+# every merge ("Squash merges are not allowed on this repository"):
+# squash if allowed, else a merge commit if allowed, else rebase (also
+# the fallback when the repo's settings cannot be read). gh's stderr is
+# deliberately not discarded: the reason for a refusal belongs in the log.
+merge_pr() {
+  local repo="$1" pr="$2" method
+  case "$(gh api "repos/$repo" --jq '"\(.allow_squash_merge) \(.allow_merge_commit)"' 2>/dev/null)" in
+    "true "*) method=--squash ;;
+    *" true") method=--merge ;;
+    *)        method=--rebase ;;
+  esac
+  gh pr merge "$pr" --repo "$repo" "$method" --delete-branch >/dev/null
+}
+
+# Undo merged PR $2 in repo $1 after it turned main red. `gh pr revert`
+# only OPENS a revert pull request — it has no flag to land it — so
+# landing it is a second, explicit step through merge_pr, the same way
+# the original went in. Pushing a revert commit straight to main is not
+# an alternative: the nightly-guard ruleset on these repos requires every
+# change to main to arrive through a pull request.
+#
+# Prints nothing and exits non-zero if the revert PR could not be opened.
+# Otherwise prints its URL as soon as it exists, then exits non-zero if
+# it could not be merged — it is left open, and the URL lets the caller
+# point the morning human at it.
+revert_pr() {
+  local repo="$1" pr="$2" url
+  url=$(gh pr revert "$pr" --repo "$repo" \
+          --body "Reverts #$pr. Opened by nightly-merge because main's CI went red after it landed.") \
+    || return 1
+  echo "$url"
+  # GitHub works out a new PR's mergeability in the background, and a
+  # merge asked for before that finishes is refused as "not mergeable"
+  # although nothing is wrong. This PR is seconds old, so allow a few
+  # tries before calling it failed. (The sleep is an env knob only so the
+  # test's permanent-failure case does not wait a minute.)
+  local _
+  for _ in 1 2 3 4 5 6; do
+    merge_pr "$repo" "$url" && return 0
+    sleep "${NIGHTLY_REVERT_RETRY_SLEEP:-10}"
+  done
+  return 1
+}
+
+# Sourced by claude-pods/tests/ for the functions: anything a test needs
+# must be defined above this line, and sourcing also applies the `set`
+# options from the top of the file. Everything below is the job itself.
+if [[ "${BASH_SOURCE[0]}" != "$0" ]]; then return 0; fi
+
 mkdir -p "$STATE_DIR"
 # Tee to the PVC log AND to pid 1's stdout, so the run shows up in Loki.
 #
@@ -211,17 +263,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
 
     case "$decision" in
       MERGE)
-        # Merge method is per-repo and squash is disabled across all of
-        # these, so asking for it unconditionally fails every merge
-        # ("Squash merges are not allowed on this repository"). Pick a
-        # method the repo actually permits.
-        method="--merge"
-        case "$(gh api "repos/$repo" --jq '"\(.allow_squash_merge) \(.allow_merge_commit)"' 2>/dev/null)" in
-          "true "*) method="--squash" ;;
-          *" true") method="--merge" ;;
-          *)        method="--rebase" ;;
-        esac
-        if gh pr merge "$pr" --repo "$repo" $method --delete-branch >/dev/null 2>&1; then
+        if merge_pr "$repo" "$pr"; then
           echo "MERGED $repo#$pr"
           # Recorded so the post-merge sweep below can revert it if main
           # goes red. Merging is only safe because undoing it is cheap.
@@ -286,16 +328,17 @@ if [ -s "$MERGED_FILE" ]; then
     elif [[ "$status" == completed\ * ]]; then
       outcome="${status#completed }"
       echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
-      if gh pr revert "$pr" --repo "$repo" --merge >/dev/null 2>&1; then
-        echo "   REVERTED $repo#$pr"
+      if revert_url=$(revert_pr "$repo" "$pr"); then
+        echo "   REVERTED $repo#$pr via $revert_url"
         gh pr comment "$pr" --repo "$repo" --body \
-          "Nightly: this merge turned main $outcome, so it has been reverted automatically. The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
+          "Nightly: this merge turned main $outcome, so it has been reverted automatically ($revert_url). The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
       else
         # A failed revert is worse than a failed merge: main stays broken
-        # and nobody is watching until morning. Say so loudly in the log.
-        echo "   REVERT FAILED $repo#$pr — main left broken, needs a human"
+        # and nobody is watching until morning. Say so loudly in the log,
+        # and link the revert PR if one was opened but not merged.
+        echo "   REVERT FAILED $repo#$pr — main left broken, needs a human${revert_url:+ (revert PR left open: $revert_url)}"
         gh pr comment "$pr" --repo "$repo" --body \
-          "Nightly: this merge turned main $outcome and the automatic revert FAILED. main needs manual attention." >/dev/null 2>&1
+          "Nightly: this merge turned main $outcome and the automatic revert FAILED.${revert_url:+ A revert PR was opened but could not be merged: $revert_url.} main needs manual attention." >/dev/null 2>&1
       fi
     else
       echo "   UNKNOWN $repo#$pr (main CI still '$status' after 20m; not reverting)"
