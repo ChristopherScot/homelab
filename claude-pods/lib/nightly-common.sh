@@ -23,6 +23,8 @@
 # on its own, some of them look unused to a linter.
 # shellcheck disable=SC2034
 
+# Namespace the session pods run in; preflight_credential looks for
+# peers here.
 NIGHTLY_NS="${NIGHTLY_NS:-claude-pods}"
 # Only repos under this GitHub owner are worked on; each pod's repo list
 # is filtered to it.
@@ -38,7 +40,9 @@ STATE_DIR="${NIGHTLY_STATE_DIR:-/workspace/.nightly}"
 # itself when the cap resets, instead of needing an edit.
 MODEL="${NIGHTLY_MODEL:-claude-fable-5-1}"
 MODEL_FALLBACK="${NIGHTLY_MODEL_FALLBACK:-opus}"
-# Sets MODEL to the first of MODEL, MODEL_FALLBACK that answers a probe.
+# Probes MODEL once; if the reply says it is capped or unavailable, sets
+# MODEL to MODEL_FALLBACK (which is not probed). Reports the choice on
+# stderr.
 pick_model() {
   local probe
   probe=$(cd /workspace && timeout 120 claude -p --model "$MODEL" "Reply with exactly: OK" 2>&1 | tail -2)
@@ -60,8 +64,9 @@ PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
 # approval nobody is there to give. Scoped list, not bypassPermissions.
 NIGHTLY_SETTINGS="${NIGHTLY_SETTINGS:-/usr/local/share/claude-pods/prompts/nightly-settings.json}"
 # render_prompt FILE: prints FILE with its $VAR references expanded from
-# the environment. Exits the script if FILE is unreadable: with no prompt,
-# every ticket would fail the same way.
+# the environment; a $VAR that is not set is left as written. Exits the
+# script if FILE is unreadable: with no prompt, every ticket would fail
+# the same way.
 render_prompt() {
   local f="$1"
   if [ ! -r "$f" ]; then
@@ -124,6 +129,10 @@ require_gh_token() {
 # all three at once — so a healthy peer is normally available to copy
 # from. Without this check the run burns its whole window failing every
 # ticket on "OAuth session expired".
+#
+# cred_ok POD: 0 if POD's ~/.claude/.credentials.json holds non-empty
+# access and refresh tokens and an expiry still in the future; 1
+# otherwise, including when kubectl cannot reach POD.
 cred_ok() {
   kubectl exec -n "$NIGHTLY_NS" "$1" -- node -e '
     const f = process.env.HOME + "/.claude/.credentials.json";

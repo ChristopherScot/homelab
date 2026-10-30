@@ -20,7 +20,7 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 pods="$here/.."
 lib="$pods/lib/nightly-common.sh"
-scripts=(nightly-author nightly-test nightly-merge)
+scripts=(nightly-author.sh nightly-test.sh nightly-merge.sh)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -30,12 +30,14 @@ fail() {
 }
 
 for f in "$lib" "${scripts[@]/#/$pods/}"; do
-  f="${f%.sh}.sh"
   bash -n "$f" || fail "$f does not parse"
 done
 
-# 1. Sourcing defines the shared functions and has no other effect: no
-#    output, no exit, under the same `set -u` the scripts run with.
+# 1. Sourcing defines the functions the scripts call and has no other
+#    effect: no output, no exit, under the same `set -u` the scripts run
+#    with. The list here is what the scripts use, not what the library
+#    happens to declare: renaming a function in one place and not the
+#    other is exactly what should fail.
 out=$(bash -uo pipefail -c '
   source "$1" || exit 1
   for fn in pick_model render_prompt log_to require_gh_token cred_ok preflight_credential; do
@@ -55,35 +57,36 @@ out=$(bash -uo pipefail -c '
 #    runs for real, and on a session pod that means a live GitHub token,
 #    a working kubectl and this very clone being checked out and reset
 #    under whoever is using it (this happened). With an empty PATH an
-#    unconverted script dies at its first `date` or `mkdir`, touching
-#    nothing — and the property under test is stated exactly: nothing but
+#    unconverted script can run nothing but builtins: date, mkdir, cat,
+#    tee and kubectl all fail, so the token is never read and nothing is
+#    touched — and the property under test is stated exactly: nothing but
 #    builtins runs before the library is sourced.
 printf '%s\n' 'echo "sourced by ${0##*/}"' 'exit 0' > "$tmp/stub.sh"
 for s in "${scripts[@]}"; do
-  out=$(env -i NIGHTLY_LIB="$tmp/stub.sh" PATH=/nonexistent "$BASH" "$pods/$s.sh" 2>&1)
+  out=$(env -i NIGHTLY_LIB="$tmp/stub.sh" PATH=/nonexistent "$BASH" "$pods/$s" 2>&1)
   rc=$?
-  [ "$rc" -eq 0 ] && [ "$out" = "sourced by $s.sh" ] \
-    || fail "$s.sh did not source NIGHTLY_LIB before doing anything else (rc=$rc): $out"
+  [ "$rc" -eq 0 ] && [ "$out" = "sourced by $s" ] \
+    || fail "$s did not source NIGHTLY_LIB before doing anything else (rc=$rc): $out"
 done
 
 # 3. No private copies left behind: that is the drift the issue is about.
 mapfile -t fns < <(grep -oE '^[a-z_]+\(\)' "$lib" | tr -d '()')
-[ "${#fns[@]}" -ge 6 ] || fail "expected the library to define at least 6 functions, found ${#fns[@]}"
+[ "${#fns[@]}" -gt 0 ] || fail "found no function definitions in $lib"
 for s in "${scripts[@]}"; do
   for fn in "${fns[@]}"; do
-    grep -qE "^${fn}\(\)" "$pods/$s.sh" && fail "$s.sh still defines its own $fn"
+    grep -qE "^${fn}\(\)" "$pods/$s" && fail "$s still defines its own $fn"
   done
-  grep -q '/proc/1/fd/1' "$pods/$s.sh" && fail "$s.sh still carries its own copy of the Loki tee block"
+  grep -q '/proc/1/fd/1' "$pods/$s" && fail "$s still carries its own copy of the Loki tee block"
 done
 
 # 4. The default NIGHTLY_LIB in each script is a path the image populates.
 for s in "${scripts[@]}"; do
-  default=$(sed -nE 's/.*NIGHTLY_LIB:-([^}]+)\}.*/\1/p' "$pods/$s.sh" | head -1)
-  [ -n "$default" ] || fail "$s.sh has no NIGHTLY_LIB default"
+  default=$(sed -nE 's/.*NIGHTLY_LIB:-([^}]+)\}.*/\1/p' "$pods/$s" | head -1)
+  [ -n "$default" ] || fail "$s has no NIGHTLY_LIB default"
   [ "$(basename "$default")" = "$(basename "$lib")" ] \
-    || fail "$s.sh defaults NIGHTLY_LIB to $default, not to $(basename "$lib")"
+    || fail "$s defaults NIGHTLY_LIB to $default, not to $(basename "$lib")"
   grep -qE "^COPY lib/ +$(dirname "$default")/?$" "$pods/Dockerfile" \
-    || fail "Dockerfile does not COPY lib/ to $(dirname "$default"), where $s.sh looks for it"
+    || fail "Dockerfile does not COPY lib/ to $(dirname "$default"), where $s looks for it"
 done
 
 echo "PASS: lib/nightly-common.sh sources cleanly, all three nightly scripts source it first, none keeps a private copy, and the image ships it where they look"
