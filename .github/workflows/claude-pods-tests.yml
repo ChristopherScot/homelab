@@ -1,0 +1,32 @@
+name: claude-pods tests
+
+# The nightly scripts run unattended; a bug in a rarely-taken path (like
+# the post-merge revert in #60) can sit for weeks before a real run hits
+# it. Their tests live in claude-pods/tests/ and run here on every change
+# so they do not depend on someone remembering to.
+on:
+  pull_request:
+    paths:
+      - 'claude-pods/**'
+      - '.github/workflows/claude-pods-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'claude-pods/**'
+      - '.github/workflows/claude-pods-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run claude-pods/tests
+        run: |
+          set -e
+          for t in claude-pods/tests/*.sh; do
+            echo "== $t"
+            bash "$t"
+          done
