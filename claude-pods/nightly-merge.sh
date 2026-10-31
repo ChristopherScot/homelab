@@ -114,15 +114,16 @@ merge_commit_of() {
   [ -n "$oid" ] && echo "$oid"
 }
 
-# CI's verdict on commit $2 of repo $1, waiting up to 20 minutes for runs
-# still going. Prints one of:
-#   green        every run on the commit succeeded (or was skipped)
+# CI's verdict on commit $2 of repo $1, waiting for runs still going: 40
+# polls, 30s apart by default (NIGHTLY_CI_POLL_SLEEP), so 20 minutes.
+# Prints one of:
+#   green        every run on the commit succeeded, was skipped or neutral
 #   red <why>    a run failed, timed out or failed to start
 #   unclear <c>  runs finished but proved nothing — cancelled, most often,
 #                because the image workflow cancels an in-progress run when
 #                the next merge arrives, so this is normal for the first of
 #                two back-to-back merges
-#   pending      still running after the wait
+#   pending      still running, or gh unreachable, after the wait
 #   none         no workflow ran for the commit, which is the usual case
 #                here: the workflows are path-filtered
 # Only the commit's own runs are consulted: on the second merge of the night
@@ -141,7 +142,7 @@ ci_verdict() {
       end' 2>/dev/null)
     case "$verdict" in
       pending|"") ;;                   # still running, or gh hiccupped: keep waiting
-      none) [ "$i" -ge 4 ] && break ;; # GitHub creates a run within seconds; 2 minutes of nothing means nothing is coming
+      none) [ "$i" -ge 4 ] && break ;; # GitHub creates a run within seconds; 4 polls of nothing means nothing is coming
       *) break ;;
     esac
     sleep "${NIGHTLY_CI_POLL_SLEEP:-30}"
@@ -162,18 +163,19 @@ ci_verdict() {
 # always clean.
 post_merge_sweep() {
   local merged_file="$1" repo pr sha verdict outcome revert_url after
-  # Per repo: the PR whose revert landed tonight, and the first PR whose
-  # run proved nothing (cancelled, still running, no merge commit found).
-  # After the latter, a red run on a later merge could be either's fault.
-  local -A reverted=() unclear=()
+  # Per repo: the PR whose revert was attempted tonight (landed or not, a
+  # later red in that repo cannot be blamed on its own PR), and the first
+  # PR whose run proved nothing (cancelled, still running, no merge commit
+  # found) — after which a red run on a later merge could be either's fault.
+  local -A revert_tried=() unclear=()
   # Not `sort -u ... | while`: a pipeline body is a subshell, and the
   # arrays above would be lost on every iteration. The file's own order is
   # the merge order, and that matters: reverting the last merge for a red
   # that the first one caused repairs nothing.
   while read -r repo pr; do
     [ -z "$repo" ] && continue
-    if [ -n "${reverted[$repo]:-}" ]; then
-      echo "   SKIP    $repo#$pr: a revert already landed in $repo tonight (one per night); not judged"
+    if [ -n "${revert_tried[$repo]:-}" ]; then
+      echo "   SKIP    $repo#$pr: a revert was already attempted in $repo tonight (one per night); not judged"
       continue
     fi
     if ! sha=$(merge_commit_of "$repo" "$pr"); then
@@ -192,12 +194,17 @@ post_merge_sweep() {
           continue
         fi
         echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
-        reverted[$repo]="$pr"
+        revert_tried[$repo]="$pr"
         if revert_url=$(revert_pr "$repo" "$pr"); then
-          if sha=$(merge_commit_of "$repo" "$revert_url") && [ "$(ci_verdict "$repo" "$sha")" = green ]; then
+          if sha=$(merge_commit_of "$repo" "$revert_url"); then
+            after=$(ci_verdict "$repo" "$sha")
+          else
+            after="unknown (no merge commit found for the revert)"
+          fi
+          if [ "$after" = green ]; then
             after="main is green again"
           else
-            after="main is NOT green after the revert; needs a human"
+            after="main's CI is '$after' after the revert, NOT green; needs a human"
           fi
           echo "   REVERTED $repo#$pr via $revert_url; $after"
           gh pr comment "$pr" --repo "$repo" --body \
@@ -216,7 +223,7 @@ post_merge_sweep() {
         unclear[$repo]="${unclear[$repo]:-$pr}"
         ;;
     esac
-  done < <(awk '!seen[$0]++' "$merged_file")
+  done < "$merged_file"
 }
 
 # Sourced by claude-pods/tests/ for the functions: anything a test needs

@@ -10,7 +10,8 @@
 # from canned JSON run through the caller's own `--jq` expression, so the
 # script's classification of runs is what gets exercised. PR N's merge
 # commit is "sha-N"; the runs on a commit come from $FAKE_RUNS/<sha>.json
-# (no file: no runs). A revert always opens PR 99.
+# (no file: no runs). A `run list` without `--commit` — what the old code
+# issued — answers from latest.json. A revert always opens PR 99.
 #
 # Run: claude-pods/tests/nightly-merge-sweep.sh
 set -uo pipefail
@@ -60,8 +61,9 @@ fail() {
 
 run() { printf '[{"status":"completed","conclusion":"%s"}]' "$2" > "$FAKE_RUNS/$1.json"; }
 
-# Runs the sweep over the given "repo pr" lines with a clean slate.
-sweep() {
+# Starts a scenario: clears the fake's log and runs, and records the given
+# "repo pr" merges in merge order.
+merges() {
   : > "$FAKE_GH_LOG"
   rm -f "$FAKE_RUNS"/*.json
   printf '%s\n' "$@" > "$tmp/merged"
@@ -72,7 +74,7 @@ reverted() { grep '^pr revert ' "$FAKE_GH_LOG" | awk '{print $3}' | tr '\n' ' ' 
 # code read) is #8's, and it is red — but #7's own run is red too, so #7
 # broke main and #8 is only sitting on top of the breakage. Exactly one
 # revert, of #7; then the revert's own commit is judged, and it is green.
-sweep "example/repo 7" "example/repo 8"
+merges "example/repo 7" "example/repo 8"
 run sha-7 failure; run sha-8 failure; run latest failure; run sha-99 success
 out=$(post_merge_sweep "$tmp/merged")
 [ "$(reverted)" = "7" ] || fail "expected only #7 reverted, got: '$(reverted)'"
@@ -81,7 +83,7 @@ grep -q 'REVERTED example/repo#7 .*green again' <<<"$out" || fail "revert of #7 
 
 # Same again, but the revert does not fix main: say so, rather than
 # claiming the revert worked.
-sweep "example/repo 7"
+merges "example/repo 7"
 run sha-7 failure; run sha-99 failure
 out=$(post_merge_sweep "$tmp/merged")
 grep -q 'REVERTED example/repo#7 .*NOT green' <<<"$out" || fail "a revert that left main red was not reported as such"
@@ -89,18 +91,18 @@ grep -q 'REVERTED example/repo#7 .*NOT green' <<<"$out" || fail "a revert that l
 # #7's run was cancelled — the image workflow cancels an in-progress run
 # when the next merge lands — and #8's is red. #8's run tested both, so
 # either could be at fault: no revert, call a human.
-sweep "example/repo 7" "example/repo 8"
+merges "example/repo 7" "example/repo 8"
 run sha-7 cancelled; run sha-8 failure; run latest failure
 out=$(post_merge_sweep "$tmp/merged")
 [ -z "$(reverted)" ] || fail "reverted '$(reverted)' although #7's cancelled run left the blame unclear"
-grep -q 'BROKEN  example/repo#8 .*needs a human' <<<"$out" || fail "unclear blame for #8 was not escalated"
+grep -qE 'BROKEN +example/repo#8 .*needs a human' <<<"$out" || fail "unclear blame for #8 was not escalated"
 
 # A merge with no run at all (path-filtered workflows) is neutral: it does
 # not cloud the blame for a later red. #7 green, #8 no run, #9 red → #9.
-sweep "example/repo 7" "example/repo 8" "example/repo 9"
+merges "example/repo 7" "example/repo 8" "example/repo 9"
 run sha-7 success; run sha-9 failure; run latest failure; run sha-99 success
 out=$(post_merge_sweep "$tmp/merged")
 [ "$(reverted)" = "9" ] || fail "expected #9 reverted, got: '$(reverted)'"
-grep -q 'no-ci   example/repo#8' <<<"$out" || fail "#8 (no run) was not reported as having nothing to judge"
+grep -qE 'no-ci +example/repo#8' <<<"$out" || fail "#8 (no run) was not reported as having nothing to judge"
 
 echo "PASS: one red merge reverts only itself; the revert is re-judged; cancelled runs leave the blame unclear; runless merges are neutral"
