@@ -106,6 +106,119 @@ revert_pr() {
   return 1
 }
 
+# Prints the commit that landed PR $2 (number or URL) on main in repo $1;
+# exits non-zero if the PR has none (it was not merged, or gh failed).
+merge_commit_of() {
+  local oid
+  oid=$(gh pr view "$2" --repo "$1" --json mergeCommit --jq '.mergeCommit.oid // empty' 2>/dev/null)
+  [ -n "$oid" ] && echo "$oid"
+}
+
+# CI's verdict on commit $2 of repo $1, waiting up to 20 minutes for runs
+# still going. Prints one of:
+#   green        every run on the commit succeeded (or was skipped)
+#   red <why>    a run failed, timed out or failed to start
+#   unclear <c>  runs finished but proved nothing — cancelled, most often,
+#                because the image workflow cancels an in-progress run when
+#                the next merge arrives, so this is normal for the first of
+#                two back-to-back merges
+#   pending      still running after the wait
+#   none         no workflow ran for the commit, which is the usual case
+#                here: the workflows are path-filtered
+# Only the commit's own runs are consulted: on the second merge of the night
+# "the latest run on main" belongs to a different commit.
+ci_verdict() {
+  local repo="$1" sha="$2" verdict="" i
+  for i in $(seq 1 40); do
+    verdict=$(gh run list --repo "$repo" --commit "$sha" --json status,conclusion --jq '
+      if length == 0 then "none"
+      elif any(.[]; .status != "completed") then "pending"
+      else ([.[].conclusion | select(. != "success" and . != "skipped" and . != "neutral")] | unique) as $bad
+        | if $bad == [] then "green"
+          elif any($bad[]; . == "failure" or . == "timed_out" or . == "startup_failure") then "red \($bad | join(","))"
+          else "unclear \($bad | join(","))"
+          end
+      end' 2>/dev/null)
+    case "$verdict" in
+      pending|"") ;;                   # still running, or gh hiccupped: keep waiting
+      none) [ "$i" -ge 4 ] && break ;; # GitHub creates a run within seconds; 2 minutes of nothing means nothing is coming
+      *) break ;;
+    esac
+    sleep "${NIGHTLY_CI_POLL_SLEEP:-30}"
+  done
+  echo "${verdict:-pending}"
+}
+
+# The post-merge sweep over tonight's merges, listed as "repo pr" lines in
+# file $1 in merge order. A green PR check is not the same as a green main:
+# the merge itself can break things (squashed semantic conflict, two PRs
+# fine apart and broken together). Each merge is judged by the CI run on
+# ITS OWN merge commit, and the first merge in a repo whose run is red is
+# reverted. Reverting fast beats agonising over the merge decision — but a
+# revert is an unreviewed write to main, so at most one lands per repo per
+# night, and only when the blame is clear: every earlier merge in that repo
+# that had a run was green. The revert is then judged like any other
+# commit, because reverting a change something later depends on is not
+# always clean.
+post_merge_sweep() {
+  local merged_file="$1" repo pr sha verdict outcome revert_url after
+  # Per repo: the PR whose revert landed tonight, and the first PR whose
+  # run proved nothing (cancelled, still running, no merge commit found).
+  # After the latter, a red run on a later merge could be either's fault.
+  local -A reverted=() unclear=()
+  # Not `sort -u ... | while`: a pipeline body is a subshell, and the
+  # arrays above would be lost on every iteration. The file's own order is
+  # the merge order, and that matters: reverting the last merge for a red
+  # that the first one caused repairs nothing.
+  while read -r repo pr; do
+    [ -z "$repo" ] && continue
+    if [ -n "${reverted[$repo]:-}" ]; then
+      echo "   SKIP    $repo#$pr: a revert already landed in $repo tonight (one per night); not judged"
+      continue
+    fi
+    if ! sha=$(merge_commit_of "$repo" "$pr"); then
+      echo "   UNKNOWN $repo#$pr: no merge commit found; not reverting"
+      unclear[$repo]="${unclear[$repo]:-$pr}"
+      continue
+    fi
+    verdict=$(ci_verdict "$repo" "$sha")
+    case "$verdict" in
+      green) echo "   ok      $repo#$pr (main green at ${sha:0:7})" ;;
+      none)  echo "   no-ci   $repo#$pr (no workflow ran for ${sha:0:7}; nothing to judge)" ;;
+      red\ *)
+        outcome="${verdict#red }"
+        if [ -n "${unclear[$repo]:-}" ]; then
+          echo "   BROKEN  $repo#$pr -> main is $outcome at ${sha:0:7}, but #${unclear[$repo]} before it was not green either, so either could be at fault; not reverting — needs a human"
+          continue
+        fi
+        echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
+        reverted[$repo]="$pr"
+        if revert_url=$(revert_pr "$repo" "$pr"); then
+          if sha=$(merge_commit_of "$repo" "$revert_url") && [ "$(ci_verdict "$repo" "$sha")" = green ]; then
+            after="main is green again"
+          else
+            after="main is NOT green after the revert; needs a human"
+          fi
+          echo "   REVERTED $repo#$pr via $revert_url; $after"
+          gh pr comment "$pr" --repo "$repo" --body \
+            "Nightly: this merge turned main $outcome, so it has been reverted automatically ($revert_url); $after. The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
+        else
+          # A failed revert is worse than a failed merge: main stays broken
+          # and nobody is watching until morning. Say so loudly in the log,
+          # and link the revert PR if one was opened but not merged.
+          echo "   REVERT FAILED $repo#$pr — main left broken, needs a human${revert_url:+ (revert PR left open: $revert_url)}"
+          gh pr comment "$pr" --repo "$repo" --body \
+            "Nightly: this merge turned main $outcome and the automatic revert FAILED.${revert_url:+ A revert PR was opened but could not be merged: $revert_url.} main needs manual attention." >/dev/null 2>&1
+        fi
+        ;;
+      *)
+        echo "   UNKNOWN $repo#$pr (main CI is '$verdict' at ${sha:0:7}; not reverting)"
+        unclear[$repo]="${unclear[$repo]:-$pr}"
+        ;;
+    esac
+  done < <(awk '!seen[$0]++' "$merged_file")
+}
+
 # Sourced by claude-pods/tests/ for the functions: anything a test needs
 # must be defined above this line, and sourcing also applies the `set`
 # options from the top of the file. Everything below is the job itself.
@@ -302,48 +415,10 @@ $(printf '%s' "$verdict" | tail -30)" >/dev/null 2>&1
   done
 done
 
-# Post-merge sweep: a green PR check is not the same as a green main — the
-# merge itself can break things (squashed semantic conflict, two PRs fine
-# apart and broken together). Wait for main's CI, and revert anything that
-# turned it red. Reverting fast beats agonising over the merge decision.
 MERGED_FILE="$STATE_DIR/merged-$(date +%Y%m%d)"
 if [ -s "$MERGED_FILE" ]; then
   echo "=== post-merge verification $(date -Is) ==="
-  sort -u "$MERGED_FILE" | while read -r repo pr; do
-    [ -z "$repo" ] && continue
-
-    # Give main's run time to start and finish before judging it.
-    status=""
-    for _ in $(seq 1 40); do
-      status=$(gh run list --repo "$repo" --branch main --limit 1 \
-                 --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null)
-      if [[ "$status" == completed\ * ]]; then
-        break
-      fi
-      sleep 30
-    done
-
-    if [[ "$status" == "completed success" ]]; then
-      echo "   ok      $repo#$pr (main green)"
-    elif [[ "$status" == completed\ * ]]; then
-      outcome="${status#completed }"
-      echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
-      if revert_url=$(revert_pr "$repo" "$pr"); then
-        echo "   REVERTED $repo#$pr via $revert_url"
-        gh pr comment "$pr" --repo "$repo" --body \
-          "Nightly: this merge turned main $outcome, so it has been reverted automatically ($revert_url). The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
-      else
-        # A failed revert is worse than a failed merge: main stays broken
-        # and nobody is watching until morning. Say so loudly in the log,
-        # and link the revert PR if one was opened but not merged.
-        echo "   REVERT FAILED $repo#$pr — main left broken, needs a human${revert_url:+ (revert PR left open: $revert_url)}"
-        gh pr comment "$pr" --repo "$repo" --body \
-          "Nightly: this merge turned main $outcome and the automatic revert FAILED.${revert_url:+ A revert PR was opened but could not be merged: $revert_url.} main needs manual attention." >/dev/null 2>&1
-      fi
-    else
-      echo "   UNKNOWN $repo#$pr (main CI still '$status' after 20m; not reverting)"
-    fi
-  done
+  post_merge_sweep "$MERGED_FILE"
 fi
 
 echo "=== nightly-merge complete $(date -Is) ==="
