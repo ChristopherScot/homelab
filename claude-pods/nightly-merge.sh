@@ -115,15 +115,15 @@ merge_commit_of() {
 }
 
 # CI's verdict on commit $2 of repo $1, waiting for runs still going: 40
-# polls 30s apart, so 20 minutes (the env override of the sleep exists only
-# so the test does not wait). Prints one of:
+# polls 30s apart, so 20 minutes. Prints one of:
 #   green        every run on the commit succeeded, was skipped or neutral
 #   red <why>    a run failed, timed out or failed to start
 #   unclear <c>  runs finished but proved nothing — cancelled, most often,
 #                because the image workflow cancels an in-progress run when
 #                the next merge arrives, so this is normal for the first of
 #                two back-to-back merges
-#   pending      still running, or gh unreachable, after the wait
+#   pending      still running after the wait
+#   unreachable  gh answered nothing for the whole wait
 #   none         no workflow ran for the commit, which is the usual case
 #                here: the workflows are path-filtered
 # Only the runs the merge itself triggered are consulted — its own commit,
@@ -136,7 +136,7 @@ ci_verdict() {
     verdict=$(gh run list --repo "$repo" --commit "$sha" --event push --json status,conclusion --jq '
       if length == 0 then "none"
       elif any(.[]; .status != "completed") then "pending"
-      else ([.[].conclusion // "null" | select(. != "success" and . != "skipped" and . != "neutral")] | unique) as $bad
+      else ([.[] | .conclusion // "null" | select(. != "success" and . != "skipped" and . != "neutral")] | unique) as $bad
         | if $bad == [] then "green"
           elif any($bad[]; . == "failure" or . == "timed_out" or . == "startup_failure") then "red \($bad | join(","))"
           else "unclear \($bad | join(","))"
@@ -144,12 +144,13 @@ ci_verdict() {
       end' 2>/dev/null)
     case "$verdict" in
       pending|"") ;;                   # still running, or gh hiccupped: keep waiting
-      none) [ "$i" -ge 4 ] && break ;; # GitHub creates a run within seconds; 4 polls of nothing means nothing is coming
+      none) [ "$i" -ge 4 ] && break ;; # GitHub creates a run within seconds; still none by the 4th poll (~90s in) means none is coming
       *) break ;;
     esac
+    # The env override exists only so the test does not wait.
     sleep "${NIGHTLY_CI_POLL_SLEEP:-30}"
   done
-  echo "${verdict:-pending}"
+  echo "${verdict:-unreachable}"
 }
 
 # The post-merge sweep over tonight's merges, listed as "repo pr" lines in
@@ -164,7 +165,7 @@ ci_verdict() {
 # commit, because reverting a change something later depends on is not
 # always clean.
 post_merge_sweep() {
-  local merged_file="$1" repo pr sha verdict outcome revert_url revert_sha after
+  local merged_file="$1" repo pr sha verdict outcome revert_url revert_sha revert_verdict after
   # Per repo: the PR whose revert was attempted tonight (landed or not, a
   # later red in that repo cannot be blamed on its own PR), and the first
   # PR whose run proved nothing (cancelled, still running, no merge commit
@@ -179,11 +180,11 @@ post_merge_sweep() {
   # the body can swallow the remaining lines from stdin.
   while read -r -u 3 repo pr; do
     if [ -z "$pr" ]; then
-      echo "   MALFORMED line in $merged_file: '$repo $pr'; skipped"
+      echo "   MALFORMED line in $merged_file: '$repo'; skipped"
       continue
     fi
     if [ -n "${revert_tried[$repo]:-}" ]; then
-      echo "   SKIP    $repo#$pr: a revert was already attempted in $repo tonight (one per night); not judged"
+      echo "   SKIP    $repo#$pr: a revert was already attempted in $repo tonight (one per repo per night); not judged"
       continue
     fi
     if ! sha=$(merge_commit_of "$repo" "$pr"); then
@@ -194,24 +195,24 @@ post_merge_sweep() {
     verdict=$(ci_verdict "$repo" "$sha")
     case "$verdict" in
       green) echo "   ok      $repo#$pr (main green at ${sha:0:7})" ;;
-      none)  echo "   no-ci   $repo#$pr (no workflow ran for ${sha:0:7}; nothing to judge)" ;;
+      none)  echo "   no-ci   $repo#$pr (no push run on ${sha:0:7} within the wait; nothing to judge)" ;;
       red\ *)
         outcome="${verdict#red }"
         if [ -n "${unclear[$repo]:-}" ]; then
-          echo "   BROKEN  $repo#$pr -> main is $outcome at ${sha:0:7}, but #${unclear[$repo]} before it was not green either, so either could be at fault; not reverting — needs a human"
+          echo "   BROKEN  $repo#$pr -> main is $outcome at ${sha:0:7}, but #${unclear[$repo]} before it could not be shown green, so either could be at fault; not reverting — needs a human"
           continue
         fi
-        echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
+        echo "   BROKEN  $repo#$pr -> main is $outcome at ${sha:0:7}; reverting"
         revert_tried[$repo]="$pr"
         if revert_url=$(revert_pr "$repo" "$pr"); then
           if revert_sha=$(merge_commit_of "$repo" "$revert_url"); then
-            verdict=$(ci_verdict "$repo" "$revert_sha")
+            revert_verdict=$(ci_verdict "$repo" "$revert_sha")
           else
-            verdict="unknown (no merge commit found for the revert)"
+            revert_verdict="unknown (no merge commit found for the revert)"
           fi
-          case "$verdict" in
+          case "$revert_verdict" in
             green) after="main is green again" ;;
-            *)     after="main's CI is '$verdict' after the revert, NOT green; needs a human" ;;
+            *)     after="main's CI is '$revert_verdict' after the revert, NOT green; needs a human" ;;
           esac
           echo "   REVERTED $repo#$pr via $revert_url; $after"
           gh pr comment "$pr" --repo "$repo" --body \
@@ -226,7 +227,7 @@ post_merge_sweep() {
         fi
         ;;
       *)
-        echo "   UNKNOWN $repo#$pr (main CI is '$verdict' at ${sha:0:7}; not reverting)"
+        echo "   UNKNOWN $repo#$pr (main CI is '$verdict' at ${sha:0:7} after the wait; not reverting)"
         unclear[$repo]="${unclear[$repo]:-$pr}"
         ;;
     esac

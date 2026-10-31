@@ -38,6 +38,16 @@ case "$1 $2" in
   "pr view")   # $3 is a PR number or URL
     printf '{"mergeCommit":{"oid":"sha-%s"}}' "${3##*/}" | jq -r "$jq_expr" ;;
   "run list")
+    # Only flags the real `gh run list` has (gh 2.103): #60 was a flag gh
+    # does not have, hidden by 2>/dev/null.
+    shift 2
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -R|--repo|-b|--branch|-c|--commit|-e|--event|-w|--workflow|-s|--status|-u|--user|-L|--limit|--created|--json|-q|--jq|-t|--template) shift 2 ;;
+        -a|--all) shift ;;
+        *) echo "unknown flag: $1" >&2; exit 1 ;;
+      esac
+    done
     { [ -f "$FAKE_RUNS/$commit.json" ] && cat "$FAKE_RUNS/$commit.json" || echo '[]'; } | jq -r "$jq_expr" ;;
   "pr revert") [ -n "${FAKE_GH_REVERT_FAILS:-}" ] && exit 1; echo "https://github.com/example/repo/pull/99" ;;
   "api repos/example/repo") echo "false true" ;;
