@@ -39,7 +39,7 @@ case "$1 $2" in
     printf '{"mergeCommit":{"oid":"sha-%s"}}' "${3##*/}" | jq -r "$jq_expr" ;;
   "run list")
     { [ -f "$FAKE_RUNS/$commit.json" ] && cat "$FAKE_RUNS/$commit.json" || echo '[]'; } | jq -r "$jq_expr" ;;
-  "pr revert") echo "https://github.com/example/repo/pull/99" ;;
+  "pr revert") [ -n "${FAKE_GH_REVERT_FAILS:-}" ] && exit 1; echo "https://github.com/example/repo/pull/99" ;;
   "api repos/example/repo") echo "false true" ;;
   *) exit 0 ;;
 esac
@@ -59,7 +59,8 @@ fail() {
   exit 1
 }
 
-run() { printf '[{"status":"completed","conclusion":"%s"}]' "$2" > "$FAKE_RUNS/$1.json"; }
+# Records one completed CI run with conclusion $2 on commit $1.
+ci_run() { printf '[{"status":"completed","conclusion":"%s"}]' "$2" > "$FAKE_RUNS/$1.json"; }
 
 # Starts a scenario: clears the fake's log and runs, and records the given
 # "repo pr" merges in merge order.
@@ -75,7 +76,7 @@ reverted() { grep '^pr revert ' "$FAKE_GH_LOG" | awk '{print $3}' | tr '\n' ' ' 
 # broke main and #8 is only sitting on top of the breakage. Exactly one
 # revert, of #7; then the revert's own commit is judged, and it is green.
 merges "example/repo 7" "example/repo 8"
-run sha-7 failure; run sha-8 failure; run latest failure; run sha-99 success
+ci_run sha-7 failure; ci_run sha-8 failure; ci_run latest failure; ci_run sha-99 success
 out=$(post_merge_sweep "$tmp/merged")
 [ "$(reverted)" = "7" ] || fail "expected only #7 reverted, got: '$(reverted)'"
 grep -q '^run list .*--commit sha-99' "$FAKE_GH_LOG" || fail "the revert's own CI run was never checked"
@@ -84,7 +85,7 @@ grep -q 'REVERTED example/repo#7 .*green again' <<<"$out" || fail "revert of #7 
 # Same again, but the revert does not fix main: say so, rather than
 # claiming the revert worked.
 merges "example/repo 7"
-run sha-7 failure; run sha-99 failure
+ci_run sha-7 failure; ci_run sha-99 failure
 out=$(post_merge_sweep "$tmp/merged")
 grep -q 'REVERTED example/repo#7 .*NOT green' <<<"$out" || fail "a revert that left main red was not reported as such"
 
@@ -92,7 +93,7 @@ grep -q 'REVERTED example/repo#7 .*NOT green' <<<"$out" || fail "a revert that l
 # when the next merge lands — and #8's is red. #8's run tested both, so
 # either could be at fault: no revert, call a human.
 merges "example/repo 7" "example/repo 8"
-run sha-7 cancelled; run sha-8 failure; run latest failure
+ci_run sha-7 cancelled; ci_run sha-8 failure; ci_run latest failure
 out=$(post_merge_sweep "$tmp/merged")
 [ -z "$(reverted)" ] || fail "reverted '$(reverted)' although #7's cancelled run left the blame unclear"
 grep -qE 'BROKEN +example/repo#8 .*needs a human' <<<"$out" || fail "unclear blame for #8 was not escalated"
@@ -100,9 +101,24 @@ grep -qE 'BROKEN +example/repo#8 .*needs a human' <<<"$out" || fail "unclear bla
 # A merge with no run at all (path-filtered workflows) is neutral: it does
 # not cloud the blame for a later red. #7 green, #8 no run, #9 red → #9.
 merges "example/repo 7" "example/repo 8" "example/repo 9"
-run sha-7 success; run sha-9 failure; run latest failure; run sha-99 success
+ci_run sha-7 success; ci_run sha-9 failure; ci_run latest failure; ci_run sha-99 success
 out=$(post_merge_sweep "$tmp/merged")
 [ "$(reverted)" = "9" ] || fail "expected #9 reverted, got: '$(reverted)'"
 grep -qE 'no-ci +example/repo#8' <<<"$out" || fail "#8 (no run) was not reported as having nothing to judge"
 
-echo "PASS: one red merge reverts only itself; the revert is re-judged; cancelled runs leave the blame unclear; runless merges are neutral"
+# The revert of #7 cannot be opened. main stays broken, so #8's red run
+# proves nothing about #8: it is skipped, not judged and not reverted.
+merges "example/repo 7" "example/repo 8"
+ci_run sha-7 failure; ci_run sha-8 failure
+out=$(FAKE_GH_REVERT_FAILS=1 post_merge_sweep "$tmp/merged")
+grep -q 'REVERT FAILED example/repo#7' <<<"$out" || fail "a revert that could not be opened was not reported as failed"
+grep -qE 'SKIP +example/repo#8' <<<"$out" || fail "#8 was judged although the revert before it in the same repo failed"
+grep -q -- '--commit sha-8' "$FAKE_GH_LOG" && fail "#8's run was consulted although a revert was already attempted in its repo"
+
+# One revert per repo, not per night: a red in each of two repos gets two.
+merges "example/repo 7" "other/repo 8"
+ci_run sha-7 failure; ci_run sha-8 failure; ci_run sha-99 success
+out=$(post_merge_sweep "$tmp/merged")
+[ "$(reverted)" = "7 8" ] || fail "expected #7 and #8 (different repos) both reverted, got: '$(reverted)'"
+
+echo "PASS: one red merge reverts only itself; the revert is re-judged; cancelled runs leave the blame unclear; runless merges are neutral; the cap is per repo"
