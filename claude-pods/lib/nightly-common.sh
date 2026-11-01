@@ -116,6 +116,32 @@ require_gh_token() {
   if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token" >&2; return 1; fi
 }
 
+# Takes GH_TOKEN out of agent output before it is quoted anywhere public.
+#
+# The agent inherits GH_TOKEN so it can run gh, and the allow-list lets it
+# run env and cat. Its output reaches pull requests on public repos, so
+# the token is removed rather than trusted not to appear. Safe for a
+# GitHub token because those are [A-Za-z0-9_]; a secret containing a
+# backslash or the sed delimiter would need another way.
+#
+# Call require_gh_token first: with GH_TOKEN unset this passes its input
+# through unchanged.
+redact() {
+  if [ -n "$GH_TOKEN" ]; then
+    sed "s|$GH_TOKEN|[redacted]|g"
+  else
+    cat
+  fi
+}
+
+# Wraps agent output for a public pull request. Unfenced, its markdown
+# renders: a bare @name notifies that person, and #52 cross-links an
+# issue back to this PR. Four backticks, because the agent's own output
+# may contain a three-backtick fence.
+fence() {
+  printf '````\n%s\n````' "$(printf '%s' "$1" | tail -30 | redact)"
+}
+
 # --- Claude credential -----------------------------------------------------
 # Refuse to start on a credential that cannot work.
 #
