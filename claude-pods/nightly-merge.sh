@@ -143,8 +143,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         # window would otherwise be merged carrying a pass earned on the
         # commit it replaced. GitHub refuses the merge instead, which the
         # failure path below already handles.
-        if gh pr merge "$pr" --repo "$repo" $method \
-          --match-head-commit "$sha" --delete-branch >/dev/null 2>&1; then
+        if merge_pr "$repo" "$pr" "$sha"; then
           echo "MERGED $repo#$pr"
           # Recorded so the post-merge sweep below can revert it if main
           # goes red. Merging is only safe because undoing it is cheap.
@@ -209,16 +208,17 @@ if [ -s "$MERGED_FILE" ]; then
     elif [[ "$status" == completed\ * ]]; then
       outcome="${status#completed }"
       echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
-      if gh pr revert "$pr" --repo "$repo" --merge >/dev/null 2>&1; then
-        echo "   REVERTED $repo#$pr"
+      if revert_url=$(revert_pr "$repo" "$pr"); then
+        echo "   REVERTED $repo#$pr ($revert_url)"
         gh pr comment "$pr" --repo "$repo" --body \
-          "Nightly: this merge turned main $outcome, so it has been reverted automatically. The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
+          "Nightly: this merge turned main $outcome, so it has been reverted automatically ($revert_url). The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
       else
         # A failed revert is worse than a failed merge: main stays broken
-        # and nobody is watching until morning. Say so loudly in the log.
-        echo "   REVERT FAILED $repo#$pr — main left broken, needs a human"
+        # and nobody is watching until morning. Say so loudly in the log,
+        # with the revert PR's URL when one was opened but would not land.
+        echo "   REVERT FAILED $repo#$pr — main left broken, needs a human${revert_url:+ (revert opened: $revert_url)}"
         gh pr comment "$pr" --repo "$repo" --body \
-          "Nightly: this merge turned main $outcome and the automatic revert FAILED. main needs manual attention." >/dev/null 2>&1
+          "Nightly: this merge turned main $outcome and the automatic revert FAILED. main needs manual attention.${revert_url:+ A revert pull request was opened but could not be merged: $revert_url}" >/dev/null 2>&1
       fi
     else
       echo "   UNKNOWN $repo#$pr (main CI still '$status' after 20m; not reverting)"
