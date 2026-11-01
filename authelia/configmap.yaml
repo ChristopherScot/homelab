@@ -87,6 +87,21 @@ data:
           subject:
             - "group:users"
 
+        # Kaneo: the board the claude-pods take work from, and where
+        # tickets get filed by hand. Household members with 2FA, same
+        # as paperless/send above.
+        #
+        # Only the UI ingress (kaneo-web) forwards here. Kaneo's /api
+        # and /.well-known are served by a separate ungated ingress,
+        # because the pods authenticate with device-code bearer tokens
+        # and cannot follow a login redirect. Kaneo authenticates /api
+        # itself. Same reason as PicoShare's split above.
+        - domain:
+            - kaneo.home.chrisscotmartin.com
+          policy: two_factor
+          subject:
+            - "group:users"
+
     session:
       # session.secret comes from AUTHELIA_SESSION_SECRET env (Authelia maps
       # underscored env vars to nested config keys at startup).
