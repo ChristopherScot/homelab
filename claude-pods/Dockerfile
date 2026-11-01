@@ -322,6 +322,9 @@ COPY kbrowser.sh /usr/local/bin/kbrowser
 COPY nightly-author.sh /usr/local/bin/nightly-author
 COPY nightly-merge.sh /usr/local/bin/nightly-merge
 COPY nightly-test.sh /usr/local/bin/nightly-test
+# The preamble all three share is one sourced file, at the path the
+# scripts default NIGHTLY_LIB to.
+COPY lib/ /usr/local/share/claude-pods/lib/
 COPY prompts/ /usr/local/share/claude-pods/prompts/
 # The scoped Bash allow-list ships inside prompts/ (copied above). It
 # lives there rather than beside the manifests because Argo parses every
