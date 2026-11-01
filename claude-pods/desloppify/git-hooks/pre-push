@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Refuses a push to a protected branch, whatever invoked it.
+#
+# The tool policy decides Bash commands the agent issues. git invoked any
+# other way - by the runner, by a subprocess, by a tool that shells out -
+# never reaches it. This runs inside git itself, so it sees every push
+# from this clone.
+#
+# git passes each ref being pushed on stdin:
+#     <local ref> <local sha> <remote ref> <remote sha>
+# and a non-zero exit refuses the whole push.
+set -uo pipefail
+
+PROTECTED='^refs/heads/(main|master|production|prod|release)$'
+
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+  [ -z "${remote_ref:-}" ] && continue
+  if [[ "$remote_ref" =~ $PROTECTED ]]; then
+    echo "pre-push: refusing to push to ${remote_ref#refs/heads/}." >&2
+    echo "  This clone may only push to desloppify/* and the integration" >&2
+    echo "  branch. Nothing here may write to a protected branch." >&2
+    exit 1
+  fi
+done
+
+exit 0

@@ -55,6 +55,21 @@ if [ ! -d "$dir/.git" ]; then
   git clone --quiet "https://x-access-token:$GH_TOKEN@github.com/$REPO.git" "$dir" || exit 1
 fi
 
+# git's own refusal to push to a protected branch, independent of the
+# agent's tool policy. A push the policy never sees - issued by the
+# runner, or by a subprocess the agent spawned rather than a tool call -
+# still goes through this, and a direct push to main needs no PR to do
+# damage.
+#
+# Verified at install time: a hook that silently stops refusing is worse
+# than none, because the layer above it was removed on its account.
+install -m 755 "$HERE/git-hooks/pre-push" "$dir/.git/hooks/pre-push" || exit 1
+if printf 'refs/heads/x 1 refs/heads/main 2\n' | "$dir/.git/hooks/pre-push" >/dev/null 2>&1; then
+  echo "FATAL: the pre-push hook does not refuse main; refusing to run"
+  exit 1
+fi
+echo "pre-push hook: installed, refuses main"
+
 git -C "$dir" fetch --quiet origin || exit 1
 
 # The integration branch is created once, from main, and never again:
