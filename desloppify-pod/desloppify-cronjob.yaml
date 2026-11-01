@@ -5,9 +5,43 @@
 # production, so its PAT is scoped to that one repo with no
 # Administration, and no broader token sits beside it.
 #
-# Like the other nightly jobs this holds no logic - it execs the script
-# baked into the image, so the work runs in desloppify-0 with its PVCs,
-# its Vault-mounted tokens and its node_modules cache.
+# This holds no logic - it execs the script baked into the image, so the
+# work runs in desloppify-0 with its PVCs, its Vault-mounted tokens and
+# its node_modules cache.
+---
+# Only what the trigger needs: find the pod, exec one script in it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: desloppify-runner
+  namespace: claude-pods
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: desloppify-runner
+  namespace: claude-pods
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: desloppify-runner
+  namespace: claude-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: desloppify-runner
+subjects:
+  - kind: ServiceAccount
+    name: desloppify-runner
+    namespace: claude-pods
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -31,7 +65,7 @@ spec:
       activeDeadlineSeconds: 10800
       template:
         spec:
-          serviceAccountName: nightly-runner
+          serviceAccountName: desloppify-runner
           restartPolicy: Never
           containers:
             - name: trigger
@@ -42,4 +76,4 @@ spec:
                 - |
                   set -eu
                   exec kubectl exec -n claude-pods desloppify-0 -- \
-                    /usr/local/share/claude-pods/desloppify/nightly-desloppify.sh
+                    /usr/local/bin/nightly-desloppify.sh

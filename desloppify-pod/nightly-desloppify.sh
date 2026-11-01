@@ -13,7 +13,7 @@ PROJECT_PATH="projects/webapp"
 STATE_DIR="${DESLOP_STATE_DIR:-/workspace/.desloppify-state}"
 WORK_ROOT="${DESLOP_WORK_ROOT:-/workspace}"
 LOG="$STATE_DIR/desloppify-$(date +%Y%m%d).log"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HERE="${DESLOP_LIB_DIR:-/usr/local/share/desloppify-pod}"
 
 mkdir -p "$STATE_DIR"
 if [ -w /proc/1/fd/1 ]; then
@@ -94,12 +94,12 @@ rm -rf "$dir/.desloppify"
 ln -s "$STATE_DIR/webapp" "$dir/.desloppify"
 
 if ! command -v desloppify >/dev/null 2>&1; then
-  echo "installing desloppify"
-  pip install --quiet --upgrade "desloppify[full]" || exit 1
+  echo "FATAL: desloppify is not on PATH; it is baked into the image"
+  exit 1
 fi
 
 report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
-python3 "$HERE/run.py" \
+"${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
   --repo "$REPO" --dir "$dir" --branch "$branch" \
   --integration-branch "$INTEGRATION_BRANCH" \
   --state-dir "$STATE_DIR/webapp" \

@@ -6,10 +6,10 @@
 # one repository with no Administration. A pod that also held
 # claude-git-creds would have a second, broader token sitting beside it.
 #
-# It shares the session pods' image, which already carries node 22, yarn
-# and the claude binary - everything desloppify's TypeScript detectors
-# shell out to (npx, tsc, eslint, knip, vitest) and everything the agent
-# needs to verify a refactor by running `yarn lint` and the tests.
+# Its image is its own (desloppify-pod/Dockerfile), carrying node 22,
+# yarn, python and the claude binary - what desloppify's TypeScript
+# detectors shell out to (npx, tsc, eslint, knip, vitest) and what the
+# agent needs to verify a refactor by running `yarn lint` and the tests.
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -40,7 +40,7 @@ spec:
         - name: ghcr-pull
       containers:
         - name: desloppify
-          image: ghcr.io/christopherscot/claude-pod:latest
+          image: ghcr.io/christopherscot/desloppify-pod:latest
           imagePullPolicy: Always
           command: ["sleep", "infinity"]
           env:
