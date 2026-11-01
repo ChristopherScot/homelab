@@ -59,6 +59,7 @@ APPS=(
   "dead-mans-switch|kv/data/dead-mans-switch/*|dead-mans-switch|external-secrets-sa"
   "longhorn|kv/data/longhorn/*|longhorn-system|external-secrets-sa"
   "picoshare|kv/data/picoshare/*|picoshare|external-secrets-sa"
+  "kaneo|kv/data/kaneo/*|kaneo|external-secrets-sa"
 )
 
 for entry in "${APPS[@]}"; do
@@ -249,7 +250,7 @@ vault write auth/kubernetes/role/paperless \
 # Each role binds a dedicated ServiceAccount (cnpg-backup) rather than the
 # external-secrets-sa the app roles use, so the grant cannot be picked up
 # by anything else in the namespace.
-for ns in shlink monitoring pokedex; do
+for ns in shlink monitoring pokedex kaneo; do
   vault policy write "cnpg-backup-$ns" - <<EOF
 path "kv/data/cnpg-backups/*"     { capabilities = ["read"] }
 path "kv/metadata/cnpg-backups/*" { capabilities = ["read", "list"] }

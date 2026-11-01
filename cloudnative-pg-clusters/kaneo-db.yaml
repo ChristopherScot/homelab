@@ -1,0 +1,110 @@
+# Postgres backend for Kaneo (the claude-pods work queue). Same pattern
+# as shlink-db: 2 instances, continuous backup to S3, daily scheduled
+# backup staggered off the others.
+#
+# The kaneo namespace is created here because this cluster and the Kaneo
+# app both live in it, and the pg-clusters Application's CreateNamespace
+# only covers its own destination namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false
+  name: kaneo
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: kaneo-db
+  namespace: kaneo
+spec:
+  instances: 2
+  monitoring:
+    enablePodMonitor: true
+  storage:
+    size: 5Gi
+    storageClass: longhorn-cnpg
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  bootstrap:
+    initdb:
+      database: kaneo
+      owner: kaneo
+
+  # Continuous backup to S3, same shared creds as the other clusters.
+  # This database is the only record of what the pods are supposed to be
+  # working on — losing it loses the backlog, not just a cache.
+  backup:
+    barmanObjectStore:
+      destinationPath: "s3://cscot-homelab-pg-backups/kaneo"
+      s3Credentials:
+        accessKeyId:
+          name: kaneo-db-backup-s3
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: kaneo-db-backup-s3
+          key: ACCESS_SECRET_KEY
+      wal:
+        compression: gzip
+    retentionPolicy: "30d"
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: ScheduledBackup
+metadata:
+  name: kaneo-db-daily
+  namespace: kaneo
+spec:
+  # CNPG 6-field cron (sec min hour dom mon dow) — 05:00 daily, after
+  # shlink's 04:45, so no two clusters push to S3 at once.
+  schedule: "0 0 5 * * *"
+  backupOwnerReference: self
+  cluster:
+    name: kaneo-db
+---
+# S3 credentials for Barman, via the per-namespace cnpg-backup
+# ServiceAccount + Vault role (cnpg-backup-kaneo), same as shlink.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cnpg-backup
+  namespace: kaneo
+---
+apiVersion: external-secrets.io/v1beta1
+kind: SecretStore
+metadata:
+  name: vault-cnpg-backup
+  namespace: kaneo
+spec:
+  provider:
+    vault:
+      server: http://vault.default.svc.cluster.local:8200
+      path: kv
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: cnpg-backup-kaneo
+          serviceAccountRef:
+            name: cnpg-backup
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: kaneo-db-backup-s3
+  namespace: kaneo
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: vault-cnpg-backup
+    kind: SecretStore
+  target:
+    name: kaneo-db-backup-s3
+  data:
+    - secretKey: ACCESS_KEY_ID
+      remoteRef: { key: cnpg-backups/s3, property: access_key_id }
+    - secretKey: ACCESS_SECRET_KEY
+      remoteRef: { key: cnpg-backups/s3, property: secret_access_key }
