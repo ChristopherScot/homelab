@@ -332,6 +332,22 @@ COPY prompts/ /usr/local/share/claude-pods/prompts/
 # there has no 'kind' and breaks the whole Application's sync.
 # dbuild: rootless in-pod image build + push (buildkit under rootlesskit).
 COPY dbuild.sh /usr/local/bin/dbuild
+
+# The desloppify pod: python for desloppify itself and for the runner that
+# drives it. Trixie ships 3.13, which satisfies desloppify's 3.11 floor.
+# The venv keeps pip out of the system site-packages that Debian manages.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3 python3-venv python3-dev build-essential \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv /opt/desloppify-venv \
+    && /opt/desloppify-venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/desloppify-venv/bin/pip install --no-cache-dir "desloppify[full]" claude-agent-sdk
+ENV DESLOPPIFY_VENV=/opt/desloppify-venv
+COPY desloppify/ /usr/local/share/claude-pods/desloppify/
+RUN chmod +x /usr/local/share/claude-pods/desloppify/nightly-desloppify.sh \
+             /usr/local/share/claude-pods/desloppify/verify-token-scope.sh \
+             /usr/local/share/claude-pods/desloppify/git-hooks/pre-push
+
 RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild /usr/local/bin/nightly-author /usr/local/bin/nightly-merge /usr/local/bin/nightly-test
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)

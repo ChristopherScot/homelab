@@ -1,0 +1,46 @@
+# Nightly desloppify run against projects/webapp in schoolhouse-world/app.
+#
+# Runs at 03:00, between the test pod (02:00) and the merge pod (04:00),
+# on a different repository from any of them. It shares the session pods'
+# image and PVC but not their credentials: this one gets a PAT scoped to
+# a single repo with no Administration, because the repo it works on is
+# one where a merge to main reaches production.
+#
+# Like the other nightly jobs this holds no logic - it execs the script
+# baked into the image, so the work runs inside the session pod with its
+# PVC, its Vault-mounted tokens and its ~/.claude configuration.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-desloppify
+  namespace: claude-pods
+spec:
+  schedule: "0 3 * * *"
+  timeZone: "America/New_York"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      # One attempt. A desloppify session that failed halfway has already
+      # written to its state directory and may have pushed a branch;
+      # starting again from the top would duplicate that work rather than
+      # resume it.
+      backoffLimit: 0
+      activeDeadlineSeconds: 10800
+      template:
+        spec:
+          serviceAccountName: nightly-runner
+          restartPolicy: Never
+          containers:
+            - name: trigger
+              image: bitnami/kubectl:1.30
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  exec kubectl exec -n claude-pods claude-session-0 -- \
+                    /usr/local/share/claude-pods/desloppify/nightly-desloppify.sh
