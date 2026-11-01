@@ -105,6 +105,19 @@ spec:
             - name: repos
               mountPath: /run/secrets/repos
               readOnly: true
+            # The desloppify pod's own credentials, kept separate from
+            # claude-git-creds: that token can push to the homelab repos,
+            # and the guarantee that this pod cannot reach main rests on
+            # its PAT being scoped to one repo with no Administration.
+            - name: desloppify-git
+              mountPath: /run/secrets/desloppify
+              readOnly: true
+            # Subscription token from `claude setup-token`, valid a year.
+            # The session pods' interactive login is periodically found
+            # blanked, and this pod has no peer to repair from.
+            - name: desloppify-claude
+              mountPath: /run/secrets/claude
+              readOnly: true
           # Requests are a SCHEDULING RESERVATION, not a quota: 500m CPU
           # was held against ~5m actual use, so three pods parked 1.5
           # cores the scheduler could not give anything else. There is
@@ -133,6 +146,14 @@ spec:
         - name: repos
           secret:
             secretName: claude-repos
+            optional: true
+        - name: desloppify-git
+          secret:
+            secretName: desloppify-git
+            optional: true
+        - name: desloppify-claude
+          secret:
+            secretName: desloppify-claude
             optional: true
   volumeClaimTemplates:
     # $HOME — SSD (1 replica). Small + latency-sensitive; the interactive
