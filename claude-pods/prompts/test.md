@@ -68,15 +68,19 @@ For each bug you actually reproduced, file one issue:
 - A bug that predates this PR is still worth filing; say so in the body.
 - Fix nothing. Push nothing. Finding and reporting is the whole job.
 
-Then comment on the PR with your findings and end with exactly one line,
-nothing after it:
+Then comment on the PR with your findings, and record the verdict by
+writing ONE WORD to $VERDICT_FILE, with nothing else in that file:
 
-  TESTED: PASS   - you exercised it and it does what it claims
-  TESTED: FAIL   - it does not do what it claims, or you found a real bug
-  TESTED: BLOCKED - you could not run it (will not build, needs a
-                    credential, needs hardware you do not have)
+  PASS      you exercised it and it does what it claims
+  FAIL      it does not do what it claims, or you found a real bug
+  BLOCKED   you could not run it (will not build, needs a credential,
+            needs hardware you do not have)
 
-Above that line, say plainly WHAT YOU RAN. A PASS with no account of what
+Write it last, once you have decided. Only that file is read, so what
+you say in the comment cannot be mistaken for the verdict — and no file
+means untested, which is treated as not approved.
+
+In the comment, say plainly WHAT YOU RAN. A PASS with no account of what
 you exercised is worthless — the next stage is relying on this verdict to
 decide whether to merge. List the commands, the paths you covered, and
 anything you deliberately did not reach.
