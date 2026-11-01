@@ -94,6 +94,29 @@ spec:
             # because the pods depend on it.
             - name: DEVICE_AUTH_CLIENT_IDS
               value: "kaneo-cli,kaneo-mcp"
+            # Lets Kaneo deliver to destinations on this LAN and inside
+            # the cluster: ntfy (10.43.44.235 / ntfy.home) for push
+            # notifications, and any in-cluster webhook receiver. Kaneo
+            # otherwise refuses RFC1918, loopback, link-local and CGNAT
+            # addresses, which is every address here.
+            #
+            # That guard is an SSRF defence aimed at multi-tenant hosting,
+            # where a stranger who can sign up supplies a URL and the
+            # server sits on a trusted network. This instance has
+            # registration disabled and sits behind Authelia 2FA, so the
+            # untrusted user it protects against does not exist; upstream
+            # documents this flag as the self-hosting requirement for
+            # ntfy, gotify and personal webhooks.
+            #
+            # What it does cost: the setting is instance-wide rather than
+            # per-destination, and it also covers imports and the
+            # GitLab/Gitea API clients. So if Kaneo itself were
+            # compromised, this removes one obstacle to reaching the rest
+            # of the LAN. Defence in depth, not a load-bearing wall — but
+            # worth keeping in mind if this instance ever grows users who
+            # are not Chris and the pods.
+            - name: KANEO_ALLOW_PRIVATE_WEBHOOK_DESTINATIONS
+              value: "true"
           resources:
             requests:
               cpu: 100m
