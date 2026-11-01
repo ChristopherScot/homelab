@@ -1,14 +1,13 @@
 # Nightly desloppify run against projects/webapp in schoolhouse-world/app.
 #
-# Runs at 03:00, between the test pod (02:00) and the merge pod (04:00),
-# on a different repository from any of them. It shares the session pods'
-# image and PVC but not their credentials: this one gets a PAT scoped to
-# a single repo with no Administration, because the repo it works on is
-# one where a merge to main reaches production.
+# Runs at 03:00 in its own pod, desloppify-0 - not in a session pod:
+# the repository it works on is one where a merge to main reaches
+# production, so its PAT is scoped to that one repo with no
+# Administration, and no broader token sits beside it.
 #
 # Like the other nightly jobs this holds no logic - it execs the script
-# baked into the image, so the work runs inside the session pod with its
-# PVC, its Vault-mounted tokens and its ~/.claude configuration.
+# baked into the image, so the work runs in desloppify-0 with its PVCs,
+# its Vault-mounted tokens and its node_modules cache.
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -42,5 +41,5 @@ spec:
                 - -c
                 - |
                   set -eu
-                  exec kubectl exec -n claude-pods claude-session-0 -- \
+                  exec kubectl exec -n claude-pods desloppify-0 -- \
                     /usr/local/share/claude-pods/desloppify/nightly-desloppify.sh
