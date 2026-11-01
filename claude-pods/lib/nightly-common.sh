@@ -142,6 +142,60 @@ fence() {
   printf '````\n%s\n````' "$(printf '%s' "$1" | tail -30 | redact)"
 }
 
+# Lands PR $2 (number or URL) in repo $1 (owner/name) and deletes its
+# branch; exit status is gh's. Merge method is per-repo and squash is
+# disabled across all of these, so asking for it unconditionally fails
+# every merge ("Squash merges are not allowed on this repository"):
+# squash if allowed, else a merge commit if allowed, else rebase (also
+# the fallback when the repo's settings cannot be read). gh's stderr is
+# deliberately not discarded: the reason for a refusal belongs in the log.
+merge_pr() {
+  local repo="$1" pr="$2" sha="${3:-}" method
+  case "$(gh api "repos/$repo" --jq '"\(.allow_squash_merge) \(.allow_merge_commit)"' 2>/dev/null)" in
+    "true "*) method=--squash ;;
+    *" true") method=--merge ;;
+    *)        method=--rebase ;;
+  esac
+  # With a SHA, the merge is refused if the branch moved since that
+  # commit was judged. Without one — reverts, whose PR is seconds old and
+  # has no verdict to be stale — there is nothing to pin to.
+  if [ -n "$sha" ]; then
+    gh pr merge "$pr" --repo "$repo" "$method" --match-head-commit "$sha" --delete-branch >/dev/null
+  else
+    gh pr merge "$pr" --repo "$repo" "$method" --delete-branch >/dev/null
+  fi
+}
+
+# Undo merged PR $2 in repo $1 after it turned main red. `gh pr revert`
+# only OPENS a revert pull request — it has no flag to land it — so
+# landing it is a second, explicit step through merge_pr, the same way
+# the original went in. Pushing a revert commit straight to main is not
+# an alternative: the nightly-guard ruleset on these repos requires every
+# change to main to arrive through a pull request.
+#
+# Prints nothing and exits non-zero if the revert PR could not be opened.
+# Otherwise prints its URL as soon as it exists, then exits non-zero if
+# it could not be merged — it is left open, and the URL lets the caller
+# point the morning human at it.
+revert_pr() {
+  local repo="$1" pr="$2" url
+  url=$(gh pr revert "$pr" --repo "$repo" \
+          --body "Reverts #$pr. Opened by nightly-merge because main's CI went red after it landed.") \
+    || return 1
+  echo "$url"
+  # GitHub works out a new PR's mergeability in the background, and a
+  # merge asked for before that finishes is refused as "not mergeable"
+  # although nothing is wrong. This PR is seconds old, so allow a few
+  # tries before calling it failed. (The sleep is an env knob only so the
+  # test's permanent-failure case does not wait a minute.)
+  local _
+  for _ in 1 2 3 4 5 6; do
+    merge_pr "$repo" "$url" && return 0
+    sleep "${NIGHTLY_REVERT_RETRY_SLEEP:-10}"
+  done
+  return 1
+}
+
 # --- Claude credential -----------------------------------------------------
 # Refuse to start on a credential that cannot work.
 #
