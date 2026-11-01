@@ -1,0 +1,24 @@
+# Kaneo — project board the claude-pods read their work from, and where
+# Chris files and reprioritises tickets by hand.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kaneo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/ChristopherScot/homelab
+    targetRevision: HEAD
+    path: kaneo
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kaneo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

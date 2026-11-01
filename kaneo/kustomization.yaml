@@ -1,0 +1,12 @@
+# The kaneo app itself. The Postgres cluster it talks to is declared in
+# cloudnative-pg-clusters/kaneo-db.yaml with the other CNPG clusters,
+# not here — same split as shlink.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - deployment.yaml
+  - ingress.yaml
+  - externalsecret.yaml
+images:
+  - name: ghcr.io/usekaneo/kaneo
+    newTag: 2.48.0

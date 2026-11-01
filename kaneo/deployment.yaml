@@ -1,0 +1,144 @@
+# Kaneo — the work queue for the claude-pods.
+#
+# One bundled image (nginx serving the built web app, reverse-proxying
+# /api to the node API in the same container), not the api/web split that
+# older compose examples show. Port 5173 is the only one exposed.
+#
+# Backed by the kaneo-db CNPG cluster. DATABASE_URL is assembled from the
+# CNPG-generated `kaneo-db-app` secret rather than set literally: CNPG
+# owns that password and rotates it, so anything that restates it here
+# would be a second copy of a fact CNPG already holds.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaneo
+  namespace: kaneo
+  labels:
+    app: kaneo
+spec:
+  replicas: 1
+  # Single RWO-free deployment, but the API holds a DB connection pool and
+  # a websocket hub; rolling two copies over each other briefly doubles
+  # both for no benefit at this size.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: kaneo
+  template:
+    metadata:
+      labels:
+        app: kaneo
+    spec:
+      securityContext:
+        # Image builds for 1001:0 and writes to /var/lib/kaneo (TMPDIR)
+        # and /app/apps/api/data, both chowned to this uid at build time.
+        runAsUser: 1001
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: kaneo
+          image: ghcr.io/usekaneo/kaneo:2.48.0
+          ports:
+            - name: http
+              containerPort: 5173
+          env:
+            # Public URL. The app builds absolute links (invites, OAuth
+            # redirects, email assets) from this, so it must be the name
+            # the browser uses, not the service DNS.
+            - name: KANEO_CLIENT_URL
+              value: "https://kaneo.home.chrisscotmartin.com"
+            # Derived-connection mode: POSTGRES_* are read only when a
+            # password or explicit host is present (see .env.sample), so
+            # host must be set alongside the credentials.
+            - name: POSTGRES_HOST
+              value: "kaneo-db-rw.kaneo.svc"
+            - name: POSTGRES_PORT
+              value: "5432"
+            - name: POSTGRES_DB
+              value: "kaneo"
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: kaneo-db-app
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: kaneo-db-app
+                  key: password
+            # Signs auth sessions. The image generates a throwaway one if
+            # unset, which would log every user out on each restart — so
+            # it is pinned in Vault instead.
+            - name: AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: kaneo-auth
+                  key: auth-secret
+            # Encrypts stored notification tokens and webhook signing
+            # secrets. Same reasoning as AUTH_SECRET: rotating it silently
+            # invalidates what it protects.
+            - name: NOTIFICATION_SECRET_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kaneo-auth
+                  key: notification-key
+            # This instance is for one household behind Authelia. Closing
+            # registration means a leaked ingress cannot be used to mint
+            # accounts; existing users are unaffected.
+            - name: DISABLE_REGISTRATION
+              value: "true"
+            # Device-code auth is how the headless pods get a token for
+            # the MCP endpoint — there is no browser in a pod to complete
+            # the OAuth redirect. This is the image default, restated
+            # because the pods depend on it.
+            - name: DEVICE_AUTH_CLIENT_IDS
+              value: "kaneo-cli,kaneo-mcp"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi
+          # /api/health is what the image's own HEALTHCHECK uses.
+          startupProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 5
+            # Migrations run on first boot against an empty database;
+            # 30*5s before giving up.
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 15
+            timeoutSeconds: 5
+          livenessProbe:
+            httpGet: { path: /api/health, port: http }
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+          volumeMounts:
+            # nginx and the entrypoint's env.sh rewrite config under
+            # /etc/nginx and /usr/share/nginx/html at start, and TMPDIR
+            # points at /var/lib/kaneo/tmp. emptyDir rather than a PVC:
+            # none of it survives a restart by design, the durable state
+            # is all in Postgres.
+            - { name: tmp, mountPath: /var/lib/kaneo }
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+            - { name: nginx-run, mountPath: /run }
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: nginx-cache, emptyDir: {} }
+        - { name: nginx-run, emptyDir: {} }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaneo
+  namespace: kaneo
+spec:
+  selector:
+    app: kaneo
+  ports:
+    - name: http
+      port: 5173
+      targetPort: http
