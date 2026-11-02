@@ -90,21 +90,48 @@ path "kv/data/cert-manager/route53"     { capabilities = ["read"] }
 path "kv/metadata/cert-manager/route53" { capabilities = ["read", "list"] }
 EOF
 
+# Binds "ddns", not the "external-secrets-sa" every other app role uses.
+# ddns's manifests live in the ChristopherScot/ddns repo (deploy/ddns) and
+# its SecretStore authenticates as the "ddns" ServiceAccount; there is no
+# external-secrets-sa in that namespace at all, so the previous binding
+# could never match. Vault answered every login with
+#   403 ... * service account name not authorized
+# and ddns-secrets stopped refreshing. The already-issued Secret kept
+# working, so this surfaced only as a >15m sync-failure alert rather than
+# an outage.
 vault write auth/kubernetes/role/ddns \
-  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_names="ddns" \
   bound_service_account_namespaces="ddns" \
   policies="ddns" \
   ttl=1h
 
 # Authelia gets an extra grant for shared SES SMTP creds (used by its
 # notifier.smtp config). The per-app loop above only sets one path per
-# policy; re-write here to include both kv/authelia/* and kv/ses/*.
-# Re-write (not append) because Vault policies are replace-on-write.
+# policy; re-write here to include kv/authelia/*, kv/ses/* and
+# kv/cnpg-backups/*. Re-write (not append): Vault policies are
+# replace-on-write.
+#
+# cnpg-backups/* follows the vaultwarden and paperless pattern - the app's
+# own role reads the shared S3 creds, rather than the separate cnpg-backup
+# ServiceAccount used by shlink/monitoring/pokedex/kaneo. authelia-db
+# (authelia/db.yaml) backs up to s3://cscot-homelab-pg-backups/authelia via
+# the authelia-db-backup-s3 ExternalSecret, which authenticates through the
+# vault-authelia SecretStore - so the grant has to live on this policy.
+# Without it Vault allowed the login and then refused the read with
+#   403 ... * permission denied   on kv/data/cnpg-backups/s3
+# The previously-issued Secret kept the backups running, so this showed up
+# as a sync-failure alert rather than a backup outage.
+#
+# The metadata path was also wrong: kv/data/authelia/metadata/* is a data
+# path that happens to contain the word "metadata", not the KV v2 metadata
+# endpoint. LIST on kv/authelia/* never actually worked.
 vault policy write authelia - <<EOF
-path "kv/data/authelia/*"          { capabilities = ["read"] }
-path "kv/data/authelia/metadata/*" { capabilities = ["read", "list"] }
-path "kv/data/ses/*"               { capabilities = ["read"] }
-path "kv/metadata/ses/*"           { capabilities = ["read", "list"] }
+path "kv/data/authelia/*"         { capabilities = ["read"] }
+path "kv/metadata/authelia/*"     { capabilities = ["read", "list"] }
+path "kv/data/ses/*"              { capabilities = ["read"] }
+path "kv/metadata/ses/*"          { capabilities = ["read", "list"] }
+path "kv/data/cnpg-backups/*"     { capabilities = ["read"] }
+path "kv/metadata/cnpg-backups/*" { capabilities = ["read", "list"] }
 EOF
 
 # Monitoring reads grafana-local creds, shared SES SMTP (alert emails), and the

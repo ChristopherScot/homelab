@@ -65,13 +65,23 @@ spec:
       execErrState: OK
       labels: { component: cnpg, severity: warning }
       annotations:
-        summary: "CNPG cluster {{ $labels.namespace }}/{{ $labels.cluster }} hasn't successfully backed up in {{ printf \"%.1f\" (div $values.A.Value 3600) }} hours"
-        description: "The most recent successful base backup for CNPG cluster {{ $labels.namespace }}/{{ $labels.cluster }} is over 36 hours old. Check `kubectl -n {{ $labels.namespace }} get backup.postgresql.cnpg.io` for the most recent Backup CR status, and `kubectl -n {{ $labels.namespace }} logs {{ $labels.cluster }}-1 -c postgres | grep -iE 'barman|backup'` for the underlying error. Continuous WAL archiving is independent of this and typically still working."
+        summary: "CNPG cluster {{ $labels.namespace }}/{{ $labels.cnpg_cluster }} hasn't successfully backed up in {{ printf \"%.1f\" (div $values.A.Value 3600) }} hours"
+        description: "The most recent successful base backup for CNPG cluster {{ $labels.namespace }}/{{ $labels.cnpg_cluster }} is over 36 hours old. Check `kubectl -n {{ $labels.namespace }} get backup.postgresql.cnpg.io` for the most recent Backup CR status, and `kubectl -n {{ $labels.namespace }} logs {{ $labels.cnpg_cluster }}-1 -c postgres | grep -iE 'barman|backup'` for the underlying error. Continuous WAL archiving is independent of this and typically still working."
       data:
         - refId: A
           relativeTimeRange: { from: 900, to: 0 }
           datasourceUid: grafanacloud-prom
-          model: { expr: 'time() - max by (namespace, cluster) (cnpg_collector_last_available_backup_timestamp)', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+          # Group by namespace + the CNPG cluster name lifted out of `job`.
+          #
+          # NOT by the `cluster` label: Alloy stamps cluster="homelab" (the
+          # Kubernetes cluster) onto every scraped series, so grouping on it
+          # collapses every database in a namespace into one series and
+          # renders {{ $labels.cluster }} as "homelab" in the notification -
+          # which is what made the 2026-11-01 alert unable to name the
+          # affected cluster. The CNPG cluster name appears only in `job`,
+          # as "<namespace>/<cluster>" (e.g. "authelia/authelia-db"), so
+          # label_replace lifts it into a cnpg_cluster label.
+          model: { expr: 'time() - max by (namespace, cnpg_cluster) (label_replace(cnpg_collector_last_available_backup_timestamp, "cnpg_cluster", "$1", "job", ".*/(.+)"))', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
         - refId: B
           relativeTimeRange: { from: 0, to: 0 }
           datasourceUid: __expr__
