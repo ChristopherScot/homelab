@@ -1,0 +1,110 @@
+# The desloppify pod: one replica, its own PVCs, its own credentials.
+#
+# Separate from claude-session-* deliberately. It works on
+# schoolhouse-world/app, where a merge to main reaches production, and
+# the guarantee that it cannot do that rests on its PAT being scoped to
+# one repository with no Administration. A pod that also held
+# claude-git-creds would have a second, broader token sitting beside it.
+#
+# Its image is its own (desloppify-pod/Dockerfile), carrying node 22,
+# yarn, python and the claude binary - what desloppify's TypeScript
+# detectors shell out to (npx, tsc, eslint, knip, vitest) and what the
+# agent needs to verify a refactor by running `yarn lint` and the tests.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: desloppify
+  namespace: claude-pods
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: desloppify
+  namespace: claude-pods
+spec:
+  serviceName: desloppify
+  replicas: 1
+  selector:
+    matchLabels:
+      app: desloppify
+  template:
+    metadata:
+      labels:
+        app: desloppify
+    spec:
+      serviceAccountName: desloppify
+      securityContext:
+        fsGroup: 1000
+      imagePullSecrets:
+        - name: ghcr-pull
+      containers:
+        - name: desloppify
+          image: ghcr.io/christopherscot/desloppify-pod:latest
+          imagePullPolicy: Always
+          command: ["sleep", "infinity"]
+          env:
+            # The SDK spawns the claude binary, which reads this. Either
+            # API-key variable silently outranks it and bills per token
+            # against the API account instead of the subscription, so the
+            # runner unsets both; they are simply never set here.
+            - name: CLAUDE_CODE_OAUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: desloppify-claude
+                  key: oauth-token
+                  optional: true
+            - name: DESLOP_STATE_DIR
+              value: /workspace/.desloppify-state
+            - name: DESLOP_WORK_ROOT
+              value: /workspace
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            # The clone, node_modules and desloppify's state. node_modules
+            # for this monorepo is multi-GB and slow to install, so it
+            # persists: reinstalling nightly would spend the run's budget
+            # before any work started.
+            - name: workspace
+              mountPath: /workspace
+            - name: desloppify-git
+              mountPath: /run/secrets/desloppify
+              readOnly: true
+            - name: desloppify-claude
+              mountPath: /run/secrets/claude
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 1Gi
+            # A yarn install plus tsc across a Next.js monorepo is the
+            # spike worth sizing for; the session pods' 2Gi is not enough
+            # for a type-check of this project.
+            limits:
+              memory: 6Gi
+      volumes:
+        - name: desloppify-git
+          secret:
+            secretName: desloppify-git
+            optional: true
+        - name: desloppify-claude
+          secret:
+            secretName: desloppify-claude
+            optional: true
+  volumeClaimTemplates:
+    - metadata:
+        name: home
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: longhorn-single-ssd
+        resources:
+          requests:
+            storage: 5Gi
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: longhorn-hdd-single
+        resources:
+          requests:
+            storage: 40Gi
