@@ -1,0 +1,51 @@
+name: desloppify-pod tests
+
+# The tool policy is what keeps the pod off main: it refuses pushes to a
+# protected branch, PRs based on anything but the integration branch, and
+# `gh pr merge`. A regression there is silent - the pod keeps working and
+# the boundary is simply gone - so the cases run on every change rather
+# than only on the laptop of whoever last edited them.
+on:
+  pull_request:
+    paths:
+      - 'desloppify-pod/**'
+      - '.github/workflows/desloppify-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'desloppify-pod/**'
+      - '.github/workflows/desloppify-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Tool policy
+        working-directory: desloppify-pod
+        run: python3 test_policy.py
+
+      # Feeding the hook stdin by hand tests its parsing but not its
+      # wiring, and a hook git never invokes passes that test. This one
+      # pushes for real against a local remote and asserts main did not
+      # move.
+      - name: pre-push hook
+        run: |
+          git config --global user.email ci@example.com
+          git config --global user.name ci
+          desloppify-pod/git-hooks/test-pre-push.sh
+
+      - name: Shell syntax
+        run: |
+          set -e
+          for s in desloppify-pod/*.sh desloppify-pod/git-hooks/pre-push; do
+            echo "== $s"
+            bash -n "$s"
+          done
