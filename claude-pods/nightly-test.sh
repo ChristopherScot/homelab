@@ -27,6 +27,7 @@ log_to "$LOG"
 echo "=== nightly-test $(date -Is) ==="
 
 require_gh_token || exit 1
+require_kaneo_key || exit 1
 preflight_credential || exit 1
 
 pick_model
@@ -39,7 +40,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
   fi
 
   mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
-    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
+    --jq '.[] | select(.headRefName | startswith($ENV.KANEO_BRANCH_PREFIX)) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
   [ "${#PRS[@]}" -eq 0 ] && continue
 
   for entry in "${PRS[@]}"; do
@@ -141,6 +142,42 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     gh pr comment "$pr" --repo "$repo" --body "$(printf 'Nightly integration test (pod 2): **%s** for `%s`.\n\n<details><summary>what it reported</summary>\n\n````\n%s\n````\n\n</details>' \
       "$verdict" "${sha:0:7}" "$(printf '%s' "$out" | tail -40 | redact)")" >/dev/null 2>&1 \
       || echo "   COMMENT FAILED $repo#$pr"
+    # Advance the card. PASS moves to Mergeable, which is what dispatches
+    # the review panel — the commit status above is the gate, this move is
+    # the trigger. FAIL and BLOCKED go back to To Do carrying the PR, so
+    # the author picks them up in rework mode rather than starting over.
+    task="$(kaneo_task_for_pr "$repo" "$pr")" || task=""
+    case "$verdict" in
+      PASS)
+        # CI must be green before the panel sees it. The panel costs a full
+        # agent run and most of an hour; spending that on a branch whose
+        # own tests are failing wastes it, and a reviewer reading a red
+        # diff is being asked the wrong question. CI is also the only
+        # signal in this pipeline that no agent produced, so it belongs
+        # ahead of the agents, not after them.
+        ci=$(gh pr checks "$pr" --repo "$repo" 2>&1)
+        if printf '%s' "$ci" | grep -qiE '\b(fail|failure|error)\b'; then
+          kaneo_requeue "$task" "CI is red on \`${sha:0:7}\` — see PR #$pr"
+        elif printf '%s' "$ci" | grep -qiE '\b(pending|in_progress|queued)\b'; then
+          # Left in In Review on purpose: CI will finish on its own, and
+          # the card is already where a re-run would pick it up. Moving it
+          # anywhere would either lose it or dispatch work twice.
+          echo "   CI still running on $repo#$pr; leaving the card in in-review"
+        else
+          kaneo_move "$task" mergeable
+        fi
+        ;;
+      FAIL)
+        kaneo_requeue "$task" "integration testing failed on \`${sha:0:7}\` — see PR #$pr"
+        ;;
+      *)
+        # BLOCKED is not a verdict about the code — the pod could not run
+        # it at all — so this wants a person, not another attempt.
+        [ -n "$task" ] && kaneo_mention "$task" "${KANEO_OWNER:-chris}" \
+          "integration testing could not run against \`${sha:0:7}\` (will not build, or needs something the pod does not have)"
+        kaneo_move "$task" needs-human-review
+        ;;
+    esac
     echo "--- $repo#$pr done rc=$rc verdict=${verdict:-BLOCKED}"
 
     # Leave no scratch tests behind: the next stage checks out this same

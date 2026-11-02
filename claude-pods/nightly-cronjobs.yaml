@@ -81,6 +81,16 @@ metadata:
 spec:
   schedule: "0 0 * * *"
   timeZone: America/New_York
+  # Suspended: these clocks are being replaced by the Kaneo dispatcher,
+  # which starts work when a card moves instead of at a fixed hour. They
+  # stay here, suspended rather than deleted, until the event-driven path
+  # has run a full cycle — if it has to be reverted, the clock is the
+  # fallback and deleting it would mean rebuilding it under pressure.
+  #
+  # Also: these scripts no longer read GitHub issues at all, so a run on
+  # the old schedule against the new scripts would find no work and look
+  # like a silent failure.
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -122,6 +132,16 @@ metadata:
 spec:
   schedule: "0 2 * * *"
   timeZone: America/New_York
+  # Suspended: these clocks are being replaced by the Kaneo dispatcher,
+  # which starts work when a card moves instead of at a fixed hour. They
+  # stay here, suspended rather than deleted, until the event-driven path
+  # has run a full cycle — if it has to be reverted, the clock is the
+  # fallback and deleting it would mean rebuilding it under pressure.
+  #
+  # Also: these scripts no longer read GitHub issues at all, so a run on
+  # the old schedule against the new scripts would find no work and look
+  # like a silent failure.
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
@@ -163,6 +183,16 @@ metadata:
 spec:
   schedule: "0 4 * * *"
   timeZone: America/New_York
+  # Suspended: these clocks are being replaced by the Kaneo dispatcher,
+  # which starts work when a card moves instead of at a fixed hour. They
+  # stay here, suspended rather than deleted, until the event-driven path
+  # has run a full cycle — if it has to be reverted, the clock is the
+  # fallback and deleting it would mean rebuilding it under pressure.
+  #
+  # Also: these scripts no longer read GitHub issues at all, so a run on
+  # the old schedule against the new scripts would find no work and look
+  # like a silent failure.
+  suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3

@@ -12,6 +12,7 @@ ARG KUBECTL_VERSION=v1.30.6
 # helm kept on v3 (v4 is a breaking major; chart compat).
 ARG HELM_VERSION=v3.16.4
 ARG YQ_VERSION=v4.53.2
+ARG KANEO_CLI_VERSION=cli-v0.1.1
 ARG GO_VERSION=1.26.3
 ARG TOFU_VERSION=1.12.0
 ARG NVIM_VERSION=v0.12.2
@@ -78,6 +79,18 @@ RUN curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-amd64.tar.gz" \
 RUN curl -fsSLo /usr/local/bin/yq \
       "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" \
     && chmod +x /usr/local/bin/yq
+
+# kaneo CLI — the pods' work queue lives on the Kaneo board, and this is how
+# they read and move cards. Upstream ships it alongside the server, so a
+# schema change arrives as a version bump here rather than as a silently
+# empty jq filter at 2am. Checksum-verified: it runs with an API key that can
+# move every card on the board.
+RUN curl -fsSLo /tmp/kaneo "https://github.com/usekaneo/kaneo/releases/download/${KANEO_CLI_VERSION}/kaneo-linux-x64" \
+    && curl -fsSLo /tmp/kaneo.sums "https://github.com/usekaneo/kaneo/releases/download/${KANEO_CLI_VERSION}/SHA256SUMS" \
+    && grep ' kaneo-linux-x64$' /tmp/kaneo.sums | awk '{print $1}' > /tmp/kaneo.want \
+    && echo "$(cat /tmp/kaneo.want)  /tmp/kaneo" | sha256sum -c - \
+    && install -m 0755 /tmp/kaneo /usr/local/bin/kaneo \
+    && rm -f /tmp/kaneo /tmp/kaneo.sums /tmp/kaneo.want
 
 # gh CLI
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
@@ -314,9 +327,12 @@ COPY entrypoint.sh /usr/local/bin/entrypoint
 # (this image has no local browser). Reads KERNEL_API_KEY from the env.
 COPY kbrowser.sh /usr/local/bin/kbrowser
 
-# Nightly ticket->PR pipeline, driven by the CronJobs in nightly-cronjobs.yaml:
-# pod 0 authors at 00:00, pod 2 hunts for bugs at 02:00, pod 1 gives an
-# independent merge verdict at 04:00.
+# Ticket->PR pipeline. Work starts when a card moves on the Kaneo board,
+# not on a clock: the dispatcher (below) receives the webhook and execs one
+# of these three in the pod that owns that stage. pod 0 authors, pod 2
+# hunts for bugs, pod 1 gives an independent merge verdict.
+#
+# The CronJobs in nightly-cronjobs.yaml are suspended, kept as a fallback.
 # The prompts ship as their own files (prompts/) rather than heredocs inside
 # the scripts, so they can be edited and diffed without touching shell code.
 COPY nightly-author.sh /usr/local/bin/nightly-author
@@ -330,6 +346,12 @@ COPY prompts/ /usr/local/share/claude-pods/prompts/
 # lives there rather than beside the manifests because Argo parses every
 # .json under claude-pods/ as a Kubernetes manifest — a settings file
 # there has no 'kind' and breaks the whole Application's sync.
+# The dispatcher, which turns a card move into one of the runs above. It
+# ships in this image rather than one of its own because it needs node (it
+# is a node script) and kubectl (it execs with it), and both are already
+# here at known versions. Only the dispatcher Deployment runs it.
+COPY dispatcher/dispatch.mjs /usr/local/share/claude-pods/dispatcher/dispatch.mjs
+
 # dbuild: rootless in-pod image build + push (buildkit under rootlesskit).
 COPY dbuild.sh /usr/local/bin/dbuild
 RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/dbuild /usr/local/bin/nightly-author /usr/local/bin/nightly-merge /usr/local/bin/nightly-test
