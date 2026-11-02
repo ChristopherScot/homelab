@@ -207,8 +207,14 @@ async def run(args: argparse.Namespace) -> int:
         model=args.model,
         fallback_model=args.fallback_model,
         cwd=args.dir,
-        add_dirs=[args.dir],
-        permission_mode="default",
+        # desloppify's state lives outside the clone so it survives the
+        # reset between runs, and the agent reads it through a symlink.
+        add_dirs=[args.dir, args.state_dir],
+        # The PreToolUse hook decides every call, so the CLI's own
+        # approval layer only adds a second gate with no approver behind
+        # it: the first run spent its budget on "This command requires
+        # approval" for commands the policy had already allowed.
+        permission_mode="acceptEdits",
         setting_sources=[],
         hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[make_hook(audit)])]},
         output_format=REPORT_SCHEMA,

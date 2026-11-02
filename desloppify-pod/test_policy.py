@@ -151,14 +151,17 @@ def main() -> int:
         if d.allow:
             failures.append(f"SHOULD DENY: {cmd!r} ({why})\n    allowed: {d.reason}")
 
-    for name in ("Read", "Write", "Edit", "Grep", "Task"):
+    # StructuredOutput carries the run's verdict. Denying it blocks the
+    # report at the last step of an otherwise complete run, which is how
+    # the first run ended.
+    for name in ("Read", "Write", "Edit", "Grep", "Task", "StructuredOutput"):
         if not policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD ALLOW tool: {name}")
     for name in ("NotARealTool", "Bash(sudo)"):
         if policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD DENY tool: {name}")
 
-    total = len(ALLOW) + len(DENY) + 7
+    total = len(ALLOW) + len(DENY) + 8
     if failures:
         print(f"FAIL - {len(failures)} of {total}\n")
         for f in failures:
