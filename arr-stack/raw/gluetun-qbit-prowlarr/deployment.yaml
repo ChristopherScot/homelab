@@ -261,13 +261,20 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
-              # Was 2Gi; qbittorrent-nox was OOMKilled against that ceiling
-              # twice in two days (2026-10-28 19:57, 2026-10-29 17:43), each
-              # time at ~2.0GB anon RSS after millions of failed allocations
-              # (failcnt 17254036 / 12467216). BT_backup holds only 224
-              # torrents (2.9MB), so this is not a large-library problem -
-              # the process simply grows past 2Gi over days of uptime.
-              memory: 4Gi
+              # Stays at 2Gi deliberately. qbittorrent-nox was OOMKilled
+              # against this ceiling twice in two days (2026-10-28 19:57,
+              # 2026-10-29 17:43), each time at ~2.0GB anon RSS after
+              # millions of failed allocations (failcnt 17254036 /
+              # 12467216) - but BT_backup holds only 224 torrents (2.9MB),
+              # so that is uptime-driven growth, not working set. Raising
+              # the ceiling would buy a longer interval between kills, not
+              # fewer of them, at the cost of 2Gi that this node does not
+              # have spare. The liveness probe below is the actual
+              # mitigation: a wedged or restarting qBittorrent now gets
+              # noticed and restarted in ~2 minutes instead of silently
+              # looping. If the kills become frequent enough to matter,
+              # the fix is upstream in qBittorrent, not a bigger limit.
+              memory: 2Gi
           # qBittorrent can be dead while the container looks healthy: s6 is
           # PID 1 and supervises svc-qbittorrent, so a qbittorrent-nox that
           # exits immediately is just respawned forever. Not hypothetical -
