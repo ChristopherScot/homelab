@@ -210,11 +210,16 @@ async def run(args: argparse.Namespace) -> int:
         # desloppify's state lives outside the clone so it survives the
         # reset between runs, and the agent reads it through a symlink.
         add_dirs=[args.dir, args.state_dir],
-        # The PreToolUse hook decides every call, so the CLI's own
-        # approval layer only adds a second gate with no approver behind
-        # it: the first run spent its budget on "This command requires
-        # approval" for commands the policy had already allowed.
-        permission_mode="acceptEdits",
+        # The PreToolUse hook decides every call, so the CLI's approval
+        # prompt is a second gate with no approver behind it: three runs
+        # died on "This command requires approval" for commands the
+        # policy had already allowed. acceptEdits does not help, because
+        # it auto-approves edits and still prompts for Bash.
+        #
+        # This turns off that prompt, not the boundary. Measured under
+        # bypassPermissions: the hook saw every call, and a command the
+        # policy refuses was still refused.
+        permission_mode="bypassPermissions",
         setting_sources=[],
         hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[make_hook(audit)])]},
         output_format=REPORT_SCHEMA,
