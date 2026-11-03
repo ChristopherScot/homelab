@@ -231,8 +231,10 @@ async def run(args: argparse.Namespace) -> int:
     started = time.monotonic()
     result: ResultMessage | None = None
     rate_limit = None
+    timed_out = False
 
-    async with ClaudeSDKClient(options=options) as client:
+    async def drive(client):
+        nonlocal result, rate_limit
         await client.query(build_prompt(args))
         async for message in client.receive_response():
             if isinstance(message, AssistantMessage) and args.verbose:
@@ -248,11 +250,26 @@ async def run(args: argparse.Namespace) -> int:
             elif isinstance(message, ResultMessage):
                 result = message
 
+    # A run that is blocked rather than working hits neither max_turns nor
+    # max_budget_usd: the first one to stall sat idle for eleven hours
+    # with no further tool calls. This is the only bound on wall clock.
+    async with ClaudeSDKClient(options=options) as client:
+        try:
+            await asyncio.wait_for(drive(client), timeout=args.timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            print(f"TIMEOUT after {args.timeout}s - no result", file=sys.stderr)
+
     audit.close()
     payload = (result.structured_output if result and result.structured_output else {}) or {}
 
+    if timed_out:
+        payload = {**payload, "outcome": "BLOCKED",
+                   "summary": f"timed out after {args.timeout}s"}
+
     report = {
         "repo": args.repo,
+        "timed_out": timed_out,
         "project": PROJECT_PATH,
         "branch": args.branch,
         "outcome": payload.get("outcome", "BLOCKED"),
@@ -288,6 +305,9 @@ def main() -> int:
                    default=float(os.environ.get("DESLOP_MAX_COST_USD", "25.0")))
     p.add_argument("--max-turns", type=int,
                    default=int(os.environ.get("DESLOP_MAX_TURNS", "400")))
+    p.add_argument("--timeout", type=float,
+                   default=float(os.environ.get("DESLOP_TIMEOUT_S", "7200")),
+                   help="wall-clock limit for the whole run, in seconds")
     p.add_argument("--audit", default=os.environ.get("DESLOP_AUDIT_LOG"))
     p.add_argument("--verbose", action="store_true")
     return asyncio.run(run(p.parse_args()))

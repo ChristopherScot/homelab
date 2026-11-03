@@ -104,6 +104,7 @@ report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
   --integration-branch "$INTEGRATION_BRANCH" \
   --state-dir "$STATE_DIR/webapp" \
   --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
+  --timeout "${DESLOP_TIMEOUT_S:-7200}" \
   > "$report"
 rc=$?
 echo "run rc=$rc report=$report"
