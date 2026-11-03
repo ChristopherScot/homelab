@@ -261,7 +261,37 @@ spec:
               cpu: 100m
               memory: 256Mi
             limits:
-              memory: 2Gi
+              # Was 2Gi; qbittorrent-nox was OOMKilled against that ceiling
+              # twice in two days (2026-10-28 19:57, 2026-10-29 17:43), each
+              # time at ~2.0GB anon RSS after millions of failed allocations
+              # (failcnt 17254036 / 12467216). BT_backup holds only 224
+              # torrents (2.9MB), so this is not a large-library problem -
+              # the process simply grows past 2Gi over days of uptime.
+              memory: 4Gi
+          # qBittorrent can be dead while the container looks healthy: s6 is
+          # PID 1 and supervises svc-qbittorrent, so a qbittorrent-nox that
+          # exits immediately is just respawned forever. Not hypothetical -
+          # when /config went read-only after an iSCSI session loss on
+          # 2026-10-29, qbittorrent-nox died on its lockfile and s6 restarted
+          # it every ~2s for 73 hours. The pod reported 7/7 Running and
+          # ArgoCD reported arr-stack Synced throughout, while the WebUI
+          # never bound and decluttarr crash-looped 797 times against a port
+          # nothing was listening on.
+          #
+          # So probe what actually matters: is the WebUI accepting
+          # connections? nc answers that without credentials - the API 403s
+          # when unauthenticated, which would make httpGet a worse signal.
+          livenessProbe:
+            exec:
+              command: ["/bin/sh", "-c", "nc -z localhost ${WEBUI_PORT:-8080}"]
+            # Restoring the session reads every .torrent in BT_backup before
+            # the WebUI binds (~45s observed for 224 torrents). 5 minutes of
+            # grace leaves room for that to grow without the probe killing a
+            # pod that is merely still starting.
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 4
+            timeoutSeconds: 10
 
         - name: prowlarr
           image: lscr.io/linuxserver/prowlarr:2.3.5
