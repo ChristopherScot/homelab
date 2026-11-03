@@ -25,6 +25,7 @@ log_to "$LOG"
 echo "=== nightly-merge $(date -Is) model=$MODEL ==="
 
 require_gh_token || exit 1
+require_kaneo_key || exit 1
 preflight_credential || exit 1
 
 pick_model
@@ -37,7 +38,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
   fi
 
   mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
-    --jq '.[] | select(.headRefName | startswith("fix/issue-")) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
+    --jq '.[] | select(.headRefName | startswith($ENV.KANEO_BRANCH_PREFIX)) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
   [ "${#PRS[@]}" -eq 0 ] && continue
 
   for entry in "${PRS[@]}"; do
@@ -145,6 +146,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         # failure path below already handles.
         if merge_pr "$repo" "$pr" "$sha"; then
           echo "MERGED $repo#$pr"
+          kaneo_move "$(kaneo_task_for_pr "$repo" "$pr")" done
           # Recorded so the post-merge sweep below can revert it if main
           # goes red. Merging is only safe because undoing it is cheap.
           echo "$repo $pr" >> "$STATE_DIR/merged-$(date +%Y%m%d)"
@@ -157,6 +159,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         # Deliberately louder than NO-MERGE: the code may be correct, so
         # this is the case most likely to be waved through on a skim.
         echo "RISKY $repo#$pr — flagged for human decision"
+        risky_task="$(kaneo_task_for_pr "$repo" "$pr")" || risky_task=""
+        kaneo_move "$risky_task" needs-human-review
+        # The mention is the notification. Kaneo has no per-column filter,
+        # so status-change notifications are off and this is the only thing
+        # that reaches a phone.
+        kaneo_mention "$risky_task" "${KANEO_OWNER:-chris}" \
+          "the review panel says PR #$pr may be correct but the blast radius wants a human decision"
         gh pr edit "$pr" --repo "$repo" --add-label "risky" >/dev/null 2>&1 \
           || gh label create risky --repo "$repo" --color B60205 \
                --description "Nightly review flagged this as too high blast-radius to auto-merge" >/dev/null 2>&1 \
@@ -169,10 +178,19 @@ This one wants a human decision before it lands.
 $(fence "$verdict")" >/dev/null 2>&1
         ;;
       NO-MERGE)
-        echo "HELD $repo#$pr"
-        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1, independent panel): held for human review.
+        # Back to To Do, not to a human. The panel found something concrete,
+        # and the author can act on it: a card in To Do that already carries
+        # a PR is picked up in rework mode and pushes to the same branch.
+        #
+        # The verdict goes on the PR, because that is where the rework agent
+        # reads it, and a short note goes on the card so the board says why
+        # it moved without having to open GitHub. After two of these the
+        # author hands the card to a human instead of trying again.
+        echo "REWORK $repo#$pr"
+        gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1, independent panel): sent back for rework.
 
 $(fence "$verdict")" >/dev/null 2>&1
+        kaneo_note_and_requeue "$repo" "$pr" "$verdict"
         ;;
       *)
         # No parseable verdict means the run broke, not that the PR is good.
@@ -210,6 +228,13 @@ if [ -s "$MERGED_FILE" ]; then
       echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
       if revert_url=$(revert_pr "$repo" "$pr"); then
         echo "   REVERTED $repo#$pr ($revert_url)"
+        # The card is already in Done — this merge landed and then broke
+        # main. Done is wrong now, and nothing else will correct it, so
+        # pull it back and say why. A reverted change is not finished work.
+        rev_task="$(kaneo_task_for_pr "$repo" "$pr")" || rev_task=""
+        [ -n "$rev_task" ] && kaneo task comment "$rev_task" \
+          "This merge turned main $outcome and was reverted automatically ($revert_url). The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
+        kaneo_move "$rev_task" to-do
         gh pr comment "$pr" --repo "$repo" --body \
           "Nightly: this merge turned main $outcome, so it has been reverted automatically ($revert_url). The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
       else

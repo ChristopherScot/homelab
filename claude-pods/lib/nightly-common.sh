@@ -248,3 +248,295 @@ preflight_credential() {
   echo "FATAL: no pod has a usable credential; run scripts/claude-pods-login.sh" >&2
   return 1
 }
+
+# --- Kaneo -----------------------------------------------------------------
+# The board at kaneo.home.chrisscotmartin.com IS the work queue. Chris files
+# tickets there, the pods move them through the columns, and a card in
+# Needs Human Review is how a human gets asked for a decision.
+#
+# GitHub issues are no longer a work source. The pods still use GitHub for
+# everything issues were not — branches, pull requests, CI, commit statuses —
+# but what to work on comes from the board and nowhere else.
+#
+# Everything here wraps the upstream `kaneo` CLI rather than curl+jq against
+# the REST API: the CLI ships with the server, so a schema change arrives as
+# a CLI upgrade instead of as a silently empty jq filter at 2am.
+KANEO_PROJECT="${KANEO_PROJECT:-claude-pods}"
+
+# The columns a project must have before the pods will touch it. More
+# is fine — a project may carry extra columns of its own — but each of these
+# has to exist, because each is a destination something below moves a card
+# to, or the queue the author pod reads.
+#
+# Backlog and To Do are deliberately different things. Backlog is where
+# everything lives; nothing reads it. Moving a card to To Do is the
+# dispatch — an explicit "work this one" — so a pod never starts on
+# something just because it was written down.
+KANEO_REQUIRED_COLUMNS="backlog to-do in-progress in-review needs-human-review mergeable done"
+
+# The branch a card's work lives on.
+#
+# One fact, one place. This convention is the join between a pull request
+# and the card it came from, and it is read by four things: the author
+# (creating it), the author prompt (told to use it), kaneo_task_for_pr
+# (parsing it back), and the PR filters in the test and merge pods. It was
+# previously written out at each of those sites, and when the prefix changed
+# from fix/issue-<n> to fix/<task> two of them were missed — so the test and
+# merge pods matched nothing and every card stopped dead in In Review while
+# the logs read rc=0.
+KANEO_BRANCH_PREFIX="${KANEO_BRANCH_PREFIX:-fix/}"
+# Exported: the PR filters in the test and merge pods read it as
+# $ENV.KANEO_BRANCH_PREFIX inside a jq expression.
+export KANEO_BRANCH_PREFIX
+kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
+
+# The pipeline, written down once.
+#
+# The dispatcher decides which columns START work; these scripts decide
+# which columns they may move a card TO. Both halves are the same graph, and
+# with only one half visible it is impossible to see a cycle. Keep this in
+# step with ROUTES in dispatcher/dispatch.mjs.
+#
+#   backlog             inert — holding area, nothing reads it
+#   to-do        -> author  -> in-progress -> {in-review, backlog*, needs-human-review}
+#   in-review    -> test    -> {mergeable, to-do(+), needs-human-review}
+#   mergeable    -> merge   -> {done, needs-human-review, to-do(+)}
+#   needs-human-review  inert — waiting on a person
+#   done                inert — terminal, except a revert reopens to to-do(+)
+#
+#   (*) backlog is inert ON PURPOSE for the failure path: sending a failed
+#       card to to-do would re-dispatch the author instantly and loop with
+#       no human in it.
+#   (+) the only backward edges, and the only cycles in the graph. Each is
+#       capped by kaneo_rework_count; without that cap a card can bounce
+#       between to-do and in-review forever, machine-driven.
+
+# Reads KANEO_API_KEY the way require_gh_token reads the git token. Fatal,
+# like that one: with no board there is no queue, and a pod with nothing to
+# work on should say so rather than appear to run successfully.
+require_kaneo_key() {
+  KANEO_API_KEY="$(cat /run/secrets/kaneo/api-key 2>/dev/null)"
+  KANEO_API_URL="${KANEO_API_URL:-https://kaneo.home.chrisscotmartin.com}"
+  export KANEO_API_KEY KANEO_API_URL
+  # Both blockers in one pass: preflight exists so a single restart
+  # surfaces everything that is wrong, not the first thing.
+  local bad=0
+  [ -n "$KANEO_API_KEY" ] || { echo "FATAL: no Kaneo API key at /run/secrets/kaneo/api-key" >&2; bad=1; }
+  command -v kaneo >/dev/null 2>&1 || { echo "FATAL: kaneo CLI not installed" >&2; bad=1; }
+  [ "$bad" -eq 0 ]
+}
+
+# True when a project carries every required column. This is the enrolment switch:
+# a project that has them is worked, one that does not is left alone, and
+# nothing anywhere lists which projects are live. The board is the config.
+#
+# Silent when a project has NONE of the six — that is a project deliberately
+# kept out of this flow, and a nightly line about it would be noise that
+# teaches you to skim the log. A project with SOME of them is likely a typo
+# or a renamed column, so that one says what is missing.
+kaneo_enrolled() {
+  local project="${1:-$KANEO_PROJECT}" have missing want total found=0
+  have="$(kaneo column list --project "$project" --jq '.[].slug' 2>/dev/null)"
+  # The CLI prints a JSON error object and still exits 0 — a DNS blip or an
+  # expired key comes back as {"error":"..."} rather than a failure. Trusting
+  # the exit status alone turns "I could not reach the board" into "this
+  # project has no columns", which is indistinguishable from a project
+  # deliberately left out of the flow, and would silently un-enrol
+  # everything during an outage.
+  case "$have" in
+    '') echo "kaneo: no answer listing columns for $project" >&2; return 1 ;;
+    '{"error"'*|*'"error":'*) echo "kaneo: cannot read columns for $project: $have" >&2; return 1 ;;
+  esac
+
+  missing=""
+  for want in $KANEO_REQUIRED_COLUMNS; do
+    if printf '%s\n' "$have" | grep -qx "$want"; then
+      found=$((found + 1))
+    else
+      missing="$missing $want"
+    fi
+  done
+
+  [ -z "$missing" ] && return 0
+  total=$(printf '%s\n' $KANEO_REQUIRED_COLUMNS | grep -c .)
+  [ "$found" -gt 0 ] && echo "kaneo: SKIP $project — $found/$total columns, missing:$missing" >&2
+  return 1
+}
+
+# Moves a card to a column by slug. Never fatal: the board is a view of the
+# night's work, and failing to update it must not stop the work itself. A
+# failed move is logged so a stale card is explainable in the morning.
+kaneo_move() {
+  local task="$1" to="$2"
+  # Audible. A merged PR whose branch is not <prefix><task> has no card to
+  # move, and silence here leaves it sitting in Mergeable with nothing
+  # anywhere saying why.
+  [ -n "$task" ] || { echo "   kaneo: no card for this PR; not moved to $to" >&2; return 0; }
+  if kaneo task move "$task" --status "$to" >/dev/null 2>&1; then
+    echo "   kaneo: $task -> $to"
+  else
+    echo "   kaneo: FAILED to move $task -> $to" >&2
+  fi
+}
+
+# Attaches a pull request to a card, so it shows the PR and its state without
+# Kaneo needing a GitHub App installed. The card is the only record of why a
+# PR exists — there is no issue behind it — so this link is what makes the
+# work explicable later.
+# The CLI attaches a plain link; `resourceType: pull_request` with its
+# open/merged badge is REST-only, and not worth a second code path for a
+# badge. The URL is a PR URL either way, which is what makes the card
+# explicable later.
+kaneo_link_pr() {
+  local task="$1" url="$2" title="${3:-pull request}"
+  [ -n "$task" ] || return 0
+  kaneo task link add "$task" "$url" --title "$title" \
+    >/dev/null 2>&1 || echo "   kaneo: FAILED to link $url to $task" >&2
+}
+
+# Posts a comment and @-mentions a human.
+#
+# Load-bearing rather than decorative: Kaneo has no per-column notification
+# filter (taskStatusChangeEnabled is one boolean covering every column), so
+# status notifications are off and this mention is the ONLY thing that
+# reaches a phone. A RISKY verdict nobody is told about is a card in a column
+# nobody is watching, so a failure here is reported loudly, not swallowed.
+kaneo_mention() {
+  local task="$1" who="$2" body="$3"
+  # Non-zero, not silent: the comment below calls this the only channel
+  # that reaches a phone, so "there was no card to mention on" has to be
+  # as loud as "the mention failed".
+  [ -n "$task" ] || { echo "   kaneo: no card to mention on — nobody has been notified" >&2; return 1; }
+  if kaneo task comment "$task" "@$who $body" >/dev/null 2>&1; then
+    echo "   kaneo: mentioned @$who on $task"
+  else
+    echo "   kaneo: MENTION FAILED on $task — nobody has been notified" >&2
+    return 1
+  fi
+}
+
+# The repo a card is for, from its repo:<name> label.
+#
+# A Kaneo-native card has no GitHub issue to infer a repo from, so the label
+# is the only place that fact lives. Zero labels means nowhere to do the
+# work; two means the card does not say where. Both are refused rather than
+# guessed at — printing the reason, because unlike a non-enrolled project
+# this is always a mistake.
+kaneo_task_repo() {
+  local json="$1" repos
+  repos="$(printf '%s' "$json" | jq -r '[.labels[]?.name | select(startswith("repo:")) | sub("^repo:"; "")] | .[]' 2>/dev/null)"
+  case "$(printf '%s' "$repos" | grep -c .)" in
+    1) printf '%s' "$repos" ;;
+    0) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+# The open pull request already attached to a card, if there is one.
+#
+# This is what tells a fresh ticket from a revision. Both arrive in To Do —
+# there is no separate rework column, because "a pod should work this" is
+# one state whether or not it has been tried before — so the card's own
+# links are the thing that says which. A card with a PR gets the rework
+# prompt and pushes to the existing branch; a card without gets the author
+# prompt and starts one.
+#
+# Prints the PR url and returns 0, or returns 1 when there is none.
+kaneo_task_pr() {
+  local task="$1" url
+  [ -n "$task" ] || return 1
+  url="$(kaneo task link list "$task" --jq '[.[] | .url | select(test("/pull/[0-9]+$"))] | first // empty' 2>/dev/null)"
+  [ -n "$url" ] || return 1
+  printf '%s' "$url"
+}
+
+# The one headline every requeue writes, and the one kaneo_rework_count
+# reads. A literal shared by a writer and a reader in different files is a
+# fact with two homes; naming it gives it one.
+KANEO_REWORK_HEADLINE="Sent back for rework"
+
+# Sends a card back to To Do, counted.
+#
+# BOTH requeue paths go through here — the review panel's NO-MERGE and the
+# integration test's FAIL. That matters: the cap below counts these
+# comments, and when the test path commented in its own words it was
+# invisible to the counter, so a card could bounce to-do -> in-review ->
+# to-do forever with the count stuck at zero. Every bounce must be written
+# the same way or the cap is decorative.
+kaneo_requeue() {
+  local task="$1" why="$2"
+  [ -n "$task" ] || { echo "   kaneo: no card to requeue" >&2; return 1; }
+  kaneo task comment "$task" "$KANEO_REWORK_HEADLINE: $why" >/dev/null 2>&1 \
+    || echo "   kaneo: FAILED to record the requeue on $task" >&2
+  kaneo_move "$task" to-do
+}
+
+# How many times a card has been sent back.
+#
+# Counted on the CARD, not on the pull request: the card is the thing that
+# bounces, it survives a force-push, and both requeue paths touch it while
+# only one of them touches the PR.
+#
+# Two is the cap. A card the pipeline keeps rejecting is not converging,
+# and the third attempt should reach a person instead of going round again.
+kaneo_rework_count() {
+  local task="$1" n
+  [ -n "$task" ] || { echo 0; return; }
+  # `task view --full`, because `task comment` only posts — there is no
+  # list subcommand, and --full is what returns every comment rather than
+  # the latest three.
+  # Read the card whole, then count locally. Asking the CLI to both fetch
+  # and filter hides the difference between "no matching comments" and "the
+  # request failed": a rate-limited or unreachable call prints
+  # {"error":...}, exits 0, and the jq count comes back 0 — which would
+  # fail OPEN and uncap the retry loop, the exact failure this cap exists
+  # to prevent.
+  local raw
+  raw="$(kaneo task view "$task" --full --json 2>/dev/null)"
+  case "$raw" in
+    ''|*'"error":'*)
+      echo "   kaneo: cannot read $task (${raw:-no answer}); treating as capped" >&2
+      echo 99; return ;;
+  esac
+  n="$(printf '%s' "$raw" | jq "[.comments[]?.content | select(startswith(\"$KANEO_REWORK_HEADLINE\"))] | length" 2>/dev/null)"
+  # An empty answer is a failed lookup, not zero bounces. Defaulting it to
+  # 0 would fail open and uncap the loop silently, so say so and assume the
+  # cap is reached — refusing to retry is the safe direction.
+  case "$n" in
+    ''|*[!0-9]*) echo "   kaneo: cannot read rework count for $task; treating as capped" >&2; echo 99 ;;
+    *) echo "$n" ;;
+  esac
+}
+
+# The card a pull request belongs to.
+#
+# The merge pod works from pull requests, but the board works from cards, so
+# something has to join them. The branch carries the task id (fix/<task>),
+# which is the one place the link survives a force-push, a retitle and an
+# edited PR body.
+kaneo_task_for_pr() {
+  local repo="$1" pr="$2" head
+  head="$(gh pr view "$pr" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)"
+  case "$head" in
+    fix/*) printf '%s' "${head#fix/}" ;;
+    *) return 1 ;;
+  esac
+}
+
+# Sends a declined pull request back to To Do with the panel's reasoning.
+#
+# The full verdict stays on the pull request — it can be long, and the
+# rework agent reads it there — while the card gets the first few lines,
+# which is what a person scanning the board needs. The move and the count
+# are kaneo_requeue's, so this path is counted like the test path.
+kaneo_note_and_requeue() {
+  local repo="$1" pr="$2" verdict="$3" task summary
+  task="$(kaneo_task_for_pr "$repo" "$pr")" || {
+    echo "   kaneo: no card for $repo#$pr (branch is not ${KANEO_BRANCH_PREFIX}<task>); not requeued" >&2
+    return 1
+  }
+  summary="$(printf '%s' "$verdict" | grep -v '^VERDICT:' | sed '/^[[:space:]]*$/d' | head -6)"
+  kaneo_requeue "$task" "the review panel declined PR #$pr
+
+$summary"
+}

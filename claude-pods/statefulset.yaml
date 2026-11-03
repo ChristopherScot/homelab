@@ -105,6 +105,11 @@ spec:
             - name: repos
               mountPath: /run/secrets/repos
               readOnly: true
+            # Kaneo API key — the board is the work queue, so the nightly
+            # scripts read and move cards with this.
+            - name: kaneo-api
+              mountPath: /run/secrets/kaneo
+              readOnly: true
           # Requests are a SCHEDULING RESERVATION, not a quota: 500m CPU
           # was held against ~5m actual use, so three pods parked 1.5
           # cores the scheduler could not give anything else. There is
@@ -133,6 +138,15 @@ spec:
         - name: repos
           secret:
             secretName: claude-repos
+            optional: true
+        - name: kaneo-api
+          secret:
+            secretName: kaneo-api
+            # optional, like the others: a pod that starts before the
+            # ExternalSecret has synced should come up and fail its own
+            # preflight with a clear message, not sit in
+            # CreateContainerConfigError where the reason is three kubectl
+            # commands away.
             optional: true
   volumeClaimTemplates:
     # $HOME — SSD (1 replica). Small + latency-sensitive; the interactive
