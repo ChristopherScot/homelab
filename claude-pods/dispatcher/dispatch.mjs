@@ -84,6 +84,32 @@ function runStage(repo, pod, script, task) {
   });
 }
 
+// Does this pod work this repo at all?
+//
+// ROUTES picks a pod by column, but which repos a pod acts on is decided
+// separately by /run/secrets/repos/pod<n>. Dispatching a repo that is not
+// on that pod's list runs a full job that scans the wrong set and exits
+// having done nothing — a silent no-op that reads as a successful run.
+// Checking here turns that into one line saying why.
+//
+// Read per request rather than cached: the secret is Vault-backed and
+// refreshes on its own schedule, and a dispatcher holding a stale copy
+// would refuse work the pod would happily do.
+function podWorksRepo(pod, repo) {
+  const n = pod.slice(pod.lastIndexOf("-") + 1);
+  let list;
+  try {
+    list = readFileSync(`/run/secrets/repos/pod${n}`, "utf8");
+  } catch {
+    // No list mounted is not a reason to refuse: the scripts do their own
+    // filtering, and failing closed here would stop everything the first
+    // time the mount lagged.
+    return true;
+  }
+  const want = repo.includes("/") ? repo : `ChristopherScot/${repo}`;
+  return list.split(/[\s,]+/).filter(Boolean).includes(want);
+}
+
 function oneRepoLabel(task) {
   const names = (task?.labels ?? [])
     .map((l) => l?.name ?? "")
@@ -138,6 +164,10 @@ createServer((req, res) => {
     const repo = oneRepoLabel(task);
     if (!repo) {
       log(`SKIP  ${id} -> ${column}: card needs exactly one repo: label`);
+      return;
+    }
+    if (!podWorksRepo(route[0], repo)) {
+      log(`SKIP  ${id} -> ${column}: ${route[0]} does not work ${repo}`);
       return;
     }
     runStage(repo, route[0], route[1], id);

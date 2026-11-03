@@ -60,6 +60,12 @@ spec:
             - name: kaneo-webhook
               mountPath: /run/secrets/kaneo
               readOnly: true
+            # Which repos each pod works. Read to avoid dispatching a repo
+            # a pod does not handle, which would run a job that scans the
+            # wrong set and exits having done nothing.
+            - name: repos
+              mountPath: /run/secrets/repos
+              readOnly: true
           resources:
             requests:
               cpu: 10m
@@ -77,6 +83,10 @@ spec:
         - name: kaneo-webhook
           secret:
             secretName: kaneo-webhook
+        - name: repos
+          secret:
+            secretName: claude-repos
+            optional: true
 ---
 apiVersion: v1
 kind: Service
