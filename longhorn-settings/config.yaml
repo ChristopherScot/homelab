@@ -136,3 +136,39 @@ metadata:
 # rebuilding. The bandwidth was occupied either way, and the pause only
 # bought continued single-replica exposure.
 value: "1"
+---
+apiVersion: longhorn.io/v1beta2
+kind: Setting
+metadata:
+  name: node-down-pod-deletion-policy
+  namespace: longhorn-system
+# delete-both-statefulset-and-deployment-pod, up from the "do-nothing"
+# default. This is the setting that stops the manual rescue.
+#
+# When a node stops answering, Kubernetes will not confirm its pods are
+# gone - it cannot reach the kubelet to ask - so they sit in Terminating
+# forever and their RWO volumes stay recorded as attached. Replacement
+# pods then land on a healthy node and block on
+#   Multi-Attach error for volume "pvc-..." Volume is already used by pod(s) ...
+# and stay there until a human force-deletes the originals by hand.
+#
+# Measured on 2026-11-02, when pop-os dropped off at 00:59Z: 21 pods stuck
+# Terminating, 14 of them holding a PVC, 7 replacements blocked behind
+# them. Both halves of the monitoring stack (Loki, VictoriaMetrics) were
+# among the casualties, so the tooling needed to diagnose the outage was
+# itself part of the outage. Each one needed
+#   kubectl delete pod -n <ns> <pod> --force --grace-period=0
+# Longhorn will now issue those deletions itself.
+#
+# Both kinds, because the stuck set spans both: 9 ReplicaSet (Deployments),
+# 4 CNPG Cluster (which manage StatefulSets underneath) and 1 StatefulSet.
+# Picking only one of the two policies would leave the rest to be done by
+# hand, which is the thing being removed.
+#
+# Safety: Longhorn only force-deletes when it has already confirmed the
+# node is down, and it detaches the volume from that node before any
+# replacement attaches - the same ordering as doing it manually. On
+# 2026-11-02 Longhorn had already released every volume (state=attaching,
+# currentNodeID empty) while Kubernetes still recorded attached=True, so
+# the stale record was the only thing in the way.
+value: "delete-both-statefulset-and-deployment-pod"
