@@ -1,0 +1,79 @@
+# Nightly desloppify run against projects/webapp in schoolhouse-world/app.
+#
+# Runs at 03:00 in its own pod, desloppify-0 - not in a session pod:
+# the repository it works on is one where a merge to main reaches
+# production, so its PAT is scoped to that one repo with no
+# Administration, and no broader token sits beside it.
+#
+# This holds no logic - it execs the script baked into the image, so the
+# work runs in desloppify-0 with its PVCs, its Vault-mounted tokens and
+# its node_modules cache.
+---
+# Only what the trigger needs: find the pod, exec one script in it.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: desloppify-runner
+  namespace: claude-pods
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: desloppify-runner
+  namespace: claude-pods
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: desloppify-runner
+  namespace: claude-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: desloppify-runner
+subjects:
+  - kind: ServiceAccount
+    name: desloppify-runner
+    namespace: claude-pods
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-desloppify
+  namespace: claude-pods
+spec:
+  schedule: "0 3 * * *"
+  timeZone: "America/New_York"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 3600
+  jobTemplate:
+    spec:
+      # One attempt. A desloppify session that failed halfway has already
+      # written to its state directory and may have pushed a branch;
+      # starting again from the top would duplicate that work rather than
+      # resume it.
+      backoffLimit: 0
+      activeDeadlineSeconds: 10800
+      template:
+        spec:
+          serviceAccountName: desloppify-runner
+          restartPolicy: Never
+          containers:
+            - name: trigger
+              image: bitnami/kubectl:1.30
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  exec kubectl exec -n claude-pods desloppify-0 -- \
+                    /usr/local/bin/nightly-desloppify.sh
