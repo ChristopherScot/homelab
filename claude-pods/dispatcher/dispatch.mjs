@@ -22,6 +22,9 @@ import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const NS = process.env.DISPATCH_NS ?? "claude-pods";
+// Same default and same env var as nightly-common.sh, so a short repo: label
+// resolves to the same full name here as it does in the scripts.
+const OWNER = process.env.NIGHTLY_OWNER ?? "ChristopherScot";
 const SECRET_FILE =
   process.env.DISPATCH_SECRET_FILE ?? "/run/secrets/kaneo/webhook-secret";
 
@@ -34,11 +37,26 @@ const ROUTES = {
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
-// One run per repo at a time. The pods share a single clone per repository
-// and nightly-author runs `git reset --hard` before each ticket, so two runs
-// on the same repo would reset each other's working tree mid-edit. Different
-// repos run together freely — that is the point of dispatching on a move
-// instead of on a clock.
+// A Kaneo task.status_changed payload is a few KB; 1 MiB is generous.
+const MAX_BODY = 1024 * 1024;
+
+// One run per POD at a time, not per repo.
+//
+// Per-repo was wrong: each stage runs a fixed script in a fixed pod, and
+// that script writes $STATE_DIR/prompt.txt — one fixed path — before
+// feeding it to the agent. Two runs in the same pod race on that file and
+// the second writer wins, so one ticket gets the other's prompt. They also
+// share the clones under /workspace, where nightly-author does
+// `git reset --hard` before each ticket.
+//
+// Pod is the real resource, and it is also the coarser lock, so it covers
+// the repo case for free.
+//
+// In-process only: a dispatcher restart forgets what is in flight. That is
+// why the Deployment is replicas:1 with strategy Recreate — a second
+// replica would have its own empty set and start a run on top of a live
+// one. A lockfile inside the pod would survive restarts and is the better
+// fix if this ever needs more than one replica.
 const busy = new Set();
 
 function verify(rawBody, sigHex) {
@@ -62,24 +80,24 @@ function verify(rawBody, sigHex) {
 }
 
 function runStage(repo, pod, script, task) {
-  if (busy.has(repo)) {
+  if (busy.has(pod)) {
     // Dropped rather than queued: the card stays where it is, so moving it
     // again once the current run finishes is the retry. A queue here would
     // silently stack up work nobody asked for twice.
-    log(`BUSY  ${repo} — ${task} not started; move the card again later`);
+    log(`BUSY  ${pod} — ${task} (${repo}) not started; move the card again later`);
     return;
   }
-  busy.add(repo);
+  busy.add(pod);
   log(`START ${task} repo=${repo} pod=${pod} ${script.split("/").pop()}`);
   const child = spawn("kubectl", ["exec", "-n", NS, pod, "--", script], {
     stdio: "ignore",
   });
   child.on("exit", (code, signal) => {
-    busy.delete(repo);
+    busy.delete(pod);
     log(`END   ${task} repo=${repo} rc=${code ?? signal}`);
   });
   child.on("error", (err) => {
-    busy.delete(repo);
+    busy.delete(pod);
     log(`ERROR ${task} repo=${repo}: ${err.message}`);
   });
 }
@@ -106,7 +124,7 @@ function podWorksRepo(pod, repo) {
     // time the mount lagged.
     return true;
   }
-  const want = repo.includes("/") ? repo : `ChristopherScot/${repo}`;
+  const want = repo.includes("/") ? repo : `${OWNER}/${repo}`;
   return list.split(/[\s,]+/).filter(Boolean).includes(want);
 }
 
@@ -127,11 +145,33 @@ createServer((req, res) => {
     res.writeHead(405).end();
     return;
   }
+  // Bounded: this endpoint is unauthenticated until the HMAC is checked,
+  // and the body must be buffered whole to check it. Without a cap a large
+  // POST is memory growth an anonymous caller controls.
   const chunks = [];
-  req.on("data", (c) => chunks.push(c));
+  let size = 0;
+  let tooBig = false;
+  req.on("data", (c) => {
+    if (tooBig) return;
+    size += c.length;
+    if (size > MAX_BODY) {
+      tooBig = true;
+      log(`REJECT body over ${MAX_BODY} bytes`);
+      res.writeHead(413).end();
+      req.destroy();
+      return;
+    }
+    chunks.push(c);
+  });
   req.on("end", () => {
+    if (tooBig) return;
     const raw = Buffer.concat(chunks);
-    if (!verify(raw, req.headers["x-kaneo-signature"])) {
+    // Node gives a header as a string OR an array when it appears twice.
+    // Passing an array to Buffer.from throws, which would reject a valid
+    // delivery as a server error rather than verify it.
+    const sigHeader = req.headers["x-kaneo-signature"];
+    const sig = Array.isArray(sigHeader) ? sigHeader[0] : sigHeader;
+    if (!verify(raw, sig)) {
       log("REJECT bad signature");
       res.writeHead(401).end();
       return;

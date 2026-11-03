@@ -517,8 +517,12 @@ kaneo_rework_count() {
 kaneo_task_for_pr() {
   local repo="$1" pr="$2" head
   head="$(gh pr view "$pr" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)"
+  # Uses KANEO_BRANCH_PREFIX, not a literal fix/: this is the inverse of
+  # kaneo_branch_for_task and the two must agree. A literal here would keep
+  # working on the default and silently stop finding cards the moment the
+  # prefix was changed anywhere else.
   case "$head" in
-    fix/*) printf '%s' "${head#fix/}" ;;
+    "$KANEO_BRANCH_PREFIX"*) printf '%s' "${head#"$KANEO_BRANCH_PREFIX"}" ;;
     *) return 1 ;;
   esac
 }

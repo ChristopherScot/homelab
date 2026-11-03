@@ -56,8 +56,15 @@ rm -f "$STATE_DIR/author-done"
 collect_tickets() {
   local json
   json="$(kaneo task list --project "$KANEO_PROJECT" --status to-do \
-            --sort position --order asc --limit 50 --json 2>/dev/null)" || return 0
-  [ -z "$json" ] && return 0
+            --sort position --order asc --limit 50 --json 2>/dev/null)"
+  # The CLI prints {"error":...} and exits 0, so an outage or a rate limit
+  # arrives looking exactly like an empty queue. Treating that as "no work"
+  # makes a failed night indistinguishable from a quiet one, so say so and
+  # emit nothing — the caller then does nothing, but the log says why.
+  case "$json" in
+    '') echo "   kaneo: no answer listing to-do; treating the night as failed" >&2; return 1 ;;
+    *'"error":'*) echo "   kaneo: cannot list to-do: $json" >&2; return 1 ;;
+  esac
   local n i task repo rc
   n="$(printf '%s' "$json" | jq 'length' 2>/dev/null)" || return 0
   i=0

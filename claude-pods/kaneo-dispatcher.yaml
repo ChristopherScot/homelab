@@ -109,8 +109,15 @@ spec:
 # verifies before doing anything — see dispatch.mjs. An unsigned or
 # wrongly-signed request is answered 401 and nothing runs.
 #
-# Internal ingress class: Kaneo runs in this same cluster, so this host
-# never needs to resolve or be reachable from outside the LAN.
+# ingressClassName "external" is the LAN controller (192.168.50.225), not
+# the internet-facing one — that is the class named "public". The host is
+# reachable from the LAN only.
+#
+# Kaneo itself does not use this path: it posts to the in-cluster Service
+# (kaneo-dispatcher.claude-pods.svc) because cluster DNS does not resolve
+# *.home.chrisscotmartin.com, and hairpinning out to the ingress and back
+# would add a dependency on the LAN for traffic that never leaves the
+# cluster. This ingress exists for reaching /healthz by hand.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
