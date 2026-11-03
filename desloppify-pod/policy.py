@@ -149,6 +149,9 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
 ALLOWED_TOOLS = {
     "Read", "Glob", "Grep", "Write", "Edit", "MultiEdit", "NotebookEdit",
     "TodoWrite", "Task", "BashOutput", "KillShell", "WebFetch", "WebSearch",
+    # The channel the run's verdict comes back on. Omitting it refuses the
+    # report at the last step of an otherwise complete run.
+    "StructuredOutput",
 }
 
 
