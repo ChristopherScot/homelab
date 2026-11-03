@@ -108,6 +108,21 @@ report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
 rc=$?
 echo "run rc=$rc report=$report"
 
+# One line per run, as logfmt, so Loki can filter on the fields rather
+# than matching inside a pretty-printed JSON blob. The full report stays
+# on the PVC for anything this does not carry.
+jq -r '"desloppify_run outcome=\(.outcome // "BLOCKED") pr=\(.pr_number // "none") " +
+       "cost_usd=\(.cost_usd // 0) turns=\(.turns // 0) elapsed_s=\(.elapsed_s // 0) " +
+       "tools_allowed=\(.tools_allowed // 0) tools_denied=\(.tools_denied // 0) " +
+       "findings=\(.output.findings_resolved | length // 0) repo=\(.repo) branch=\(.branch)"' \
+   "$report" 2>/dev/null
+
+# A denial naming a protected branch is the one worth alerting on: it
+# means the agent tried for main and the policy stopped it.
+jq -r '.denials[]? | select(.reason | test("protected branch|base is|protection"))
+       | "desloppify_policy_stop detail=\(.detail | @json) reason=\(.reason | @json)"' \
+   "$report" 2>/dev/null
+
 outcome=$(jq -r '.outcome // "BLOCKED"' "$report" 2>/dev/null)
 pr=$(jq -r '.pr_number // empty' "$report" 2>/dev/null)
 denied=$(jq -r '.tools_denied // 0' "$report" 2>/dev/null)
