@@ -167,9 +167,28 @@ report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
 rc=$?
 echo "run rc=$rc report=$report"
 
+# One logfmt line per run. The report reaches Loki either way, but as
+# pretty-printed JSON it can only be matched as text; these fields are
+# the ones worth graphing or alerting on. The scores come from the
+# agent's own report, so they are absent on a run that never got far
+# enough to read them.
+jq -r '"desloppify_run outcome=\(.outcome // "BLOCKED") stop_reason=\(.stop_reason // "unknown") " +
+       "pr=\(.pr_number // "none") cost_usd=\(.cost_usd // 0) turns=\(.turns // 0) " +
+       "elapsed_s=\(.elapsed_s // 0) tools_allowed=\(.tools_allowed // 0) " +
+       "tools_denied=\(.tools_denied // 0) findings=\(.output.findings_resolved | length? // 0) " +
+       "score_before=\(.output.score_before // "na") score_after=\(.output.score_after // "na") " +
+       "branch=\(.branch)"' "$report" 2>/dev/null
+
 jq -r 'select(.stalled_after != null and .timed_out == true)
        | "desloppify_stall tool=\(.stalled_after.tool) idle_s=\(.stalled_after.idle_s) " +
          "detail=\(.stalled_after.detail | @json)"' "$report" 2>/dev/null
+
+# The denial worth finding without reading a transcript: the agent went
+# for a protected branch and the policy stopped it. Routine denials -
+# chaining, unlisted binaries - fire constantly and would bury it.
+jq -r '.denials[]? | select(.reason | test("protected branch|base is|protection"))
+       | "desloppify_policy_stop detail=\(.detail | @json) reason=\(.reason | @json)"' \
+   "$report" 2>/dev/null
 
 # A run that ended badly may have ended because the filesystem went.
 # Saying so beats reporting a timeout whose cause is a dead mount.
