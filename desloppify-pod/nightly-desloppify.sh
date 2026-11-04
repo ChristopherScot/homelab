@@ -35,12 +35,34 @@ if ! workspace_ok; then
   exit 1
 fi
 
-mkdir -p "$STATE_DIR"
-if [ -w /proc/1/fd/1 ]; then
-  exec > >(tee -a "$LOG" > /proc/1/fd/1) 2>&1
-else
-  exec > >(tee -a "$LOG") 2>&1
+# Without -e a failed mkdir is silent, and the redirection below then
+# fails on a path that does not exist - with stdout already redirected,
+# so the reason never appears anywhere.
+if ! mkdir -p "$STATE_DIR"; then
+  echo "FATAL: cannot create $STATE_DIR" >&2
+  exit 1
 fi
+
+# Write to the file, then copy it to pid 1 on the way out, rather than
+# teeing through a process substitution. `exec > >(tee ...)` leaves the
+# substitution's stdin open with nothing to close it under `kubectl
+# exec` without a TTY: the first scheduled run hung there and the
+# CronJob killed it on activeDeadlineSeconds three hours later, having
+# produced no log to explain itself.
+#
+# Alloy reads pid 1's stdout, so the copy is what reaches Loki. It runs
+# on every exit path, including the FATALs below.
+# The day's log accumulates across runs, so only this run's share is
+# republished - otherwise a second run re-sends the first one's output.
+_log_start=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+exec >> "$LOG" 2>&1
+publish_log() {
+  if [ -w /proc/1/fd/1 ]; then
+    tail -n "+$((_log_start + 1))" "$LOG" > /proc/1/fd/1 2>/dev/null || true
+  fi
+}
+trap publish_log EXIT
+
 echo "=== nightly-desloppify $(date -Is) ==="
 
 GH_TOKEN="$(cat /run/secrets/desloppify/token 2>/dev/null)"
