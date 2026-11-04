@@ -148,7 +148,7 @@ fi
 branch="desloppify/webapp-$(date +%Y%m%d-%H%M)"
 git -C "$dir" checkout --quiet -B "$branch" "$base_ref" || exit 1
 git -C "$dir" clean -qfd
-echo "work branch: $branch (from origin/$INTEGRATION_BRANCH)"
+echo "work branch: $branch (from $base_ref)"
 
 # desloppify keeps its queue in .desloppify. The clone is reset between
 # runs, so the real directory lives on the PVC and is linked in - that is
