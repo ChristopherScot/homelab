@@ -101,8 +101,30 @@ if ! git -C "$dir" rev-parse --verify --quiet "origin/$INTEGRATION_BRANCH" >/dev
   git -C "$dir" fetch --quiet origin || exit 1
 fi
 
+# Stack on the last night's work. PRs are left open for review, so
+# cutting each night from the integration branch would hand every run
+# the same base and make the second one conflict with the first.
+base_ref="origin/$INTEGRATION_BRANCH"
+base_pr=""
+prev=$(gh pr list --repo "$REPO" --base "$INTEGRATION_BRANCH" --state open \
+         --json number,headRefName,createdAt \
+         --jq '[.[] | select(.headRefName | startswith("desloppify/"))]
+               | sort_by(.createdAt) | last | "\(.number) \(.headRefName)"' 2>/dev/null)
+if [ -n "$prev" ] && [ "$prev" != "null" ]; then
+  base_pr="${prev%% *}"
+  prev_branch="${prev##* }"
+  if git -C "$dir" rev-parse --verify --quiet "origin/$prev_branch" >/dev/null; then
+    base_ref="origin/$prev_branch"
+    echo "stacking on PR #$base_pr ($prev_branch)"
+  else
+    echo "PR #$base_pr names a branch that is gone; basing on $INTEGRATION_BRANCH"
+  fi
+else
+  echo "no open desloppify PR; basing on $INTEGRATION_BRANCH"
+fi
+
 branch="desloppify/webapp-$(date +%Y%m%d-%H%M)"
-git -C "$dir" checkout --quiet -B "$branch" "origin/$INTEGRATION_BRANCH" || exit 1
+git -C "$dir" checkout --quiet -B "$branch" "$base_ref" || exit 1
 git -C "$dir" clean -qfd
 echo "work branch: $branch (from origin/$INTEGRATION_BRANCH)"
 
@@ -139,6 +161,7 @@ report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
   --integration-branch "$INTEGRATION_BRANCH" \
   --state-dir "$STATE_DIR/webapp" \
   --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
+  --max-cost "${DESLOP_MAX_COST_USD:-50}" \
   --timeout "${DESLOP_TIMEOUT_S:-7200}" \
   > "$report"
 rc=$?
@@ -172,34 +195,24 @@ if [ "$outcome" != "PROGRESS" ] || [ -z "$pr" ]; then
   exit $rc
 fi
 
-# Verify the PR before merging it. The agent cannot merge, so these
-# checks are the only gate, and a PR that targets anything but the
-# integration branch must never land.
-base=$(gh pr view "$pr" --repo "$REPO" --json baseRefName --jq .baseRefName 2>/dev/null)
-if [ "$base" != "$INTEGRATION_BRANCH" ]; then
-  echo "REFUSING to merge PR #$pr: base is '$base', expected '$INTEGRATION_BRANCH'"
-  gh pr comment "$pr" --repo "$REPO" \
-    --body "Not merged: base is \`$base\`, which is not the integration branch." >/dev/null 2>&1
-  exit 1
+# The PR is left open. A change that landed on the integration branch
+# without anyone reading it is the thing this pod is not for yet; the
+# runner reports where to look instead.
+# CI runs `yarn --immutable` before anything else, so a package.json
+# edited without its lockfile fails every check at the install step.
+# Run 5 removed prop-types - a peer dependency of react-katex - and all
+# six checks died before linting. Saying so here beats reading six
+# identical CI logs tomorrow.
+if git -C "$dir" diff --name-only "origin/$INTEGRATION_BRANCH"...HEAD 2>/dev/null \
+     | grep -q "package.json$"; then
+  if (cd "$dir" && yarn install --immutable >/dev/null 2>&1); then
+    echo "lockfile: consistent with package.json"
+  else
+    echo "desloppify_lockfile_drift pr=$pr detail=\"package.json changed but yarn.lock does not match; CI will fail at the install step\""
+  fi
 fi
 
-files=$(gh pr view "$pr" --repo "$REPO" --json files --jq '[.files[].path] | length' 2>/dev/null)
-outside=$(gh pr view "$pr" --repo "$REPO" --json files \
-  --jq "[.files[].path | select(startswith(\"$PROJECT_PATH/\") | not)] | length" 2>/dev/null)
-if [ "${outside:-0}" -gt 0 ]; then
-  echo "REFUSING to merge PR #$pr: $outside file(s) outside $PROJECT_PATH"
-  gh pr comment "$pr" --repo "$REPO" \
-    --body "Not merged: $outside file(s) fall outside \`$PROJECT_PATH\`." >/dev/null 2>&1
-  exit 1
-fi
-echo "PR #$pr: base=$base files=$files, all within $PROJECT_PATH"
-
-sha=$(gh pr view "$pr" --repo "$REPO" --json headRefOid --jq .headRefOid 2>/dev/null)
-if gh pr merge "$pr" --repo "$REPO" --squash --delete-branch \
-     --match-head-commit "$sha" >/dev/null 2>&1; then
-  echo "merged PR #$pr into $INTEGRATION_BRANCH at $sha"
-else
-  echo "merge of PR #$pr failed (left open for review)"
-fi
+echo "PR #$pr is open against $INTEGRATION_BRANCH and was NOT merged"
+echo "  https://github.com/$REPO/pull/$pr"
 
 echo "=== nightly-desloppify complete $(date -Is) ==="

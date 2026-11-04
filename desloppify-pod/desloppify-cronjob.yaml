@@ -76,4 +76,5 @@ spec:
                 - |
                   set -eu
                   exec kubectl exec -n claude-pods desloppify-0 -- \
+                    env DESLOP_MAX_COST_USD=50 \
                     /usr/local/bin/nightly-desloppify.sh
