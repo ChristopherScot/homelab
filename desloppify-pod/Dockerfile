@@ -40,13 +40,6 @@ RUN python3 -m venv "$DESLOPPIFY_VENV" \
          "desloppify[full]" claude-agent-sdk
 ENV PATH="/opt/desloppify-venv/bin:${PATH}"
 
-# The subjective dimensions - cross-module architecture, design coherence,
-# init coupling - are three quarters of the score and are the ones worth
-# having on a large codebase. They only run if the agent follows the
-# Claude review flow; without this overlay the CLI defaults to the codex
-# runner, which is not installed here, and the whole review step quietly
-# completes as a dry run with an empty results directory.
-RUN desloppify update-skill claude
 
 # The Agent SDK spawns this binary, which is what authenticates the run
 # against the subscription rather than the API.
