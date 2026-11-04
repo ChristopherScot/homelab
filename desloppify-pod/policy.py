@@ -55,6 +55,11 @@ ALLOWED: dict[str, set[str]] = {
     },
     "gh": {"pr", "issue", "label", "repo", "api", "search", "auth", "browse"},
     "desloppify": set(),
+    # Shell builtins and keywords. The table models binaries, so without
+    # these a bare `cd` or the `for` opening a loop reads as an unknown
+    # command. They execute nothing on their own - what follows them is
+    # a separate clause and is checked as one.
+    "cd": set(), "export": set(), "local": set(), "read": set(),
     "node": set(), "npm": set(), "npx": set(), "yarn": set(), "pnpm": set(),
     "tsc": set(), "tsgo": set(), "biome": set(), "oxlint": set(),
     "eslint": set(), "prettier": set(), "jest": set(), "vitest": set(),
@@ -152,6 +157,11 @@ ALLOWED_TOOLS = {
     # The channel the run's verdict comes back on. Omitting it refuses the
     # report at the last step of an otherwise complete run.
     "StructuredOutput",
+    # The SDK names the subagent tool Agent, not Task. Refusing it made
+    # run 5 score all twenty review dimensions serially in one context;
+    # the review flow is written to fan out. A subagent inherits this
+    # same hook, so its tool calls are decided here too.
+    "Agent",
 }
 
 

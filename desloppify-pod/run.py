@@ -182,6 +182,18 @@ your work there, push it, and open ONE pull request:
 The PR body should say what findings you resolved, what the score did, and
 anything you deliberately deferred.
 
+## Dependencies
+
+If you change `package.json`, run `yarn install` afterwards and commit the
+resulting `yarn.lock`. CI runs `yarn --immutable`, which fails the whole
+build - before any linting or typechecking - if the lockfile does not
+match. Verifying with a `node_modules` installed before your edit proves
+nothing about it.
+
+Treat a "zero importers" finding on a dependency with suspicion: a
+package with no imports in `src` may still be a peer dependency that
+something else requires. `grep <name> yarn.lock` before removing it.
+
 ## Boundaries
 
 `{args.integration_branch}` is the ONLY branch you may target. main is off

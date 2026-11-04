@@ -28,6 +28,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get update && apt-get install -y --no-install-recommends gh \
     && rm -rf /var/lib/apt/lists/*
 
+# gh stack: nightly PRs build on the previous night's unmerged work
+# rather than each cutting from the integration branch and conflicting.
+RUN gh extension install github/gh-stack --pin v0.2.0 \
+    || echo "WARNING: gh stack unavailable; runs will not stack"
+
 # yarn 4 via corepack: the repo pins its own release in .yarn/, and
 # corepack honours the packageManager field rather than overriding it.
 RUN corepack enable
