@@ -90,9 +90,13 @@ class Audit:
         self.path = path
         self.allowed = 0
         self.denied: list[tuple[str, str, str]] = []
+        # The call a stalled run stopped after: without it a timeout
+        # reports that the run wedged but not where.
+        self.last: tuple[float, str, str, bool] | None = None
         self._fh = path.open("a") if path else None
 
     def record(self, tool: str, detail: str, allow: bool, reason: str) -> None:
+        self.last = (time.time(), tool, detail[:300], allow)
         if allow:
             self.allowed += 1
         else:
@@ -263,13 +267,43 @@ async def run(args: argparse.Namespace) -> int:
     audit.close()
     payload = (result.structured_output if result and result.structured_output else {}) or {}
 
+    # Why it stalled, not just that it did. The last decision the hook
+    # recorded is the call the run stopped after, and the gap between
+    # that and the timeout is how long it sat there.
+    stalled_after = None
+    if audit.last is not None:
+        ts, tool, detail, allowed = audit.last
+        stalled_after = {
+            "tool": tool,
+            "detail": detail,
+            "allowed": allowed,
+            "idle_s": round(time.time() - ts, 1),
+            "at": time.strftime("%H:%M:%S", time.localtime(ts)),
+        }
+
     if timed_out:
+        where = ""
+        if stalled_after:
+            where = (f" - last tool call was {stalled_after['tool']} at "
+                     f"{stalled_after['at']}, idle {stalled_after['idle_s']}s "
+                     f"since: {stalled_after['detail'][:120]}")
         payload = {**payload, "outcome": "BLOCKED",
-                   "summary": f"timed out after {args.timeout}s"}
+                   "summary": f"timed out after {args.timeout}s{where}"}
+        print(f"TIMEOUT{where}", file=sys.stderr)
 
     report = {
         "repo": args.repo,
         "timed_out": timed_out,
+        # One of: completed, timeout, max_turns, budget, api_error,
+        # no_result. A BLOCKED run is not self-explaining otherwise.
+        "stop_reason": (
+            "timeout" if timed_out
+            else (result.terminal_reason or "completed") if result and not result.is_error
+            else f"api_error_{result.api_error_status}" if result and result.api_error_status
+            else "error" if result
+            else "no_result"
+        ),
+        "stalled_after": stalled_after,
         "project": PROJECT_PATH,
         "branch": args.branch,
         "outcome": payload.get("outcome", "BLOCKED"),

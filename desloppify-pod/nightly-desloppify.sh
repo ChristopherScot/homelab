@@ -109,11 +109,16 @@ report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
 rc=$?
 echo "run rc=$rc report=$report"
 
+jq -r 'select(.stalled_after != null and .timed_out == true)
+       | "desloppify_stall tool=\(.stalled_after.tool) idle_s=\(.stalled_after.idle_s) " +
+         "detail=\(.stalled_after.detail | @json)"' "$report" 2>/dev/null
+
 outcome=$(jq -r '.outcome // "BLOCKED"' "$report" 2>/dev/null)
 pr=$(jq -r '.pr_number // empty' "$report" 2>/dev/null)
 denied=$(jq -r '.tools_denied // 0' "$report" 2>/dev/null)
 cost=$(jq -r '.cost_usd // "?"' "$report" 2>/dev/null)
-echo "outcome=$outcome pr=${pr:-none} denied=$denied cost=$cost"
+stop=$(jq -r '.stop_reason // "unknown"' "$report" 2>/dev/null)
+echo "outcome=$outcome stop_reason=$stop pr=${pr:-none} denied=$denied cost=$cost"
 
 # Denials are expected - the policy refuses things routinely. A denial
 # that names a protected branch is not routine, and is worth a human
