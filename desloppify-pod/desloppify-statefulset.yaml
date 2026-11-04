@@ -61,10 +61,12 @@ spec:
           volumeMounts:
             - name: home
               mountPath: /home/node
-            # The clone, node_modules and desloppify's state. node_modules
-            # for this monorepo is multi-GB and slow to install, so it
-            # persists: reinstalling nightly would spend the run's budget
-            # before any work started.
+            # The clone, node_modules and desloppify's state. It persists
+            # because installing it is expensive, and it lives on SSD
+            # because the cost is small random writes, not bulk: yarn's
+            # fetch step pulled 503MB in 77 seconds, and its link step
+            # then spent 23m50s building native modules against the HDD
+            # tier. The same volume faulted mid-run.
             - name: workspace
               mountPath: /workspace
             - name: desloppify-git
@@ -104,7 +106,7 @@ spec:
         name: workspace
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: longhorn-hdd-single
+        storageClassName: longhorn-single-ssd
         resources:
           requests:
-            storage: 40Gi
+            storage: 25Gi

@@ -15,6 +15,26 @@ WORK_ROOT="${DESLOP_WORK_ROOT:-/workspace}"
 LOG="$STATE_DIR/desloppify-$(date +%Y%m%d).log"
 HERE="${DESLOP_LIB_DIR:-/usr/local/share/desloppify-pod}"
 
+# A faulted Longhorn volume answers every access with EIO rather than
+# going away, so a run against one grinds instead of failing: the volume
+# behind run 4 faulted at 01:35 and the agent kept issuing tool calls
+# until 01:52, then sat for eleven hours. Single replica is deliberate
+# here - the clone and node_modules are rebuildable - so the mount is
+# checked rather than mirrored.
+workspace_ok() {
+  local probe="${WORK_ROOT}/.mount-probe.$$"
+  [ -d "$WORK_ROOT" ] || return 1
+  touch "$probe" 2>/dev/null || return 1
+  rm -f "$probe" 2>/dev/null || return 1
+  return 0
+}
+
+if ! workspace_ok; then
+  echo "FATAL: $WORK_ROOT is not writable - the volume is detached or faulted."
+  echo "       Check: kubectl get volumes.longhorn.io -n longhorn-system"
+  exit 1
+fi
+
 mkdir -p "$STATE_DIR"
 if [ -w /proc/1/fd/1 ]; then
   exec > >(tee -a "$LOG" > /proc/1/fd/1) 2>&1
@@ -112,6 +132,12 @@ echo "run rc=$rc report=$report"
 jq -r 'select(.stalled_after != null and .timed_out == true)
        | "desloppify_stall tool=\(.stalled_after.tool) idle_s=\(.stalled_after.idle_s) " +
          "detail=\(.stalled_after.detail | @json)"' "$report" 2>/dev/null
+
+# A run that ended badly may have ended because the filesystem went.
+# Saying so beats reporting a timeout whose cause is a dead mount.
+if ! workspace_ok; then
+  echo "desloppify_mount_fault detail=\"$WORK_ROOT became unwritable during the run\""
+fi
 
 outcome=$(jq -r '.outcome // "BLOCKED"' "$report" 2>/dev/null)
 pr=$(jq -r '.pr_number // empty' "$report" 2>/dev/null)
