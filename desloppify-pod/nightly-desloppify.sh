@@ -113,6 +113,21 @@ mkdir -p "$STATE_DIR/webapp"
 rm -rf "$dir/.desloppify"
 ln -s "$STATE_DIR/webapp" "$dir/.desloppify"
 
+# `update-skill` writes .claude/skills/ relative to the working
+# directory, so it has to run inside the clone - at build time it landed
+# where nothing reads it. Without the overlay the CLI defaults to the
+# codex runner, which is not installed here, and the review step
+# completes as a dry run: twenty batch prompts written, no results, and
+# the thirteen subjective dimensions left at zero.
+(cd "$dir" && desloppify update-skill claude >/dev/null 2>&1) \
+  || echo "WARNING: could not install the Claude review overlay"
+if [ -f "$dir/.claude/skills/desloppify/SKILL.md" ]; then
+  echo "claude overlay: installed"
+else
+  echo "WARNING: the Claude review overlay is missing - the subjective"
+  echo "         dimensions will not be scored this run"
+fi
+
 if ! command -v desloppify >/dev/null 2>&1; then
   echo "FATAL: desloppify is not on PATH; it is baked into the image"
   exit 1
