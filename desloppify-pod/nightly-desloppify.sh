@@ -7,6 +7,15 @@
 # script and its checks rather than with the thing that wrote the change.
 set -uo pipefail
 
+# The image sets PATH so the venv comes first, but that applies to the
+# container's main process; `kubectl exec` builds its own environment,
+# and the CronJob's `env VAR=... script` does not restore it. A run
+# invoked that way found no desloppify and exited at the PATH check,
+# having logged everything up to it - which is how three runs produced
+# a preflight log and a zero-byte report.
+DESLOPPIFY_VENV="${DESLOPPIFY_VENV:-/opt/desloppify-venv}"
+export PATH="$DESLOPPIFY_VENV/bin:$PATH"
+
 REPO="${DESLOP_REPO:-schoolhouse-world/app}"
 INTEGRATION_BRANCH="${DESLOP_INTEGRATION_BRANCH:-chris-agentic-looping}"
 PROJECT_PATH="projects/webapp"
@@ -173,7 +182,9 @@ else
 fi
 
 if ! command -v desloppify >/dev/null 2>&1; then
-  echo "FATAL: desloppify is not on PATH; it is baked into the image"
+  echo "FATAL: desloppify is not on PATH."
+  echo "       PATH=$PATH"
+  echo "       expected it at $DESLOPPIFY_VENV/bin/desloppify"
   exit 1
 fi
 

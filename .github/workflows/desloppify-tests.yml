@@ -42,6 +42,9 @@ jobs:
       - name: Log redirection
         run: desloppify-pod/test-log-redirect.sh
 
+      - name: Runner PATH
+        run: desloppify-pod/test-path.sh
+
       # Feeding the hook stdin by hand tests its parsing but not its
       # wiring, and a hook git never invokes passes that test. This one
       # pushes for real against a local remote and asserts main did not
