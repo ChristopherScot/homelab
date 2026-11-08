@@ -341,10 +341,10 @@ require_kaneo_key() {
 # a project that has them is worked, one that does not is left alone, and
 # nothing anywhere lists which projects are live. The board is the config.
 #
-# Silent when a project has NONE of the six — that is a project deliberately
-# kept out of this flow, and a nightly line about it would be noise that
-# teaches you to skim the log. A project with SOME of them is likely a typo
-# or a renamed column, so that one says what is missing.
+# Silent when a project has NONE of the required columns — that is a project
+# deliberately kept out of this flow, and a nightly line about it would be
+# noise that teaches you to skim the log. A project with SOME of them is
+# likely a typo or a renamed column, so that one says what is missing.
 kaneo_enrolled() {
   local project="${1:-$KANEO_PROJECT}" have missing want total found=0
   have="$(kaneo column list --project "$project" --jq '.[].slug' 2>/dev/null)"
