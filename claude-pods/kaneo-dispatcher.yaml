@@ -56,7 +56,13 @@ spec:
           env:
             - name: DISPATCH_NS
               value: claude-pods
+            # In-cluster Service: the webhook payload does not carry a
+            # card's labels, so the repo: label is read back from the API.
+            - name: KANEO_API_URL
+              value: http://kaneo.kaneo.svc.cluster.local:5173
           volumeMounts:
+            # Both the webhook secret (to verify deliveries) and the API
+            # key (to read a card's labels) live under this path.
             - name: kaneo-webhook
               mountPath: /run/secrets/kaneo
               readOnly: true
@@ -81,8 +87,12 @@ spec:
             failureThreshold: 5
       volumes:
         - name: kaneo-webhook
-          secret:
-            secretName: kaneo-webhook
+          projected:
+            sources:
+              - secret:
+                  name: kaneo-webhook
+              - secret:
+                  name: kaneo-api
         - name: repos
           secret:
             secretName: claude-repos

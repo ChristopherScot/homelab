@@ -25,6 +25,8 @@ const NS = process.env.DISPATCH_NS ?? "claude-pods";
 // Same default and same env var as nightly-common.sh, so a short repo: label
 // resolves to the same full name here as it does in the scripts.
 const OWNER = process.env.NIGHTLY_OWNER ?? "ChristopherScot";
+const API_URL =
+  process.env.KANEO_API_URL ?? "http://kaneo.kaneo.svc.cluster.local:5173";
 const SECRET_FILE =
   process.env.DISPATCH_SECRET_FILE ?? "/run/secrets/kaneo/webhook-secret";
 
@@ -128,8 +130,32 @@ function podWorksRepo(pod, repo) {
   return list.split(/[\s,]+/).filter(Boolean).includes(want);
 }
 
-function oneRepoLabel(task) {
-  const names = (task?.labels ?? [])
+// The repo a card is for, from its repo:<name> label.
+//
+// Fetched from the API rather than read off the webhook, because the
+// payload's `task` object carries only id, number, title, status,
+// statusName, priority and url — there are no labels in it. Reading
+// task.labels from the payload silently yielded "no label" for every card,
+// so every dispatch was skipped as unlabelled even when the label was
+// right there on the board.
+//
+// Returns the repo, or null when the card does not carry exactly one
+// repo: label, or "" when the lookup itself failed — which is a different
+// thing and must not read as "no label".
+async function repoForTask(taskId) {
+  const key = readFileSync(
+    process.env.DISPATCH_API_KEY_FILE ?? "/run/secrets/kaneo/api-key",
+    "utf8",
+  ).trim();
+  // /api/label/task/{id}, not /api/task/{id}: the task endpoint does not
+  // return labels at all.
+  const res = await fetch(`${API_URL}/api/label/task/${encodeURIComponent(taskId)}`, {
+    headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`task lookup ${res.status}`);
+  const body = await res.json();
+  const names = (Array.isArray(body) ? body : [])
     .map((l) => l?.name ?? "")
     .filter((n) => n.startsWith("repo:"))
     .map((n) => n.slice("repo:".length));
@@ -201,15 +227,25 @@ createServer((req, res) => {
       log(`noop  ${id} -> ${column}`);
       return;
     }
-    const repo = oneRepoLabel(task);
-    if (!repo) {
-      log(`SKIP  ${id} -> ${column}: card needs exactly one repo: label`);
-      return;
-    }
-    if (!podWorksRepo(route[0], repo)) {
-      log(`SKIP  ${id} -> ${column}: ${route[0]} does not work ${repo}`);
-      return;
-    }
-    runStage(repo, route[0], route[1], id);
+    // The lookup is async, so the rest of this handler runs in a promise.
+    // The 202 has already been sent, which is what Kaneo needs for its
+    // delivery health — the work is genuinely asynchronous from here.
+    repoForTask(task.id ?? id)
+      .then((repo) => {
+        if (!repo) {
+          log(`SKIP  ${id} -> ${column}: card needs exactly one repo: label`);
+          return;
+        }
+        if (!podWorksRepo(route[0], repo)) {
+          log(`SKIP  ${id} -> ${column}: ${route[0]} does not work ${repo}`);
+          return;
+        }
+        runStage(repo, route[0], route[1], id);
+      })
+      .catch((err) => {
+        // A failed lookup is not "no label". Saying so keeps a Kaneo
+        // outage from reading as a board full of unlabelled cards.
+        log(`ERROR ${id} -> ${column}: cannot read labels: ${err.message}`);
+      });
   });
 }).listen(PORT, () => log(`dispatcher listening on :${PORT}`));
