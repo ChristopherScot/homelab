@@ -27,6 +27,7 @@ echo "=== nightly-author $(date -Is) model=$MODEL max=$MAX_TICKETS rounds=$ROUND
 
 require_gh_token || exit 1
 require_kaneo_key || exit 1
+take_pod_lock || exit 0
 preflight_credential || exit 1
 
 # No board, no queue. Refuse rather than run: a pod that silently does

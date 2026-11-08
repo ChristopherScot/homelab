@@ -249,6 +249,26 @@ preflight_credential() {
   return 1
 }
 
+# One stage at a time in this pod.
+#
+# The three stages share a clone per repository and a single fixed
+# $STATE_DIR/prompt.txt, so two runs in one pod race: the second writer
+# wins and a ticket gets the other one's prompt.
+#
+# Taken here rather than tracked by the dispatcher, because the run is
+# detached and outlives the exec that launched it — anything the dispatcher
+# held in memory would be released the moment the launch returned, and
+# would be lost entirely on a restart. The lock lives with the thing it
+# protects. The dispatcher reads it with `flock -n ... true` before
+# launching.
+take_pod_lock() {
+  exec 9>"${NIGHTLY_LOCK:-/tmp/nightly.lock}"
+  if ! flock -n 9; then
+    echo "another nightly stage is already running in this pod; exiting" >&2
+    return 1
+  fi
+}
+
 # --- Kaneo -----------------------------------------------------------------
 # The board at kaneo.home.chrisscotmartin.com IS the work queue. Chris files
 # tickets there, the pods move them through the columns, and a card in
@@ -383,7 +403,12 @@ kaneo_move() {
   # move, and silence here leaves it sitting in Mergeable with nothing
   # anywhere saying why.
   [ -n "$task" ] || { echo "   kaneo: no card for this PR; not moved to $to" >&2; return 0; }
-  if kaneo task move "$task" --status "$to" >/dev/null 2>&1; then
+  # `task status`, not `task move`: move is for sending a card to another
+  # PROJECT and fails with "there is no other project to move it to" on a
+  # single-project workspace. Every column change the pipeline makes went
+  # through that failing path, so the board never advanced past To Do even
+  # when the work ran.
+  if kaneo task status "$task" "$to" >/dev/null 2>&1; then
     echo "   kaneo: $task -> $to"
   else
     echo "   kaneo: FAILED to move $task -> $to" >&2
