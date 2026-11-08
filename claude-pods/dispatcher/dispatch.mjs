@@ -17,7 +17,7 @@
 // loop cannot be trusted to do.
 import { createServer } from "node:http";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 8080);
