@@ -1,0 +1,67 @@
+# The safety net under event dispatch.
+#
+# A card moves, the webhook fires, and the work starts. If it cannot start
+# — the cluster API is down, the dispatcher is restarting, the pod is not
+# ready — nothing retries, and the card is left indistinguishable from one
+# nobody has touched. CLA-11 sat in To Do for five days that way.
+#
+# So: a clock, reintroduced on purpose. Not to schedule the work (moving a
+# card does that) but to notice work that was owed and never happened.
+#
+# It runs hourly rather than nightly because the window it closes is the
+# gap between "the webhook was dropped" and "somebody notices", and a
+# nightly sweep leaves that gap up to a day wide. The sweep itself is
+# cheap: it only looks at the three columns that dispatch, only at cards
+# older than RECONCILE_STALE_MS, and asks GitHub whether the work already
+# exists before restarting anything.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: kaneo-reconcile
+  namespace: claude-pods
+spec:
+  schedule: "17 * * * *"
+  timeZone: America/New_York
+  # Forbid, not Replace: a sweep that overruns is talking to GitHub about
+  # real branches, and two of them could re-dispatch the same card twice.
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      template:
+        spec:
+          restartPolicy: Never
+          volumes:
+            - name: kaneo-webhook
+              secret:
+                secretName: kaneo-webhook
+          containers:
+            - name: trigger
+              image: ghcr.io/christopherscot/claude-pod:latest
+              volumeMounts:
+                - name: kaneo-webhook
+                  mountPath: /run/secrets/kaneo
+                  readOnly: true
+              # Signed with the same secret as a Kaneo delivery, because
+              # the endpoint starts the same work and is verified the same
+              # way. An empty body keeps the signature trivial to compute
+              # and carries nothing the dispatcher needs.
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  sig=$(printf '' | openssl dgst -sha256 -hmac "$(cat /run/secrets/kaneo/webhook-secret)" -hex | awk '{print $NF}')
+                  code=$(curl -sS -o /tmp/out -w '%{http_code}' -X POST \
+                    -H "X-Kaneo-Signature: $sig" \
+                    --data-binary '' \
+                    http://kaneo-dispatcher.claude-pods.svc.cluster.local:8080/reconcile)
+                  echo "reconcile -> HTTP $code"
+                  cat /tmp/out 2>/dev/null || true
+                  # The sweep's findings are in the dispatcher's log, not
+                  # here: this only reports whether the request landed.
+                  [ "$code" = "202" ]
