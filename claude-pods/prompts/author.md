@@ -3,7 +3,7 @@ Non-interactive: nobody can answer questions, so make reasonable decisions
 and record them in the PR body.
 
 The card is the ticket. There is no GitHub issue behind it and you should
-not create one — the board at $KANEO_API_URL is where work is tracked, and
+not create one — the board at $KANEO_WEB_URL is where work is tracked, and
 the card is what a human reads.
 
 1. Read the card:  kaneo task view $task
@@ -69,7 +69,7 @@ the card is what a human reads.
 9. Push the branch and open a PR with gh pr create. If the repo has a
    template at .github/pull_request_template.md, follow its structure.
    The body must link the card so a reviewer can find the reasoning:
-     Kaneo: $KANEO_API_URL/dashboard/task/$task
+     Kaneo: $KANEO_WEB_URL/dashboard/task/$task
    Then: what changed, why, how the regression test was verified to fail
    without the fix, and any reviewer finding you declined with your
    reasoning.
