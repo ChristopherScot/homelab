@@ -117,6 +117,18 @@ for t in "${TICKETS[@]}"; do
   # that already exists — starting over would throw away the history the
   # panel's objection refers to.
   pr_url="$(kaneo_task_pr "$task")" && mode=rework || mode=author
+  if [ "$mode" = rework ] && [ "$(kaneo_rework_count "$task")" = "0" ]; then
+    # A pull request with no requeue behind it has not been reviewed, so
+    # there is no objection for rework.md to read — it would tell the
+    # agent to go and find a verdict that does not exist. The work is
+    # already done; the card simply never advanced.
+    #
+    # This happens when an author run opens the PR and then dies before
+    # moving the card, which is exactly how the first real run went.
+    echo "   $task already has an unreviewed PR; advancing instead of reworking"
+    kaneo_move "$task" in-review
+    continue
+  fi
   if [ "$mode" = rework ]; then
     pr="${pr_url##*/}"
     rounds_done="$(kaneo_rework_count "$task")"
