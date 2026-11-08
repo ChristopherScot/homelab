@@ -90,9 +90,13 @@ class Audit:
         self.path = path
         self.allowed = 0
         self.denied: list[tuple[str, str, str]] = []
+        # The call a stalled run stopped after: without it a timeout
+        # reports that the run wedged but not where.
+        self.last: tuple[float, str, str, bool] | None = None
         self._fh = path.open("a") if path else None
 
     def record(self, tool: str, detail: str, allow: bool, reason: str) -> None:
+        self.last = (time.time(), tool, detail[:300], allow)
         if allow:
             self.allowed += 1
         else:
@@ -178,6 +182,18 @@ your work there, push it, and open ONE pull request:
 The PR body should say what findings you resolved, what the score did, and
 anything you deliberately deferred.
 
+## Dependencies
+
+If you change `package.json`, run `yarn install` afterwards and commit the
+resulting `yarn.lock`. CI runs `yarn --immutable`, which fails the whole
+build - before any linting or typechecking - if the lockfile does not
+match. Verifying with a `node_modules` installed before your edit proves
+nothing about it.
+
+Treat a "zero importers" finding on a dependency with suspicion: a
+package with no imports in `src` may still be a peer dependency that
+something else requires. `grep <name> yarn.lock` before removing it.
+
 ## Boundaries
 
 `{args.integration_branch}` is the ONLY branch you may target. main is off
@@ -231,8 +247,10 @@ async def run(args: argparse.Namespace) -> int:
     started = time.monotonic()
     result: ResultMessage | None = None
     rate_limit = None
+    timed_out = False
 
-    async with ClaudeSDKClient(options=options) as client:
+    async def drive(client):
+        nonlocal result, rate_limit
         await client.query(build_prompt(args))
         async for message in client.receive_response():
             if isinstance(message, AssistantMessage) and args.verbose:
@@ -248,11 +266,56 @@ async def run(args: argparse.Namespace) -> int:
             elif isinstance(message, ResultMessage):
                 result = message
 
+    # A run that is blocked rather than working hits neither max_turns nor
+    # max_budget_usd: the first one to stall sat idle for eleven hours
+    # with no further tool calls. This is the only bound on wall clock.
+    async with ClaudeSDKClient(options=options) as client:
+        try:
+            await asyncio.wait_for(drive(client), timeout=args.timeout)
+        except asyncio.TimeoutError:
+            timed_out = True
+            print(f"TIMEOUT after {args.timeout}s - no result", file=sys.stderr)
+
     audit.close()
     payload = (result.structured_output if result and result.structured_output else {}) or {}
 
+    # Why it stalled, not just that it did. The last decision the hook
+    # recorded is the call the run stopped after, and the gap between
+    # that and the timeout is how long it sat there.
+    stalled_after = None
+    if audit.last is not None:
+        ts, tool, detail, allowed = audit.last
+        stalled_after = {
+            "tool": tool,
+            "detail": detail,
+            "allowed": allowed,
+            "idle_s": round(time.time() - ts, 1),
+            "at": time.strftime("%H:%M:%S", time.localtime(ts)),
+        }
+
+    if timed_out:
+        where = ""
+        if stalled_after:
+            where = (f" - last tool call was {stalled_after['tool']} at "
+                     f"{stalled_after['at']}, idle {stalled_after['idle_s']}s "
+                     f"since: {stalled_after['detail'][:120]}")
+        payload = {**payload, "outcome": "BLOCKED",
+                   "summary": f"timed out after {args.timeout}s{where}"}
+        print(f"TIMEOUT{where}", file=sys.stderr)
+
     report = {
         "repo": args.repo,
+        "timed_out": timed_out,
+        # One of: completed, timeout, max_turns, budget, api_error,
+        # no_result. A BLOCKED run is not self-explaining otherwise.
+        "stop_reason": (
+            "timeout" if timed_out
+            else (result.terminal_reason or "completed") if result and not result.is_error
+            else f"api_error_{result.api_error_status}" if result and result.api_error_status
+            else "error" if result
+            else "no_result"
+        ),
+        "stalled_after": stalled_after,
         "project": PROJECT_PATH,
         "branch": args.branch,
         "outcome": payload.get("outcome", "BLOCKED"),
@@ -288,6 +351,9 @@ def main() -> int:
                    default=float(os.environ.get("DESLOP_MAX_COST_USD", "25.0")))
     p.add_argument("--max-turns", type=int,
                    default=int(os.environ.get("DESLOP_MAX_TURNS", "400")))
+    p.add_argument("--timeout", type=float,
+                   default=float(os.environ.get("DESLOP_TIMEOUT_S", "7200")),
+                   help="wall-clock limit for the whole run, in seconds")
     p.add_argument("--audit", default=os.environ.get("DESLOP_AUDIT_LOG"))
     p.add_argument("--verbose", action="store_true")
     return asyncio.run(run(p.parse_args()))

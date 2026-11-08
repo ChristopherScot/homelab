@@ -53,6 +53,7 @@ ALLOW = [
     "ln -s /workspace/state/.desloppify .desloppify",
     "find projects/webapp -name '*.tsx'",
     "timeout 600 yarn lint",
+    "cd /workspace/app",
     "NODE_OPTIONS=--max_old_space_size=8192 yarn lint:eslint",
     "/usr/bin/git status",
     "yarn lint | tee /workspace/lint.log",
@@ -100,6 +101,15 @@ DENY = [
     ("git config user.email evil@example.com", "changes identity"),
     ("git config http.extraheader 'Authorization: token x'", "injects a credential header"),
     ("git push https://x:y@github.com/schoolhouse-world/app main", "inline credentials"),
+    # --- widening the allow-list must not widen the boundary ---
+    # cd is permitted so the agent can change directory; a push chained
+    # onto it is still a push, because each clause is checked on its own.
+    # A loop body is split on `;` the same way, so the push inside one is
+    # checked too - the keywords are absent as well, but the splitting is
+    # what makes these safe.
+    ("cd /workspace && git push origin main", "chains a push onto an allowed builtin"),
+    ("for f in *; do git push origin main; done", "hides a push in a loop body"),
+    ("while true; do gh pr merge 1; done", "hides a merge in a loop body"),
     # --- subcommands no FORBIDDEN rule names ---
     # The whitelist is the backstop for everything not enumerated above.
     # Without these, deleting it changes no test outcome, and the next
@@ -154,14 +164,14 @@ def main() -> int:
     # StructuredOutput carries the run's verdict. Denying it blocks the
     # report at the last step of an otherwise complete run, which is how
     # the first run ended.
-    for name in ("Read", "Write", "Edit", "Grep", "Task", "StructuredOutput"):
+    for name in ("Read", "Write", "Edit", "Grep", "Task", "StructuredOutput", "Agent"):
         if not policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD ALLOW tool: {name}")
     for name in ("NotARealTool", "Bash(sudo)"):
         if policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD DENY tool: {name}")
 
-    total = len(ALLOW) + len(DENY) + 8
+    total = len(ALLOW) + len(DENY) + 9
     if failures:
         print(f"FAIL - {len(failures)} of {total}\n")
         for f in failures:

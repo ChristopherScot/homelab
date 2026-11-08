@@ -54,6 +54,12 @@ spec:
                   name: desloppify-claude
                   key: oauth-token
                   optional: true
+            # Below the 9Gi container limit, so a type-check that grows
+            # too large fails in node with a heap error the run can
+            # report, rather than as an OOMKill that takes the pod with
+            # it and leaves no log.
+            - name: NODE_OPTIONS
+              value: "--max_old_space_size=7168"
             - name: DESLOP_STATE_DIR
               value: /workspace/.desloppify-state
             - name: DESLOP_WORK_ROOT
@@ -61,10 +67,12 @@ spec:
           volumeMounts:
             - name: home
               mountPath: /home/node
-            # The clone, node_modules and desloppify's state. node_modules
-            # for this monorepo is multi-GB and slow to install, so it
-            # persists: reinstalling nightly would spend the run's budget
-            # before any work started.
+            # The clone, node_modules and desloppify's state. It persists
+            # because installing it is expensive, and it lives on SSD
+            # because the cost is small random writes, not bulk: yarn's
+            # fetch step pulled 503MB in 77 seconds, and its link step
+            # then spent 23m50s building native modules against the HDD
+            # tier. The same volume faulted mid-run.
             - name: workspace
               mountPath: /workspace
             - name: desloppify-git
@@ -77,11 +85,15 @@ spec:
             requests:
               cpu: 100m
               memory: 1Gi
-            # A yarn install plus tsc across a Next.js monorepo is the
-            # spike worth sizing for; the session pods' 2Gi is not enough
-            # for a type-check of this project.
+            # A tsc pass over this monorepo is the spike, and 6Gi was
+            # not enough: the first scheduled run was OOMKilled. 9Gi is
+            # what the nodes can give - node1 and node2 have ~11.6Gi
+            # allocatable and run other workloads - so the agent is also
+            # told to cap node's heap below it rather than rely on the
+            # repo's own 8GB setting, which leaves nothing for the rest
+            # of the process.
             limits:
-              memory: 6Gi
+              memory: 9Gi
       volumes:
         - name: desloppify-git
           secret:
@@ -104,7 +116,7 @@ spec:
         name: workspace
       spec:
         accessModes: ["ReadWriteOnce"]
-        storageClassName: longhorn-hdd-single
+        storageClassName: longhorn-single-ssd
         resources:
           requests:
-            storage: 40Gi
+            storage: 25Gi
