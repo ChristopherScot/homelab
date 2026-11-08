@@ -316,8 +316,19 @@ kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
 # work on should say so rather than appear to run successfully.
 require_kaneo_key() {
   KANEO_API_KEY="$(cat /run/secrets/kaneo/api-key 2>/dev/null)"
-  KANEO_API_URL="${KANEO_API_URL:-https://kaneo.home.chrisscotmartin.com}"
-  export KANEO_API_KEY KANEO_API_URL
+  # In-cluster Service, not the public hostname: cluster DNS does not
+  # resolve *.home.chrisscotmartin.com, so the pods got ENOTFOUND and every
+  # run died at the enrolment check. The dispatcher hit this first and was
+  # pointed at the Service for the same reason; this is the other half.
+  #
+  # It also keeps a run that never leaves the cluster from depending on the
+  # LAN's DNS and the ingress being healthy.
+  KANEO_API_URL="${KANEO_API_URL:-http://kaneo.kaneo.svc.cluster.local:5173}"
+  # Where a HUMAN opens the board. The Service URL above is unroutable
+  # outside the cluster, so a card link built from it in a pull request
+  # body would be dead for everyone who reads it.
+  KANEO_WEB_URL="${KANEO_WEB_URL:-https://kaneo.home.chrisscotmartin.com}"
+  export KANEO_API_KEY KANEO_API_URL KANEO_WEB_URL
   # Both blockers in one pass: preflight exists so a single restart
   # surfaces everything that is wrong, not the first thing.
   local bad=0
