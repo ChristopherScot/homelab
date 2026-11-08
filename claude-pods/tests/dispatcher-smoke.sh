@@ -21,6 +21,14 @@ printf 'testkey'    > "$tmp/api-key"
 # and podWorksRepo. Without it the fetch fails first and everything after
 # is never executed, which is how a missing import shipped: the test
 # passed because it never got that far.
+# A kubectl that fails instantly. The real one is present on CI runners
+# and spends its 20s timeout trying to reach a cluster that is not there,
+# which is longer than any sane wait in a test. What is under test is the
+# dispatcher's own code path, not kubectl.
+mkdir -p "$tmp/bin"
+printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/kubectl"
+chmod +x "$tmp/bin/kubectl"
+
 node -e '
 const {createServer} = require("node:http");
 createServer((req,res)=>{
@@ -35,6 +43,7 @@ DISPATCH_SECRET_FILE="$tmp/webhook-secret" \
 DISPATCH_API_KEY_FILE="$tmp/api-key" \
 KANEO_API_URL="http://127.0.0.1:18081" \
 NIGHTLY_OWNER="TestOwner" \
+PATH="$tmp/bin:$PATH" \
   node dispatcher/dispatch.mjs > "$tmp/log" 2>&1 &
 pid=$!
 
