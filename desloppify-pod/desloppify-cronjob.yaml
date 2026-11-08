@@ -69,12 +69,25 @@ spec:
           restartPolicy: Never
           containers:
             - name: trigger
-              image: bitnami/kubectl:1.30
-              command:
-                - /bin/sh
-                - -c
-                - |
-                  set -eu
-                  exec kubectl exec -n claude-pods desloppify-0 -- \
-                    env DESLOP_MAX_COST_USD=50 \
-                    /usr/local/bin/nightly-desloppify.sh
+              # registry.k8s.io is upstream and keeps its version tags.
+              # bitnami/kubectl:1.30 was deleted from Docker Hub, so the
+              # job sat in ErrImagePull until its deadline killed it -
+              # three silent failures, reported as DeadlineExceeded
+              # rather than as a missing image. nightly-cronjobs.yaml
+              # already carries this fix; this manifest was written from
+              # an older copy and reintroduced it.
+              #
+              # No `sh -c` wrapper: this image's entrypoint IS kubectl
+              # and it ships no shell, so a shell form exits 128 before
+              # running. The budget goes through env(1) in the pod
+              # rather than a shell assignment for the same reason.
+              image: registry.k8s.io/kubectl:v1.30.14
+              args:
+                - exec
+                - -n
+                - claude-pods
+                - desloppify-0
+                - --
+                - env
+                - DESLOP_MAX_COST_USD=50
+                - /usr/local/bin/nightly-desloppify.sh
