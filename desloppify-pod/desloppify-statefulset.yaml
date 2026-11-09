@@ -145,6 +145,14 @@ spec:
               value: postgres://shw:shw@localhost:5430/shw
             - name: HASURA_GRAPHQL_ENABLE_CONSOLE
               value: "false"
+            # The compose service reads these from .env.test.local via
+            # env_file:, which a container spec cannot do. Without them
+            # this Hasura is unauthenticated and has no JWT config -
+            # harmless while nothing dials it, and wrong the moment a
+            # test does. The values are the committed test ones, against
+            # a throwaway database in this pod.
+            - name: HASURA_GRAPHQL_ADMIN_SECRET
+              value: myadminsecretkey
           readinessProbe:
             httpGet:
               path: /healthz

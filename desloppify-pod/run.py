@@ -184,9 +184,19 @@ anything you deliberately deferred.
 
 ## Tests
 
-Hasura, Postgres and Redis run beside you in this pod on the ports
-`src/tests/.envs/.env.test.local` names, so `yarn test:containers-up` is
-unnecessary - they are already up. Run the suite before you commit.
+Postgres, Redis and Hasura run beside you in this pod, on the ports
+`src/tests/.envs/.env.test.local` names.
+
+Do not run `yarn test`. It is `test:setup && vitest`, and `test:setup`
+begins with `test:containers-up`, which calls `docker compose` - there is
+no Docker here, so the chain short-circuits before vitest ever starts.
+Run the two steps that work, skipping only the compose one:
+
+    yarn test:db:migrate    # sequelize, against the Postgres beside you
+    yarn vitest --run
+
+The migration is not optional: the database starts empty, and a suite run
+against an unmigrated one fails in a way that reads as a broken refactor.
 
 A refactor verified only by typecheck and lint has not been verified:
 neither catches a behavioural regression, which is most of what a

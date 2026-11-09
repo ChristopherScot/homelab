@@ -18,6 +18,16 @@ EXPECTED="claude_oauth_token
 claude_oauth_token_personal
 github_token"
 
+# dataFrom pulls every field at a Vault path and uses neither remoteRef
+# nor property, so the counting below cannot see it. One of those at
+# kv/claude-pods/desloppify would hand the pod the GitHub PAT stored
+# beside the Claude tokens.
+if grep -qE "^\s+dataFrom:" "$manifest"; then
+  echo "FAIL: the manifest uses dataFrom, which pulls a whole Vault path"
+  echo "      name each property explicitly instead"
+  fail=1
+fi
+
 # Every remoteRef names a property.
 refs=$(grep -c "remoteRef" "$manifest")
 props=$(grep -c "property:" "$manifest")

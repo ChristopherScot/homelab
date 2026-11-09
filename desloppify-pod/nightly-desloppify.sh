@@ -203,25 +203,28 @@ run_once() {
     > "$report"
 }
 
-# The rate-limit signal is read from the report rather than from merged
-# output: run.py already records stop_reason=api_error_429 there, and
-# capturing stderr to look for it would mix it into the JSON this script
-# then parses.
+# The signal is stop_reason, read with jq. Not a text match over the
+# whole report: it embeds strings the agent wrote - a denial detail or a
+# summary - and this repo has rate-limiting middleware, so "rate limit"
+# appears there for reasons that have nothing to do with the account.
+# Capturing stderr to look for it would also mix stderr into the JSON
+# this script parses.
 #
 # One retry, because there are two accounts - a loop would be designing
 # for a third that does not exist.
 run_once
 rc=$?
-if [ "$rc" -ne 0 ] && claude_rate_limited "$(cat "$report" 2>/dev/null)"; then
+if [ "$rc" -ne 0 ] \
+   && [ "$(jq -r '.stop_reason // ""' "$report" 2>/dev/null)" = "api_error_429" ]; then
   if use_claude_account personal; then
     echo "work account is rate limited; retrying on personal"
+    cp "$report" "${report%.json}-work-attempt.json" 2>/dev/null || true
     run_once
     rc=$?
   else
     echo "work account is rate limited and no personal token is mounted" >&2
   fi
 fi
-rc=$?
 echo "run rc=$rc report=$report"
 
 # One logfmt line per run. The report reaches Loki either way, but as
