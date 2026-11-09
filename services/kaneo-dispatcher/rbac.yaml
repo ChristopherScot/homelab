@@ -1,0 +1,37 @@
+# Only what the dispatcher needs: exec one command in a session pod.
+#
+# Hand-written because homelabctl generates no RBAC, and listed under
+# manifests: in config.yaml so render copies it beside the generated
+# files and kustomization.yaml applies it. The ServiceAccount itself is
+# generated - the secrets block creates one named after the service and
+# runs the pod as it - so this only binds a Role to that name.
+#
+# pods get/list are kept alongside pods/exec, matching the nightly-runner
+# Role the CronJobs still use: the exec subresource is what the API
+# server checks, and the two extra verbs cost nothing.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kaneo-dispatcher
+  namespace: claude-pods
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kaneo-dispatcher
+  namespace: claude-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kaneo-dispatcher
+subjects:
+  - kind: ServiceAccount
+    name: kaneo-dispatcher
+    namespace: claude-pods

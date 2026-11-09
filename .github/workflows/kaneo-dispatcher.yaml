@@ -1,0 +1,153 @@
+# Builds and pushes the image. Deployment happens in-cluster:
+# argocd-image-updater watches the registry and commits the new digest to
+# the homelab repo itself, so this workflow needs no homelab credential -
+# GITHUB_TOKEN is issued per run and can only push packages.
+#
+# This is the specless variant (`homelabctl init --no-spec`). Two jobs the
+# spec-first workflow has are absent by design:
+#
+#   - the stale-generated-code check, because nothing here is generated.
+#   - the release tag, which derives its version from openapi.yml's
+#     info.version. A specless service publishes no client, so there is
+#     nothing to version and nothing for a consumer to `go get`. Tag it by
+#     hand if it ever needs a release.
+name: build kaneo-dispatcher
+
+on:
+  push:
+    branches: [main]
+    paths: ['services/kaneo-dispatcher/**', '.github/workflows/kaneo-dispatcher.yaml']
+  pull_request:
+    paths: ['services/kaneo-dispatcher/**']
+  workflow_dispatch:
+
+# Two pushes in quick succession otherwise race to publish :latest, and
+# whichever loses is the digest image-updater may pick up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        working-directory: services/kaneo-dispatcher
+    steps:
+      - uses: actions/checkout@v4
+
+      # go-version-file and cache-dependency-path are ACTION INPUTS, not
+      # shell commands, so defaults.run.working-directory does not apply
+      # to them - they resolve from the repository root. In a monorepo a
+      # bare `go.mod` is a path to nothing, and setup-go fails with "the
+      # specified go version file at: go.mod does not exist" before a
+      # single test has run.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: services/kaneo-dispatcher/go.mod
+          cache: true
+          cache-dependency-path: services/kaneo-dispatcher/go.sum
+
+      # make test, not the commands themselves: the Makefile says it
+      # runs "what CI runs", and that is only true if this IS it. Two
+      # copies of the same command drift, and the one that drifts is
+      # whichever nobody is looking at.
+      - name: Test
+        run: make test
+
+      # CGO_ENABLED=0: a cgo binary links against glibc and will not run on
+      # alpine, and that only shows up at container start.
+      #
+      # -X main.version stamps the commit into the binary, so every log
+      # line says which build produced it. Without it main.version stays
+      # "dev" and the field is worse than absent.
+      - name: Build
+        run: |
+          CGO_ENABLED=0 go build \
+            -ldflags "-X main.version=$GITHUB_SHA" \
+            -o bin/app .
+
+      # Downloaded rather than built so CI does not depend on this repo
+      # being able to compile it.
+      - name: Install homelabctl
+        run: curl -fsSL https://github.com/ChristopherScot/homelabctl/releases/latest/download/homelabctl_linux_amd64.tar.gz | tar -xz
+
+      - name: Check deploy manifests
+        run: ./homelabctl check deploy
+
+      # The manifests are derived from config.yaml, so a config change
+      # that nobody re-rendered leaves them describing the old service -
+      # and `check deploy` would not notice, because it validates what
+      # is there rather than comparing it to what the config says.
+      #
+      # render takes no image ref and preflight degrades to a notice
+      # without a cluster, so this is deterministic here: the same
+      # config always produces the same files.
+      - name: Check manifests match config.yaml
+        run: |
+          ./homelabctl render
+          git diff --exit-code -- deploy/ \
+            || { echo "::error::manifests are stale - run 'homelabctl render' and commit"; exit 1; }
+
+      # buildx, because cache-from/cache-to type=gha below need it: the
+      # default docker driver cannot export a cache and fails the build
+      # with "Cache export is not supported for the docker driver".
+      - uses: docker/setup-buildx-action@v3
+
+      # ghcr.io specifically: github.actor + GITHUB_TOKEN authenticate
+      # to GitHub's registry and nothing else. Pointing image.repository
+      # at ECR or Docker Hub means replacing this step with that
+      # registry's login action and a stored credential. The image NAME
+      # needs no edit here - it is read from config.yaml below - so this
+      # step is the only thing a registry change touches.
+      #
+      # Note `homelabctl init --overwrite` rewrites this file from the
+      # template, which would discard that edit.
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Asked, not remembered.
+      #
+      # This used to be the literal image name, written once by `init`
+      # and never regenerated - while config.yaml, which names the same
+      # image, is regenerated on every `render`. Renaming the image
+      # therefore moved the manifests and left CI pushing the old name,
+      # and nothing reported it: the build was green because it pushed
+      # SOMETHING, render was clean because the manifests matched the
+      # config, and Argo said Synced because it applied what it was
+      # given. The only symptom was ImagePullBackOff - and on a first
+      # deploy there is no previous image to fall back to, so the
+      # service never started at all.
+      #
+      # Reading it here means config.yaml is the only place the image is
+      # named, so the two cannot disagree. `homelabctl image` exits
+      # non-zero if it is unset, which fails the job here rather than
+      # pushing an untagged image.
+      - id: image
+        run: echo "ref=$(./homelabctl image)" >> "$GITHUB_OUTPUT"
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.image.outputs.ref }}
+          # Full SHA: an abbreviated one is not a registry tag and gives
+          # ImagePullBackOff.
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/kaneo-dispatcher
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,260 @@
+package main
+
+// Fakes for everything the dispatcher talks to: Kaneo, GitHub and the
+// session pods. No cluster, no network, no node.
+
+import (
+	"bytes"
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+const testSecret = "testsecret"
+
+func sign(body string) string {
+	mac := hmac.New(sha256.New, []byte(testSecret))
+	mac.Write([]byte(body))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// execCall is one command the dispatcher asked a pod to run.
+type execCall struct {
+	pod  string
+	argv []string
+}
+
+func (c execCall) line() string { return strings.Join(c.argv, " ") }
+
+// recorder stands in for the session pods. The flock check answers
+// idle unless busy is set; everything else exits 0.
+type recorder struct {
+	mu    sync.Mutex
+	calls []execCall
+	busy  bool
+	fail  error // returned from every exec when set: the API is unreachable
+}
+
+func (r *recorder) exec(_ context.Context, pod string, argv []string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = append(r.calls, execCall{pod, argv})
+	if r.fail != nil {
+		return 0, r.fail
+	}
+	if r.busy && strings.Contains(strings.Join(argv, " "), "flock -n") {
+		return 1, nil
+	}
+	return 0, nil
+}
+
+// launches are the exec calls that started a stage, as opposed to the
+// busy checks before them.
+func (r *recorder) launches() []execCall {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []execCall
+	for _, c := range r.calls {
+		if strings.Contains(c.line(), "setsid") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// stubKaneo answers the three API calls the dispatcher makes.
+type stubKaneo struct {
+	mu       sync.Mutex
+	labels   map[string][]string // task id -> label names
+	labelErr int                 // non-zero: answer every label lookup with this status
+	activity map[string][]map[string]string
+	board    any // what /task/tasks/{project} returns
+	hits     int
+}
+
+func (s *stubKaneo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hits++
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/label/task/"):
+		if s.labelErr != 0 {
+			w.WriteHeader(s.labelErr)
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/api/label/task/")
+		var out []map[string]string
+		for _, name := range s.labels[id] {
+			out = append(out, map[string]string{"name": name})
+		}
+		if out == nil {
+			out = []map[string]string{}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+	case strings.HasPrefix(r.URL.Path, "/api/activity/"):
+		id := strings.TrimPrefix(r.URL.Path, "/api/activity/")
+		acts := s.activity[id]
+		if acts == nil {
+			acts = []map[string]string{}
+		}
+		_ = json.NewEncoder(w).Encode(acts)
+	case strings.HasPrefix(r.URL.Path, "/api/task/tasks/"):
+		_ = json.NewEncoder(w).Encode(s.board)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// stubGitHub answers the pull-request and commit-status lookups the
+// sweep makes. prs is keyed by the `head` query parameter.
+type stubGitHub struct {
+	mu       sync.Mutex
+	prs      map[string][]map[string]any
+	statuses map[string][]string // head sha -> status contexts
+	fail     int                 // non-zero: answer everything with this status
+	hits     []string
+}
+
+func (s *stubGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hits = append(s.hits, r.URL.RequestURI())
+	w.Header().Set("Content-Type", "application/json")
+	if s.fail != 0 {
+		w.WriteHeader(s.fail)
+		return
+	}
+	switch {
+	case strings.HasSuffix(r.URL.Path, "/pulls"):
+		prs := s.prs[r.URL.Query().Get("head")]
+		if prs == nil {
+			prs = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(prs)
+	case strings.HasSuffix(r.URL.Path, "/status"):
+		parts := strings.Split(r.URL.Path, "/")
+		sha := parts[len(parts)-2]
+		var statuses []map[string]string
+		for _, c := range s.statuses[sha] {
+			statuses = append(statuses, map[string]string{"context": c})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"statuses": statuses})
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+// lockedBuffer collects log lines from the request goroutine and the
+// dispatch goroutine without a data race.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// fixture is a dispatcher wired to the fakes above.
+type fixture struct {
+	t      *testing.T
+	d      *dispatcher
+	kaneo  *stubKaneo
+	github *stubGitHub
+	pods   *recorder
+	log    *lockedBuffer
+}
+
+func newFixture(t *testing.T) *fixture {
+	t.Helper()
+	f := &fixture{
+		t:      t,
+		kaneo:  &stubKaneo{labels: map[string][]string{}, activity: map[string][]map[string]string{}},
+		github: &stubGitHub{prs: map[string][]map[string]any{}, statuses: map[string][]string{}},
+		pods:   &recorder{},
+		log:    &lockedBuffer{},
+	}
+	ks := httptest.NewServer(f.kaneo)
+	gs := httptest.NewServer(f.github)
+	t.Cleanup(ks.Close)
+	t.Cleanup(gs.Close)
+
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(f.log, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	f.d = &dispatcher{
+		owner:        "TestOwner",
+		branchPrefix: "fix/",
+		project:      "proj",
+		kaneoURL:     ks.URL,
+		githubURL:    gs.URL,
+		apiKey:       "testkey",
+		secret:       []byte(testSecret),
+		ghToken:      "ghtoken",
+		repos:        map[string]string{"0": "TestOwner/testrepo, TestOwner/other", "2": "TestOwner/testrepo"},
+		stale:        4 * time.Hour,
+		exec:         f.pods.exec,
+		client:       &http.Client{Timeout: 5 * time.Second},
+	}
+	return f
+}
+
+// post delivers a body to the dispatcher and waits for whatever work it
+// started after answering.
+func (f *fixture) post(path, body string, headers ...string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	for i := 0; i+1 < len(headers); i += 2 {
+		req.Header.Add(headers[i], headers[i+1])
+	}
+	w := httptest.NewRecorder()
+	f.d.mux().ServeHTTP(w, req)
+	f.d.inflight.Wait()
+	return w
+}
+
+// signed posts a body with a valid signature.
+func (f *fixture) signed(path, body string) *httptest.ResponseRecorder {
+	f.t.Helper()
+	return f.post(path, body, "X-Kaneo-Signature", sign(body))
+}
+
+// move is a task.status_changed delivery for one card.
+func move(id, column string) string {
+	return `{"event":"task.status_changed","task":{"id":"` + id + `"},"data":{"newStatus":"` + column + `"}}`
+}
+
+func (f *fixture) wantLog(substr string) {
+	f.t.Helper()
+	if !strings.Contains(f.log.String(), substr) {
+		f.t.Errorf("log does not contain %q:\n%s", substr, f.log.String())
+	}
+}
+
+func (f *fixture) wantNoLaunch() {
+	f.t.Helper()
+	if l := f.pods.launches(); len(l) != 0 {
+		f.t.Errorf("a stage was launched: %v", l)
+	}
+}
+
+func ago(d time.Duration) string { return time.Now().Add(-d).UTC().Format(time.RFC3339Nano) }

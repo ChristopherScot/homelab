@@ -1,0 +1,98 @@
+# yaml-language-server: $schema=config.schema.json
+# The single source of truth for this service. `homelabctl render`
+# regenerates every manifest from it, so change things here rather than
+# editing deploy/ by hand.
+name: kaneo-dispatcher
+team: me-myself-and-i
+runtime: go-service
+
+# A webhook receiver with two endpoints; there is no API for a consumer
+# to import, so server.go is hand-written and nothing is generated.
+spec: false
+
+# Beside the session pods it execs into. The Role in rbac.yaml is
+# namespaced, so the dispatcher can reach claude-session-* and nothing
+# in any other namespace.
+namespace: claude-pods
+
+# 8080 rather than the template's 3000: Kaneo's webhook integration and
+# the kaneo-reconcile CronJob both post to
+# kaneo-dispatcher.claude-pods.svc.cluster.local:8080, and the webhook
+# URL lives in Kaneo's settings where a render cannot change it. The
+# Service patch below keeps that port answering.
+port: 8080
+image:
+    repository: ghcr.io/christopherscot/homelab-kaneo-dispatcher
+
+env:
+    DISPATCH_NS: claude-pods
+    # In-cluster Service, not the ingress: cluster DNS does not resolve
+    # *.home.chrisscotmartin.com. The webhook payload carries no labels,
+    # so the repo: label is read back from this API.
+    KANEO_API_URL: http://kaneo.kaneo.svc.cluster.local:5173
+
+# Everything the dispatcher reads from Vault, in one place. The policy
+# `homelabctl vault` derives from this grants exactly these three paths
+# and nothing else under claude-pods/.
+#
+#   webhook-secret  verifies Kaneo's HMAC on every delivery
+#   api-key         reads a card's labels and, for the sweep, the board
+#   git/token       asks GitHub whether a card's work already exists
+#   repos/pod<n>    which repos each session pod works, by ordinal
+#
+# The properties are named for what they are, not for the variable, so
+# the path is not repeated: claude-pods/kaneo holds `api-key`, not
+# `kaneo_api_key`.
+secrets:
+    vaultPath: claude-pods/kaneo
+    keys:
+        - KANEO_WEBHOOK_SECRET: webhook-secret
+        - KANEO_API_KEY: api-key
+        - GITHUB_TOKEN: claude-pods/git/token
+        - REPOS_POD0: claude-pods/repos/pod0
+        - REPOS_POD1: claude-pods/repos/pod1
+        - REPOS_POD2: claude-pods/repos/pod2
+
+# Kaneo does not use this: it posts to the Service. This exists for
+# reaching /healthz by hand from the LAN. No Authelia, deliberately - the
+# only unauthenticated caller is Kaneo's webhook sender, which cannot
+# complete a login redirect and authenticates with the HMAC instead.
+ingress:
+    hosts:
+        - dispatch.home.chrisscotmartin.com
+
+# What the tool does not generate: the Role that lets this pod exec into
+# the session pods, bound to the ServiceAccount the secrets block
+# creates.
+manifests:
+    - rbac.yaml
+
+patches:
+    # Two ports on purpose. 80 is what the generated Ingress routes to;
+    # 8080 is what Kaneo's webhook integration and the reconcile CronJob
+    # were configured against before this service existed. Dropping it
+    # would break the webhook with nothing in this repo to say why.
+    Service: |
+        spec:
+          ports:
+            - name: http
+              port: 80
+              targetPort: 8080
+            - name: webhook
+              port: 8080
+              targetPort: 8080
+
+# The template's rolling update is kept. The hand-written Deployment
+# this replaces used Recreate because an in-memory busy set could not be
+# shared between two replicas; the busy check now asks the pod's own
+# lock file (see podIsBusy), which two overlapping dispatchers read the
+# same way.
+resources:
+    cpuRequest: 10m
+    memoryRequest: 32Mi
+    # Above the template's 64Mi: a client-go clientset and its discovery
+    # cache sit idle at a few tens of MiB, and an OOMKill on the only
+    # replica is an outage.
+    memoryLimit: 128Mi
+hardened: true
+metrics: true

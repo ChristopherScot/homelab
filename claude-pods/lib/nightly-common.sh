@@ -315,7 +315,7 @@ kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
 # The dispatcher decides which columns START work; these scripts decide
 # which columns they may move a card TO. Both halves are the same graph, and
 # with only one half visible it is impossible to see a cycle. Keep this in
-# step with ROUTES in dispatcher/dispatch.mjs.
+# step with routes in services/kaneo-dispatcher/dispatch.go.
 #
 #   backlog             inert — holding area, nothing reads it
 #   to-do        -> author  -> in-progress -> {in-review, backlog*, needs-human-review}

@@ -1,0 +1,8 @@
+{
+  "name": "kaneo-dispatcher",
+  "team": "me-myself-and-i",
+  "namespace": "claude-pods",
+  "image": "ghcr.io/christopherscot/homelab-kaneo-dispatcher",
+  "repoURL": "https://github.com/ChristopherScot/homelab",
+  "manifestPath": "services/kaneo-dispatcher/deploy/kaneo-dispatcher"
+}
