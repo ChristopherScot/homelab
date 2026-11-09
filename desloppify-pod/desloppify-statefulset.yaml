@@ -34,6 +34,20 @@ spec:
         app: desloppify
     spec:
       serviceAccountName: desloppify
+      # Keep this pod off the nodes running the session pods. Those are
+      # three replicas with 2Gi limits each and no anti-affinity of
+      # their own; co-located with this pod's 9.5Gi the ceiling reaches
+      # 15.5Gi on a node with ~11.6Gi allocatable. Preferred rather than
+      # required, so a node drain does not leave this unschedulable.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: claude-session
       securityContext:
         fsGroup: 1000
       imagePullSecrets:
@@ -89,9 +103,16 @@ spec:
             - name: test-pgdata
               mountPath: /var/lib/postgresql/data-tests
           resources:
+            # Requested near the limit, not far below it. A request is
+            # what the scheduler reserves and what the kubelet ranks by
+            # under memory pressure; a sidecar requesting 64Mi against a
+            # 512Mi limit is among the first things killed, and a
+            # postgres killed mid-suite restarts onto an emptyDir that
+            # kept its half-written data - the confusing failure these
+            # sidecars exist to prevent.
             requests:
               cpu: 10m
-              memory: 64Mi
+              memory: 448Mi
             limits:
               memory: 512Mi
 
@@ -107,7 +128,7 @@ spec:
           resources:
             requests:
               cpu: 10m
-              memory: 32Mi
+              memory: 192Mi
             limits:
               memory: 256Mi
 
@@ -135,7 +156,7 @@ spec:
           resources:
             requests:
               cpu: 10m
-              memory: 128Mi
+              memory: 640Mi
             limits:
               memory: 768Mi
       containers:

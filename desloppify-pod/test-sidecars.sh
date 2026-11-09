@@ -69,13 +69,30 @@ for s in d.get('services',{}).values():
         if pub: print(pub)
 " 2>/dev/null | sort -u)
 
+# Matched only where a sidecar can be told to listen - an args entry, a
+# port env value, or a probe. An unanchored search of the whole document
+# passes on any digit substring: 6377 matched --max_old_space_size=6144,
+# and this PR is what introduced that number.
 while read -r port; do
   [ -n "$port" ] || continue
-  if ! grep -qE "\"?${port}\"?" "$spec"; then
-    echo "FAIL: the suite dials port $port; no sidecar listens on it"
+  if ! grep -qE "(\"$port\"|port: $port|=$port\b|, \"$port\")" "$spec"; then
+    echo "FAIL: the suite dials port $port; no sidecar is told to listen on it"
     fail=1
   fi
 done <<< "$ports"
+
+# The other direction: a sidecar listening on a port the compose file no
+# longer publishes is an orphan burning its memory limit against the
+# pod's ceiling, and a subset test never reports it.
+spec_ports=$(grep -oE '"(5[0-9]{3}|6[0-9]{3}|8[0-9]{3})"' "$spec" 2>/dev/null \
+             | tr -d '"' | sort -u)
+while read -r sp; do
+  [ -n "$sp" ] || continue
+  if ! printf '%s\n' "$ports" | grep -qx "$sp"; then
+    echo "FAIL: a sidecar listens on $sp, which the compose file does not publish"
+    fail=1
+  fi
+done <<< "$spec_ports"
 
 # They must be native sidecars. An initContainer without
 # restartPolicy: Always runs once and exits, so the pod would wait
