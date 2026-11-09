@@ -56,19 +56,21 @@ spec:
   # 15 minutes, not an hour: the ScaledObject's window end must satisfy
   #   end >= schedule + startingDeadlineSeconds + activeDeadlineSeconds
   # (06:00 + 900 + 22320 = 12:27 <= 12:45), because the active deadline
-  # counts from job creation - a later-admitted run would still be going
+  # counts from job creation — a later-admitted run would still be going
   # when KEDA closes the window and be killed half-done. A morning that
-  # can't start by 06:15 is skipped instead.
+  # can't start by 06:15 is skipped instead. The invariant's rationale
+  # lives on desloppify-pod/desloppify-scaledobject.yaml.
   startingDeadlineSeconds: 900
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 0
-      # The run's 6h budget (21720) plus 10 minutes - wait-ready's
-      # --timeout below, the same fact in seconds - for when the 05:55
-      # wake is still npm-installing the CLI. The ScaledObject's window
-      # end is derived from this; see startingDeadlineSeconds above.
+      # The run's 6h02m budget (21720, unchanged) plus 10 minutes — the
+      # same fact wait-ready's --timeout states in seconds — for when the
+      # 05:55 wake is still npm-installing the CLI. The ScaledObject's
+      # window end is derived from this; see startingDeadlineSeconds
+      # above.
       activeDeadlineSeconds: 22320
       template:
         spec:
