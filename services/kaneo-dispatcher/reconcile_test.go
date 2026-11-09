@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 )
 
-// boardWith is a board holding one card in one column.
+// boardWith is a board holding one card in one column, plus a very old
+// card in an inert column that must never be looked at.
 func boardWith(column, id, ticket, createdAt string) map[string]any {
 	return map[string]any{"data": map[string]any{"columns": []map[string]any{
 		{"slug": column, "tasks": []map[string]any{{"id": id, "ticketId": ticket, "createdAt": createdAt}}},
@@ -16,6 +18,8 @@ func boardWith(column, id, ticket, createdAt string) map[string]any {
 	}}}
 }
 
+// moved records that a card changed column `when` ago, among other
+// activity that is not a move.
 func (f *fixture) moved(id string, when time.Duration) {
 	f.kaneo.activity[id] = []map[string]string{
 		{"type": "comment", "createdAt": ago(1 * time.Minute)},
@@ -23,7 +27,15 @@ func (f *fixture) moved(id string, when time.Duration) {
 	}
 }
 
-func (f *fixture) sweep(dry bool) sweep {
+// stale puts one card in a column, moved there long enough ago to be
+// owed work, with a single repo label.
+func (f *fixture) stale(column string) {
+	f.kaneo.board = boardWith(column, "t1", "T-1", ago(10*time.Hour))
+	f.moved("t1", 5*time.Hour)
+	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
+}
+
+func (f *fixture) reconcile(dry bool) sweep {
 	f.t.Helper()
 	s, err := f.d.reconcile(context.Background(), dry)
 	if err != nil {
@@ -32,16 +44,20 @@ func (f *fixture) sweep(dry bool) sweep {
 	return s
 }
 
+func openPR(sha string) []map[string]any {
+	return []map[string]any{{"merged_at": nil, "head": map[string]string{"sha": sha}}}
+}
+
 func TestFreshCardIsLeftAlone(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
 	f.moved("t1", 1*time.Hour)
-	s := f.sweep(false)
-	if s.Checked != 1 || len(s.Redispatched)+len(s.Skipped)+len(s.Errors) != 0 {
+	s := f.reconcile(false)
+	if s.checked != 1 || len(s.redispatched)+len(s.skipped)+len(s.errors) != 0 {
 		t.Errorf("sweep = %+v, want one card checked and nothing said", s)
 	}
-	if len(f.github.hits) != 0 {
-		t.Errorf("a fresh card was looked up on GitHub: %v", f.github.hits)
+	if hits := f.github.calls(); len(hits) != 0 {
+		t.Errorf("a fresh card was looked up on GitHub: %v", hits)
 	}
 	f.wantNoLaunch()
 }
@@ -51,33 +67,29 @@ func TestInertColumnsAreNotSwept(t *testing.T) {
 	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
 	f.moved("t1", 1*time.Hour)
 	// boardWith also plants a 99h-old card in in-progress.
-	if s := f.sweep(false); s.Checked != 1 {
-		t.Errorf("checked %d cards, want 1: in-progress owes nothing", s.Checked)
+	if s := f.reconcile(false); s.checked != 1 {
+		t.Errorf("checked %d cards, want 1: in-progress owes nothing", s.checked)
 	}
 }
 
 func TestStaleCardWhoseWorkExistsIsSkipped(t *testing.T) {
 	f := newFixture(t)
-	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
-	f.moved("t1", 5*time.Hour)
-	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
+	f.stale("to-do")
 	// The branch is the raw id, never the ticket id.
-	f.github.prs["TestOwner:fix/t1"] = []map[string]any{{"merged_at": nil, "head": map[string]string{"sha": "abc"}}}
-	s := f.sweep(false)
-	if len(s.Skipped) != 1 || s.Skipped[0] != "T-1: work already exists" {
-		t.Errorf("skipped = %v, want the pull request to count as the author having run", s.Skipped)
+	f.github.prs["TestOwner:fix/t1"] = openPR("abc")
+	s := f.reconcile(false)
+	if len(s.skipped) != 1 || s.skipped[0] != "T-1: work already exists" {
+		t.Errorf("skipped = %v, want the pull request to count as the author having run", s.skipped)
 	}
 	f.wantNoLaunch()
 }
 
 func TestStaleCardWithNoWorkIsRedispatched(t *testing.T) {
 	f := newFixture(t)
-	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
-	f.moved("t1", 5*time.Hour)
-	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
-	s := f.sweep(false)
-	if len(s.Redispatched) != 1 || !strings.HasPrefix(s.Redispatched[0], "T-1 (to-do, 5h)") {
-		t.Errorf("redispatched = %v, want T-1 after 5h in to-do", s.Redispatched)
+	f.stale("to-do")
+	s := f.reconcile(false)
+	if len(s.redispatched) != 1 || s.redispatched[0] != "T-1 (to-do, 5h)" {
+		t.Errorf("redispatched = %v, want T-1 after 5h in to-do", s.redispatched)
 	}
 	l := f.pods.launches()
 	if len(l) != 1 || l[0].pod != "claude-session-0" || l[0].argv[4] != "t1" {
@@ -88,15 +100,13 @@ func TestStaleCardWithNoWorkIsRedispatched(t *testing.T) {
 
 func TestDryRunReportsWithoutLaunching(t *testing.T) {
 	f := newFixture(t)
-	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
-	f.moved("t1", 5*time.Hour)
-	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
-	s := f.sweep(true)
-	if len(s.Redispatched) != 1 || !strings.HasSuffix(s.Redispatched[0], "[dry-run]") {
-		t.Errorf("redispatched = %v, want a dry-run line", s.Redispatched)
+	f.stale("to-do")
+	s := f.reconcile(true)
+	if len(s.redispatched) != 1 || s.redispatched[0] != "T-1 (to-do, 5h) [dry-run]" {
+		t.Errorf("redispatched = %v, want a dry-run line", s.redispatched)
 	}
-	if len(f.pods.calls) != 0 {
-		t.Errorf("a dry run touched a pod: %v", f.pods.calls)
+	if calls := f.pods.all(); len(calls) != 0 {
+		t.Errorf("a dry run touched a pod: %v", calls)
 	}
 }
 
@@ -105,30 +115,65 @@ func TestCardWithNoMovesUsesItsCreationTime(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(6*time.Hour))
 	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
-	if s := f.sweep(true); len(s.Redispatched) != 1 {
+	if s := f.reconcile(true); len(s.redispatched) != 1 {
 		t.Errorf("sweep = %+v, want the 6h-old card found", s)
 	}
 }
 
-func TestInReviewNeedsTheIntegrationStatus(t *testing.T) {
-	for name, contexts := range map[string][]string{
-		"no status":          {},
-		"unrelated status":   {"ci/build"},
-		"integration status": {"ci/build", "nightly/integration"},
+// A card the sweep cannot date must say so, not pass as fresh forever.
+func TestCardWithoutAClockIsReportedNotIgnored(t *testing.T) {
+	for _, tc := range []struct {
+		name, createdAt string
+		wantSkipped     int
+		wantErrors      int
+	}{
+		{"NoCreatedAt", "", 1, 0},
+		{"UnparseableCreatedAt", "yesterday-ish", 0, 1},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			f.kaneo.board = boardWith("in-review", "t1", "T-1", ago(10*time.Hour))
-			f.moved("t1", 5*time.Hour)
-			f.kaneo.labels["t1"] = []string{"repo:testrepo"}
-			f.github.prs["TestOwner:fix/t1"] = []map[string]any{{"merged_at": nil, "head": map[string]string{"sha": "abc"}}}
-			f.github.statuses["abc"] = contexts
-			s := f.sweep(false)
-			tested := strings.Contains(strings.Join(contexts, ","), "nightly/integration")
-			if tested && len(s.Skipped) != 1 || !tested && len(s.Redispatched) != 1 {
-				t.Errorf("%s: sweep = %+v", name, s)
+			f.kaneo.board = boardWith("to-do", "t1", "T-1", tc.createdAt)
+			s := f.reconcile(true)
+			if len(s.skipped) != tc.wantSkipped || len(s.errors) != tc.wantErrors {
+				t.Errorf("sweep = %+v, want %d skipped and %d errors", s, tc.wantSkipped, tc.wantErrors)
 			}
-			if !tested {
+		})
+	}
+}
+
+func TestUnparseableMoveTimeIsAnError(t *testing.T) {
+	f := newFixture(t)
+	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
+	f.kaneo.activity["t1"] = []map[string]string{{"type": "status_changed", "createdAt": "not a time"}}
+	if s := f.reconcile(true); len(s.errors) != 1 || len(s.redispatched) != 0 {
+		t.Errorf("sweep = %+v, want one error and no redispatch", s)
+	}
+}
+
+func TestInReviewNeedsTheIntegrationStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		contexts         []string
+		wantSkipped      int
+		wantRedispatched int
+	}{
+		{"NoStatus", nil, 0, 1},
+		{"UnrelatedStatus", []string{"ci/build"}, 0, 1},
+		{"IntegrationStatus", []string{"ci/build", "nightly/integration"}, 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixture(t)
+			f.stale("in-review")
+			f.github.prs["TestOwner:fix/t1"] = openPR("abc")
+			f.github.statuses["abc"] = tc.contexts
+			s := f.reconcile(false)
+			if got := len(s.skipped); got != tc.wantSkipped {
+				t.Errorf("skipped %d cards, want %d: %+v", got, tc.wantSkipped, s)
+			}
+			if got := len(s.redispatched); got != tc.wantRedispatched {
+				t.Errorf("redispatched %d cards, want %d: %+v", got, tc.wantRedispatched, s)
+			}
+			if tc.wantRedispatched == 1 {
 				if l := f.pods.launches(); len(l) != 1 || l[0].pod != "claude-session-2" {
 					t.Errorf("launches = %v, want the test pod", l)
 				}
@@ -144,13 +189,11 @@ func TestMergedPullRequestEndsTheStoryInAnyColumn(t *testing.T) {
 	for _, column := range []string{"to-do", "in-review", "mergeable"} {
 		t.Run(column, func(t *testing.T) {
 			f := newFixture(t)
-			f.kaneo.board = boardWith(column, "t1", "T-1", ago(10*time.Hour))
-			f.moved("t1", 5*time.Hour)
-			f.kaneo.labels["t1"] = []string{"repo:testrepo"}
+			f.stale(column)
 			f.d.repos = nil
 			f.github.prs["TestOwner:fix/t1"] = []map[string]any{{"merged_at": "2026-11-01T00:00:00Z", "head": map[string]string{"sha": "abc"}}}
-			s := f.sweep(false)
-			if len(s.Skipped) != 1 || len(s.Redispatched) != 0 {
+			s := f.reconcile(false)
+			if len(s.skipped) != 1 || len(s.redispatched) != 0 {
 				t.Errorf("sweep = %+v, want the merged card skipped", s)
 			}
 			f.wantNoLaunch()
@@ -160,12 +203,10 @@ func TestMergedPullRequestEndsTheStoryInAnyColumn(t *testing.T) {
 
 func TestMergeableWithAnUnmergedPullRequestIsRedispatched(t *testing.T) {
 	f := newFixture(t)
-	f.kaneo.board = boardWith("mergeable", "t1", "T-1", ago(10*time.Hour))
-	f.moved("t1", 5*time.Hour)
-	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
+	f.stale("mergeable")
 	f.d.repos = nil
-	f.github.prs["TestOwner:fix/t1"] = []map[string]any{{"merged_at": nil, "head": map[string]string{"sha": "abc"}}}
-	if s := f.sweep(false); len(s.Redispatched) != 1 {
+	f.github.prs["TestOwner:fix/t1"] = openPR("abc")
+	if s := f.reconcile(false); len(s.redispatched) != 1 {
 		t.Errorf("sweep = %+v, want the merge stage re-run", s)
 	}
 	if l := f.pods.launches(); len(l) != 1 || l[0].pod != "claude-session-1" {
@@ -176,25 +217,36 @@ func TestMergeableWithAnUnmergedPullRequestIsRedispatched(t *testing.T) {
 // An error must not read as "nothing to do".
 func TestGitHubFailureIsReportedNotTreatedAsNoWork(t *testing.T) {
 	f := newFixture(t)
-	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
-	f.moved("t1", 5*time.Hour)
-	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
+	f.stale("to-do")
 	f.github.fail = http.StatusUnauthorized
-	s := f.sweep(false)
-	if len(s.Errors) != 1 || !strings.HasPrefix(s.Errors[0], "T-1: ") || len(s.Redispatched) != 0 {
+	s := f.reconcile(false)
+	if len(s.errors) != 1 || !strings.HasPrefix(s.errors[0], "T-1: ") || len(s.redispatched) != 0 {
 		t.Errorf("sweep = %+v, want one error and no redispatch", s)
 	}
 	f.wantNoLaunch()
 }
 
-func TestOwnerPrefixedLabelQueriesTheRepoUnderTheOwner(t *testing.T) {
+// The owner in the label is the owner asked on GitHub, and the pod's
+// list is matched on the same name - one resolution, two readers.
+func TestOwnerQualifiedLabelIsLookedUpUnderThatOwner(t *testing.T) {
 	f := newFixture(t)
-	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
-	f.moved("t1", 5*time.Hour)
-	f.kaneo.labels["t1"] = []string{"repo:TestOwner/testrepo"}
-	f.sweep(true)
-	if len(f.github.hits) != 1 || !strings.HasPrefix(f.github.hits[0], "/repos/TestOwner/testrepo/pulls?") {
-		t.Errorf("github hits = %v, want one pulls lookup under TestOwner/testrepo", f.github.hits)
+	f.stale("to-do")
+	f.kaneo.labels["t1"] = []string{"repo:Other/gamma"}
+	f.d.repos = map[string]string{"0": "Other/gamma"}
+	f.reconcile(true)
+	hits := f.github.calls()
+	if len(hits) != 1 || !strings.HasPrefix(hits[0], "/repos/Other/gamma/pulls?head=Other%3Afix%2Ft1") {
+		t.Errorf("github hits = %v, want one pulls lookup under Other/gamma with that owner's head", hits)
+	}
+}
+
+func TestSkipReasonsReadTheSameAsTheWebhookLogs(t *testing.T) {
+	f := newFixture(t)
+	f.stale("to-do")
+	f.kaneo.labels["t1"] = []string{"repo:elsewhere"}
+	s := f.reconcile(true)
+	if len(s.skipped) != 1 || s.skipped[0] != "T-1: claude-session-0 does not work TestOwner/elsewhere" {
+		t.Errorf("skipped = %v", s.skipped)
 	}
 }
 
@@ -208,27 +260,27 @@ func TestUnreadableBoardIsAnError(t *testing.T) {
 
 func TestReconcileEndpoint(t *testing.T) {
 	f := newFixture(t)
-	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
-	f.moved("t1", 5*time.Hour)
-	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
+	f.stale("to-do")
 
-	req := httpGet("/reconcile")
-	if w := serve(f, req); w.Code != http.StatusMethodNotAllowed || !strings.Contains(w.Body.String(), "POST with a signature") {
+	w := f.serve(httptest.NewRequest(http.MethodGet, "/reconcile", nil))
+	if w.Code != http.StatusMethodNotAllowed || !strings.Contains(w.Body.String(), "POST with a signature") {
 		t.Errorf("GET /reconcile = %d %q, want 405 saying how", w.Code, w.Body.String())
 	}
 	if w := f.post("/reconcile", ""); w.Code != http.StatusUnauthorized {
 		t.Errorf("unsigned POST /reconcile = %d, want 401", w.Code)
 	}
-	if w := f.signed("/reconcile?dry=1", ""); w.Code != http.StatusAccepted {
+	if w := f.signed("/reconcile?dry", ""); w.Code != http.StatusAccepted {
 		t.Errorf("signed dry POST = %d, want 202", w.Code)
 	}
-	f.wantLog(`msg="reconcile redispatch" card="T-1 (to-do, 5h) [dry-run]"`)
+	f.wantLog(`card="T-1 (to-do, 5h) [dry-run]"`)
 	f.wantNoLaunch()
 
-	if w := f.signed("/reconcile", ""); w.Code != http.StatusAccepted {
+	// Only the flag is a dry run, not any URL that happens to spell it.
+	if w := f.signed("/reconcile?foundry=1", ""); w.Code != http.StatusAccepted {
 		t.Errorf("signed POST = %d, want 202", w.Code)
 	}
-	f.wantLog("msg=\"reconcile done\" checked=1 redispatched=1 skipped=0 errors=0")
+	f.wantLog(`msg="reconcile done"`)
+	f.wantLog("redispatched=1")
 	if len(f.pods.launches()) != 1 {
 		t.Error("a real sweep did not launch the stuck card's stage")
 	}

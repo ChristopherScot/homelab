@@ -16,11 +16,14 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -100,6 +103,10 @@ func (d *dispatcher) mux() http.Handler {
 
 	// Reconcile is a POST so it cannot be triggered by a stray GET, and it
 	// is behind the same HMAC as the webhook - it starts real work.
+	//
+	// Both spellings are registered because a bare "/reconcile/" pattern
+	// would answer the exact path with a 301 to the slash form, and a
+	// redirect drops a POST body - and its signature with it.
 	refuse := func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "POST with a signature", http.StatusMethodNotAllowed)
 	}
@@ -116,19 +123,70 @@ func (d *dispatcher) mux() http.Handler {
 }
 
 // reconcileHandler is the sweep, not a webhook. Same signature check,
-// since it starts the same work. A path or query mentioning "dry" reports
-// what it would do without doing it.
+// since it starts the same work. `?dry` reports what the sweep would do
+// without doing it.
 func (d *dispatcher) reconcileHandler(w http.ResponseWriter, r *http.Request) {
-	if _, ok := d.signed(w, r); !ok {
+	if _, ok := d.verifiedBody(w, r); !ok {
 		return
 	}
-	dryRun := strings.Contains(r.URL.RequestURI(), "dry")
+	dryRun := r.URL.Query().Has("dry")
 	w.WriteHeader(http.StatusAccepted)
-	// Not r.Context(): that is cancelled the moment this handler returns,
-	// which is before the sweep has made its first call.
+	// Detached from the request's cancellation, which fires when this
+	// handler returns - before the sweep has made its first call.
+	ctx := context.WithoutCancel(r.Context())
 	d.inflight.Add(1)
 	go func() {
 		defer d.inflight.Done()
-		d.runSweep(context.Background(), dryRun)
+		d.runSweep(ctx, dryRun)
 	}()
+}
+
+// maxBody bounds a delivery. A task.status_changed payload is a few KB;
+// 1 MiB is generous.
+const maxBody = 1 << 20
+
+// verifiedBody reads a bounded body and verifies Kaneo's signature over
+// it. It has already answered the request - 413, 400 or 401 - when ok is
+// false, so a caller only ever sees bytes Kaneo signed.
+//
+// Bounded because this endpoint is unauthenticated until the HMAC is
+// checked, and the body must be buffered whole to check it. Without a cap
+// a large POST is memory growth an anonymous caller controls.
+func (d *dispatcher) verifiedBody(w http.ResponseWriter, r *http.Request) (body []byte, ok bool) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		if errors.As(err, &tooBig) {
+			slog.Warn("reject", "reason", "body over cap", "cap", maxBody)
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+		} else {
+			slog.Warn("reject", "reason", "unreadable body", "err", err)
+			w.WriteHeader(http.StatusBadRequest)
+		}
+		return nil, false
+	}
+	// Header.Get takes the first of a repeated header; see
+	// TestDuplicateSignatureHeaderStillVerifies for why that is pinned.
+	if !d.verify(raw, r.Header.Get("X-Kaneo-Signature")) {
+		slog.Warn("reject", "reason", "bad signature")
+		w.WriteHeader(http.StatusUnauthorized)
+		return nil, false
+	}
+	return raw, true
+}
+
+// verify checks Kaneo's HMAC-SHA256 over the exact bytes it sent.
+func (d *dispatcher) verify(body []byte, sigHex string) bool {
+	if sigHex == "" {
+		return false
+	}
+	got, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, d.secret)
+	_, _ = mac.Write(body) // a hash.Hash never returns an error
+	// hmac.Equal is constant-time and length-safe, so a wrong-length
+	// signature is simply false rather than a server error.
+	return hmac.Equal(got, mac.Sum(nil))
 }

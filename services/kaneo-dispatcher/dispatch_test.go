@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,13 +22,13 @@ func TestUnsignedPostIsRefused(t *testing.T) {
 func TestWrongSignatureIsRefused(t *testing.T) {
 	f := newFixture(t)
 	body := move("t1", "to-do")
-	for name, sig := range map[string]string{
-		"other secret": sign(body + "x"),
-		"not hex":      "zz",
-		"short":        "abcd",
+	for _, tc := range []struct{ name, sig string }{
+		{"OtherSecret", sign(body + "x")},
+		{"NotHex", "zz"},
+		{"Short", "abcd"},
 	} {
-		if w := f.post("/", body, "X-Kaneo-Signature", sig); w.Code != http.StatusUnauthorized {
-			t.Errorf("%s: got %d, want 401", name, w.Code)
+		if w := f.post("/", body, "X-Kaneo-Signature", tc.sig); w.Code != http.StatusUnauthorized {
+			t.Errorf("%s: got %d, want 401", tc.name, w.Code)
 		}
 	}
 	f.wantNoLaunch()
@@ -64,8 +66,8 @@ func TestInertColumnIsLoggedNotDispatched(t *testing.T) {
 	}
 	f.wantLog(`msg=noop task=T-1 column=in-progress`)
 	f.wantNoLaunch()
-	if f.kaneo.hits != 0 {
-		t.Errorf("an inert column looked up labels (%d Kaneo calls)", f.kaneo.hits)
+	if n := f.kaneo.calls(); n != 0 {
+		t.Errorf("an inert column looked up labels (%d Kaneo calls)", n)
 	}
 }
 
@@ -99,46 +101,50 @@ func TestDispatchingColumnLaunchesTheStageInItsPod(t *testing.T) {
 	}
 	// The script and the raw task id arrive as positional arguments, so
 	// neither is spliced into shell text.
-	argv := l[0].argv
-	if len(argv) != 5 || argv[3] != "/usr/local/bin/nightly-author" || argv[4] != "t2" {
-		t.Errorf("argv = %q, want sh -c <launch> /usr/local/bin/nightly-author t2", argv)
+	want := []string{"sh", "-c", launchLine, "/usr/local/bin/nightly-author", "t2"}
+	if strings.Join(l[0].argv, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("argv = %q, want %q", l[0].argv, want)
 	}
-	if !strings.Contains(argv[2], "setsid nohup") || !strings.Contains(argv[2], "&") {
-		t.Errorf("launch is not detached: %q", argv[2])
-	}
-	f.wantLog("msg=start task=t2 repo=testrepo pod=claude-session-0 script=nightly-author")
-	f.wantLog("msg=launched task=t2 repo=testrepo rc=0")
+	f.wantLog("msg=start task=t2 repo=TestOwner/testrepo pod=claude-session-0 script=nightly-author")
+	f.wantLog("msg=launched task=t2 repo=TestOwner/testrepo rc=0")
 }
 
 func TestEachColumnRoutesToItsOwnPod(t *testing.T) {
-	for column, want := range map[string]stage{
-		"to-do":     {"claude-session-0", "/usr/local/bin/nightly-author"},
-		"in-review": {"claude-session-2", "/usr/local/bin/nightly-test"},
-		"mergeable": {"claude-session-1", "/usr/local/bin/nightly-merge"},
+	for _, tc := range []struct {
+		column, pod, script string
+	}{
+		{"to-do", "claude-session-0", "/usr/local/bin/nightly-author"},
+		{"in-review", "claude-session-2", "/usr/local/bin/nightly-test"},
+		{"mergeable", "claude-session-1", "/usr/local/bin/nightly-merge"},
 	} {
-		t.Run(column, func(t *testing.T) {
+		t.Run(tc.column, func(t *testing.T) {
 			f := newFixture(t)
 			f.d.repos = nil // every pod works every repo here
 			f.kaneo.labels["t"] = []string{"repo:testrepo"}
-			f.signed("/", move("t", column))
+			f.signed("/", move("t", tc.column))
 			l := f.pods.launches()
-			if len(l) != 1 || l[0].pod != want.pod || l[0].argv[3] != want.script {
-				t.Errorf("%s launched %v, want %s running %s", column, l, want.pod, want.script)
+			if len(l) != 1 || l[0].pod != tc.pod || l[0].argv[3] != tc.script {
+				t.Errorf("%s launched %v, want %s running %s", tc.column, l, tc.pod, tc.script)
 			}
 		})
 	}
 }
 
-func TestBusyCheckRunsBeforeTheLaunch(t *testing.T) {
+func TestBusyProbeRunsInTheStagePodBeforeTheLaunch(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.labels["t2"] = []string{"repo:testrepo"}
 	f.signed("/", move("t2", "to-do"))
-	calls := f.pods.calls
-	if len(calls) != 2 || !strings.Contains(calls[0].line(), "flock -n /tmp/nightly.lock true") {
-		t.Fatalf("calls = %v, want the flock check then the launch", calls)
+	calls := f.pods.all()
+	if len(calls) != 2 {
+		t.Fatalf("calls = %v, want the busy probe then the launch", calls)
 	}
-	if calls[0].pod != "claude-session-0" {
-		t.Errorf("busy check asked %s, want the pod the stage runs in", calls[0].pod)
+	want := []string{"sh", "-c", busyProbe}
+	if calls[0].pod != "claude-session-0" || strings.Join(calls[0].argv, "\x00") != strings.Join(want, "\x00") {
+		t.Errorf("first call = %v, want %q in claude-session-0", calls[0], want)
+	}
+	// The probe locks the file the scripts lock, override included.
+	if !strings.Contains(busyProbe, `"${NIGHTLY_LOCK:-/tmp/nightly.lock}"`) {
+		t.Errorf("busyProbe = %q does not use the scripts' lock path expression", busyProbe)
 	}
 }
 
@@ -148,18 +154,21 @@ func TestBusyPodIsNotGivenASecondRun(t *testing.T) {
 	f.kaneo.labels["t2"] = []string{"repo:testrepo"}
 	f.signed("/", move("t2", "to-do"))
 	f.wantNoLaunch()
-	f.wantLog("msg=busy task=t2 repo=testrepo pod=claude-session-0")
+	f.wantLog("msg=busy task=t2 repo=TestOwner/testrepo pod=claude-session-0")
 }
 
-// A failed check must not read as idle: starting a second agent on a
+// A failed probe must not read as idle: starting a second agent on a
 // live clone is the one thing the guard exists to prevent.
-func TestUnansweredBusyCheckReadsAsBusy(t *testing.T) {
+func TestUnansweredBusyProbeReadsAsBusy(t *testing.T) {
 	f := newFixture(t)
 	f.pods.fail = errors.New("the API server is away")
 	f.kaneo.labels["t2"] = []string{"repo:testrepo"}
 	f.signed("/", move("t2", "to-do"))
 	f.wantNoLaunch()
 	f.wantLog("cannot tell whether pod is busy; assuming it is")
+	// The busy line follows, and its hint still holds: moving the card
+	// again is the retry after an outage too, since no webhook re-fires.
+	f.wantLog("msg=busy task=t2")
 }
 
 func TestPodThatDoesNotWorkTheRepoIsSkipped(t *testing.T) {
@@ -167,46 +176,68 @@ func TestPodThatDoesNotWorkTheRepoIsSkipped(t *testing.T) {
 	f.kaneo.labels["t2"] = []string{"repo:elsewhere"}
 	f.signed("/", move("t2", "to-do"))
 	f.wantNoLaunch()
-	f.wantLog(`reason="claude-session-0 does not work elsewhere"`)
+	f.wantLog(`reason="claude-session-0 does not work TestOwner/elsewhere"`)
 }
 
-func TestRepoListMatchesFullNamesAndShortLabels(t *testing.T) {
-	d := &dispatcher{owner: "TestOwner", repos: map[string]string{
+// A short label resolves under the owner once, in repoForTask, so the
+// busy list and the GitHub lookup see the same owner/name.
+func TestRepoLabelResolvesToOwnerAndName(t *testing.T) {
+	f := newFixture(t)
+	f.kaneo.labels["short"] = []string{"repo:alpha"}
+	f.kaneo.labels["full"] = []string{"repo:Other/gamma"}
+	for id, want := range map[string]string{"short": "TestOwner/alpha", "full": "Other/gamma"} {
+		got, err := f.d.repoForTask(context.Background(), id)
+		if err != nil || got != want {
+			t.Errorf("repoForTask(%s) = %q, %v; want %q", id, got, err, want)
+		}
+	}
+}
+
+func TestRepoListIsMatchedByFullName(t *testing.T) {
+	d := &dispatcher{repos: map[string]string{
 		"0": "TestOwner/alpha,TestOwner/beta\nOther/gamma",
+		"1": "",
 	}}
 	for repo, want := range map[string]bool{
-		"alpha":           true,
+		"TestOwner/alpha": true,
 		"TestOwner/beta":  true,
 		"Other/gamma":     true,
-		"gamma":           false, // short names resolve under the owner
 		"TestOwner/delta": false,
 	} {
 		if got := d.podWorksRepo("claude-session-0", repo); got != want {
 			t.Errorf("podWorksRepo(pod0, %q) = %v, want %v", repo, got, want)
 		}
 	}
-	// No list for this ordinal is not a reason to refuse.
-	if !d.podWorksRepo("claude-session-1", "anything") {
+	// No list for this ordinal is not a reason to refuse; an empty one is.
+	if !d.podWorksRepo("claude-session-2", "TestOwner/alpha") {
 		t.Error("a pod with no list refused work")
+	}
+	if d.podWorksRepo("claude-session-1", "TestOwner/alpha") {
+		t.Error("a pod with an empty list accepted work")
 	}
 }
 
 func TestReposComeFromTheEnvironmentByOrdinal(t *testing.T) {
-	got := reposFromEnv([]string{"PATH=/bin", "REPOS_POD0=a/b", "REPOS_POD2=c/d, e/f", "REPOS=ignored"})
-	if got["0"] != "a/b" || got["2"] != "c/d, e/f" || len(got) != 2 {
-		t.Errorf("reposFromEnv = %v", got)
+	environ := []string{"PATH=/bin", "REPOS_POD0=a/b", "REPOS_POD2=c/d, e/f", "REPOS=ignored", "NOEQUALS"}
+	got := reposFromEnv(environ)
+	want := map[string]string{"0": "a/b", "2": "c/d, e/f"}
+	if !maps.Equal(got, want) {
+		t.Errorf("reposFromEnv(%q) = %v, want %v", environ, got, want)
 	}
 }
 
 func TestCardWithoutExactlyOneRepoLabelIsSkipped(t *testing.T) {
-	for name, labels := range map[string][]string{
-		"no labels":       {},
-		"no repo label":   {"bug"},
-		"two repo labels": {"repo:a", "repo:b"},
+	for _, tc := range []struct {
+		name   string
+		labels []string
+	}{
+		{"NoLabels", nil},
+		{"NoRepoLabel", []string{"bug"}},
+		{"TwoRepoLabels", []string{"repo:a", "repo:b"}},
 	} {
-		t.Run(name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
-			f.kaneo.labels["t2"] = labels
+			f.kaneo.labels["t2"] = tc.labels
 			f.signed("/", move("t2", "to-do"))
 			f.wantNoLaunch()
 			f.wantLog(`reason="card needs exactly one repo: label"`)
@@ -220,7 +251,8 @@ func TestLabelLookupFailureIsAnErrorNotNoLabel(t *testing.T) {
 	f.kaneo.labelErr = http.StatusBadGateway
 	f.signed("/", move("t2", "to-do"))
 	f.wantNoLaunch()
-	f.wantLog(`msg="cannot read labels" task=t2 column=to-do err="/api/label/task/t2 -> 502"`)
+	f.wantLog(`msg="cannot read labels" task=t2 column=to-do`)
+	f.wantLog("502")
 	if strings.Contains(f.log.String(), "exactly one repo") {
 		t.Error("a failed lookup was reported as a missing label")
 	}

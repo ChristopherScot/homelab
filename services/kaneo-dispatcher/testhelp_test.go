@@ -33,10 +33,8 @@ type execCall struct {
 	argv []string
 }
 
-func (c execCall) line() string { return strings.Join(c.argv, " ") }
-
-// recorder stands in for the session pods. The flock check answers
-// idle unless busy is set; everything else exits 0.
+// recorder stands in for the session pods. The busy probe answers idle
+// unless busy is set; everything else exits 0.
 type recorder struct {
 	mu    sync.Mutex
 	calls []execCall
@@ -51,20 +49,25 @@ func (r *recorder) exec(_ context.Context, pod string, argv []string) (int, erro
 	if r.fail != nil {
 		return 0, r.fail
 	}
-	if r.busy && strings.Contains(strings.Join(argv, " "), "flock -n") {
+	if r.busy && argv[len(argv)-1] == busyProbe {
 		return 1, nil
 	}
 	return 0, nil
 }
 
-// launches are the exec calls that started a stage, as opposed to the
-// busy checks before them.
-func (r *recorder) launches() []execCall {
+// all is every exec call so far.
+func (r *recorder) all() []execCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	return append([]execCall(nil), r.calls...)
+}
+
+// launches are the exec calls that started a stage, as opposed to the
+// busy probes before them.
+func (r *recorder) launches() []execCall {
 	var out []execCall
-	for _, c := range r.calls {
-		if strings.Contains(c.line(), "setsid") {
+	for _, c := range r.all() {
+		if len(c.argv) > 2 && c.argv[2] == launchLine {
 			out = append(out, c)
 		}
 	}
@@ -93,12 +96,9 @@ func (s *stubKaneo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		id := strings.TrimPrefix(r.URL.Path, "/api/label/task/")
-		var out []map[string]string
+		out := []map[string]string{}
 		for _, name := range s.labels[id] {
 			out = append(out, map[string]string{"name": name})
-		}
-		if out == nil {
-			out = []map[string]string{}
 		}
 		_ = json.NewEncoder(w).Encode(out)
 	case strings.HasPrefix(r.URL.Path, "/api/activity/"):
@@ -113,6 +113,12 @@ func (s *stubKaneo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *stubKaneo) calls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.hits
 }
 
 // stubGitHub answers the pull-request and commit-status lookups the
@@ -144,7 +150,7 @@ func (s *stubGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(r.URL.Path, "/status"):
 		parts := strings.Split(r.URL.Path, "/")
 		sha := parts[len(parts)-2]
-		var statuses []map[string]string
+		statuses := []map[string]string{}
 		for _, c := range s.statuses[sha] {
 			statuses = append(statuses, map[string]string{"context": c})
 		}
@@ -152,6 +158,12 @@ func (s *stubGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (s *stubGitHub) calls() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.hits...)
 }
 
 // lockedBuffer collects log lines from the request goroutine and the
@@ -218,18 +230,24 @@ func newFixture(t *testing.T) *fixture {
 	return f
 }
 
-// post delivers a body to the dispatcher and waits for whatever work it
-// started after answering.
+// serve runs one request through the real route table and waits for
+// whatever work it started after answering.
+func (f *fixture) serve(req *http.Request) *httptest.ResponseRecorder {
+	f.t.Helper()
+	w := httptest.NewRecorder()
+	f.d.mux().ServeHTTP(w, req)
+	f.d.inflight.Wait()
+	return w
+}
+
+// post delivers a body, with any headers given as name, value pairs.
 func (f *fixture) post(path, body string, headers ...string) *httptest.ResponseRecorder {
 	f.t.Helper()
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Add(headers[i], headers[i+1])
 	}
-	w := httptest.NewRecorder()
-	f.d.mux().ServeHTTP(w, req)
-	f.d.inflight.Wait()
-	return w
+	return f.serve(req)
 }
 
 // signed posts a body with a valid signature.

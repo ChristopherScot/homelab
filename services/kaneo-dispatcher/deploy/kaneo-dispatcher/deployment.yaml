@@ -51,6 +51,8 @@ spec:
               value: "claude-pods"
             - name: KANEO_API_URL
               value: "http://kaneo.kaneo.svc.cluster.local:5173"
+            - name: KANEO_PROJECT_ID
+              value: "pwz0urubiajnchag39tcbjkl"
           envFrom:
             - secretRef:
                 name: kaneo-dispatcher-secrets

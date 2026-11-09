@@ -31,10 +31,10 @@ import (
 // log. Returned rather than only logged, so the summary says what
 // happened in one place.
 type sweep struct {
-	Checked      int
-	Redispatched []string
-	Skipped      []string
-	Errors       []string
+	checked      int
+	redispatched []string
+	skipped      []string
+	errors       []string
 }
 
 // board is the part of /api/task/tasks/{project} the sweep reads.
@@ -47,51 +47,37 @@ type board struct {
 	} `json:"data"`
 }
 
-type card struct {
-	ID        string `json:"id"`
-	TicketID  string `json:"ticketId"`
-	CreatedAt string `json:"createdAt"`
-}
-
 // reconcile is one sweep over the columns that dispatch. The error is a
 // board that could not be read at all; everything per card lands in the
-// sweep's Errors instead, so one bad card does not hide the rest.
+// sweep's errors instead, so one bad card does not hide the rest.
 func (d *dispatcher) reconcile(ctx context.Context, dryRun bool) (sweep, error) {
 	var out sweep
 	var b board
 	if err := d.kaneo(ctx, "/task/tasks/"+url.PathEscape(d.project), &b); err != nil {
 		return out, err
 	}
-	now := time.Now()
 	for _, col := range b.Data.Columns {
-		st, ok := routes[col.Slug]
-		if !ok {
+		if _, ok := routes[col.Slug]; !ok {
 			continue // inert column: nothing was ever owed here
 		}
 		for _, c := range col.Tasks {
-			out.Checked++
-			d.reconcileCard(ctx, col.Slug, st, c, now, dryRun, &out)
+			out.checked++
+			d.reconcileCard(ctx, col.Slug, c, dryRun, &out)
 		}
 	}
 	return out, nil
 }
 
-// reconcileCard decides one card: leave it, report why it was skipped, or
-// start the work it is owed.
-func (d *dispatcher) reconcileCard(ctx context.Context, column string, st stage, c card, now time.Time, dryRun bool, out *sweep) {
-	// The raw task id drives branch lookups; the ticket id is only ever
-	// for the log line, where a human reads it. The branch is built from
-	// whatever the dispatcher hands the stage, and that is the task id:
-	// PR #98 is on fix/d3kgbstyuu5mmygqtorppai2, not fix/CLA-13.
-	// Searching for the ticket id's branch would find nothing, conclude
-	// the work never happened, and re-dispatch a finished card.
-	label := cardLabel(c.TicketID, c.ID)
-	fail := func(err error) { out.Errors = append(out.Errors, label+": "+err.Error()) }
+// reconcileCard decides one card in a dispatching column: leave it, say
+// why it was skipped, or start the work it is owed. Every uncertain
+// answer lands in errors: an error here must not read as "nothing to do",
+// because a card nobody can see is the failure this sweep exists for.
+func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, dryRun bool, out *sweep) {
+	st := routes[column]
+	fail := func(err error) { out.errors = append(out.errors, c.label()+": "+err.Error()) }
 
 	since, err := d.enteredColumnAt(ctx, c.ID)
 	if err != nil {
-		// An error here must not read as "nothing to do". Report it and
-		// leave the card alone.
 		fail(err)
 		return
 	}
@@ -99,22 +85,26 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, st stage,
 		// No recorded move means the card was created straight into this
 		// column and never moved, so no webhook ever fired for it. Treat
 		// creation as the clock.
-		since, _ = time.Parse(time.RFC3339Nano, c.CreatedAt)
+		if c.CreatedAt == "" {
+			out.skipped = append(out.skipped, c.label()+": no move and no createdAt, so no clock")
+			return
+		}
+		if since, err = time.Parse(time.RFC3339Nano, c.CreatedAt); err != nil {
+			fail(fmt.Errorf("createdAt %q: %w", c.CreatedAt, err))
+			return
+		}
 	}
-	if since.IsZero() || now.Sub(since) < d.stale {
+	age := time.Since(since)
+	if age < d.stale {
 		return // still within the window a real run could take
 	}
-	repo, err := d.repoForTask(ctx, c.ID)
+	repo, skip, err := d.repoFor(ctx, c.ID, st.pod)
 	if err != nil {
 		fail(err)
 		return
 	}
-	if repo == "" {
-		out.Skipped = append(out.Skipped, label+": no single repo: label")
-		return
-	}
-	if !d.podWorksRepo(st.pod, repo) {
-		out.Skipped = append(out.Skipped, fmt.Sprintf("%s: %s does not work %s", label, st.pod, repo))
+	if skip != "" {
+		out.skipped = append(out.skipped, c.label()+": "+skip)
 		return
 	}
 	exists, err := d.workExists(ctx, column, repo, c.ID)
@@ -125,17 +115,17 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, st stage,
 	if exists {
 		// The work ran; the card is simply waiting on the next stage, or
 		// on a human. Not ours to restart.
-		out.Skipped = append(out.Skipped, label+": work already exists")
+		out.skipped = append(out.skipped, c.label()+": work already exists")
 		return
 	}
-	age := fmt.Sprintf("%s, %dh", column, int(now.Sub(since).Hours()))
+	line := fmt.Sprintf("%s (%s, %dh)", c.label(), column, int(age.Hours()))
 	if dryRun {
-		out.Redispatched = append(out.Redispatched, fmt.Sprintf("%s (%s) [dry-run]", label, age))
+		out.redispatched = append(out.redispatched, line+" [dry-run]")
 		return
 	}
-	slog.Info("reconcile: stuck card, re-dispatching", "task", label, "column", column, "since", since)
-	d.runStage(ctx, repo, st, c.ID, label)
-	out.Redispatched = append(out.Redispatched, fmt.Sprintf("%s (%s)", label, age))
+	slog.Info("reconcile: stuck card, re-dispatching", "task", c.label(), "column", column, "since", since)
+	d.runStage(ctx, repo, st, c)
+	out.redispatched = append(out.redispatched, line)
 }
 
 // enteredColumnAt is when the card last changed column, or zero when it
@@ -154,7 +144,11 @@ func (d *dispatcher) enteredColumnAt(ctx context.Context, id string) (time.Time,
 		if a.Type != "status_changed" {
 			continue
 		}
-		if t, err := time.Parse(time.RFC3339Nano, a.CreatedAt); err == nil && t.After(latest) {
+		t, err := time.Parse(time.RFC3339Nano, a.CreatedAt)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("activity of %s: createdAt %q: %w", id, a.CreatedAt, err)
+		}
+		if t.After(latest) {
 			latest = t
 		}
 	}
@@ -168,9 +162,9 @@ func (d *dispatcher) enteredColumnAt(ctx context.Context, id string) (time.Time,
 // anyway. If the answer is yes, the card is mid-flight and must be left
 // alone - re-dispatching would run a second agent beside a live one.
 func (d *dispatcher) workExists(ctx context.Context, column, repo, id string) (bool, error) {
-	name := repo[strings.LastIndex(repo, "/")+1:]
+	owner, name, _ := strings.Cut(repo, "/") // always owner/name, see repoForTask
 	q := url.Values{
-		"head":     {d.owner + ":" + d.branchPrefix + id},
+		"head":     {owner + ":" + d.branchPrefix + id},
 		"state":    {"all"},
 		"per_page": {"1"},
 	}
@@ -180,7 +174,7 @@ func (d *dispatcher) workExists(ctx context.Context, column, repo, id string) (b
 			SHA string `json:"sha"`
 		} `json:"head"`
 	}
-	if err := d.github(ctx, fmt.Sprintf("/repos/%s/%s/pulls?%s", d.owner, name, q.Encode()), &prs); err != nil {
+	if err := d.github(ctx, fmt.Sprintf("/repos/%s/%s/pulls?%s", owner, name, q.Encode()), &prs); err != nil {
 		return false, err
 	}
 	if len(prs) == 0 {
@@ -208,7 +202,7 @@ func (d *dispatcher) workExists(ctx context.Context, column, repo, id string) (b
 				Context string `json:"context"`
 			} `json:"statuses"`
 		}
-		if err := d.github(ctx, fmt.Sprintf("/repos/%s/%s/commits/%s/status", d.owner, name, pr.Head.SHA), &st); err != nil {
+		if err := d.github(ctx, fmt.Sprintf("/repos/%s/%s/commits/%s/status", owner, name, pr.Head.SHA), &st); err != nil {
 			return false, err
 		}
 		for _, s := range st.Statuses {
@@ -241,15 +235,15 @@ func (d *dispatcher) runSweep(ctx context.Context, dryRun bool) {
 		slog.Error("reconcile failed", "err", err)
 		return
 	}
-	slog.Info("reconcile done", "checked", s.Checked,
-		"redispatched", len(s.Redispatched), "skipped", len(s.Skipped), "errors", len(s.Errors))
-	for _, line := range s.Redispatched {
+	slog.Info("reconcile done", "checked", s.checked,
+		"redispatched", len(s.redispatched), "skipped", len(s.skipped), "errors", len(s.errors))
+	for _, line := range s.redispatched {
 		slog.Info("reconcile redispatch", "card", line)
 	}
-	for _, line := range s.Skipped {
+	for _, line := range s.skipped {
 		slog.Info("reconcile skip", "card", line)
 	}
-	for _, line := range s.Errors {
+	for _, line := range s.errors {
 		slog.Error("reconcile error", "card", line)
 	}
 }

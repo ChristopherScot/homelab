@@ -30,6 +30,11 @@ env:
     # *.home.chrisscotmartin.com. The webhook payload carries no labels,
     # so the repo: label is read back from this API.
     KANEO_API_URL: http://kaneo.kaneo.svc.cluster.local:5173
+    # The claude-pods board, which is what the reconcile sweep reads.
+    # Named here so this file says which board the deployment serves;
+    # the owner and branch prefix are the same conventions the nightly
+    # scripts default to, and are left to the code's matching defaults.
+    KANEO_PROJECT_ID: pwz0urubiajnchag39tcbjkl
 
 # Everything the dispatcher reads from Vault, in one place. The policy
 # `homelabctl vault` derives from this grants exactly these three paths
@@ -72,6 +77,8 @@ patches:
     # 8080 is what Kaneo's webhook integration and the reconcile CronJob
     # were configured against before this service existed. Dropping it
     # would break the webhook with nothing in this repo to say why.
+    # Both targetPorts restate `port:` above and must track it; the tool
+    # offers no named container port to reference instead.
     Service: |
         spec:
           ports:

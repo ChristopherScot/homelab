@@ -18,7 +18,9 @@ import (
 // newPodExec execs through the API server directly, with the pod's own
 // ServiceAccount. The image is distroless and ships no kubectl, and the
 // only thing a kubectl would have added is a process to parse the exit
-// code of.
+// code of. It also needs nothing but `create` on pods/exec: kubectl reads
+// the pod first to pick a container, this names the pod and lets the
+// API server pick.
 func newPodExec(ns string) (execer, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
@@ -43,15 +45,13 @@ func newPodExec(ns string) (execer, error) {
 		// Output is discarded, as kubectl's was: what matters is the exit
 		// code, and a launched run redirects its own output anyway.
 		err = ex.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: io.Discard, Stderr: io.Discard})
-		var exit utilexec.CodeExitError
+		// The interface rather than the concrete CodeExitError, so this
+		// keeps matching whether the library returns it by value or by
+		// pointer. A non-zero exit is an answer, not a failure to ask.
+		var exit utilexec.ExitError
 		if errors.As(err, &exit) {
-			// The command ran and exited non-zero. That is an answer, not
-			// a failure to ask.
-			return exit.Code, nil
+			return exit.ExitStatus(), nil
 		}
-		if err != nil {
-			return 0, err
-		}
-		return 0, nil
+		return 0, err
 	}, nil
 }
