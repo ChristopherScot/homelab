@@ -40,10 +40,22 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 900
+      # 120s, not 900. The request returns 202 as soon as the sweep is
+      # accepted — the sweep itself runs in the dispatcher and logs there,
+      # so this job only ever waits on one HTTP round trip. The old 900
+      # meant a pod that could not start took fifteen minutes to report
+      # DeadlineExceeded with no logs, which says nothing about what was
+      # wrong. A short deadline turns that into a prompt failure.
+      activeDeadlineSeconds: 120
       template:
         spec:
           restartPolicy: Never
+          # The image is private. Without this the pod cannot pull it and
+          # sits in ImagePullBackOff until activeDeadlineSeconds kills the
+          # job — which is how the first two hourly sweeps "failed" with
+          # DeadlineExceeded and no logs, while the sweep itself was fine.
+          imagePullSecrets:
+            - name: ghcr-pull
           volumes:
             - name: kaneo-webhook
               secret:
