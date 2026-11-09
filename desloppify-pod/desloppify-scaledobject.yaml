@@ -22,14 +22,16 @@
 #   kubectl annotate scaledobject desloppify -n claude-pods \
 #     autoscaling.keda.sh/paused-replicas-
 #
-# Requires KEDA core (app-of-apps/apps/keda.yaml). Until its CRDs exist
-# the desloppify-pod app shows a sync error for this file; Argo's retry
-# clears it once the keda app lands.
+# Requires KEDA core (app-of-apps/apps/keda.yaml); the sync-options
+# annotation keeps this file from blocking the rest of the app's sync
+# before KEDA's CRDs exist.
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
   name: desloppify
   namespace: claude-pods
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
