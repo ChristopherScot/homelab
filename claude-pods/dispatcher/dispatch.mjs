@@ -264,6 +264,12 @@ function workExists(column, repo, task) {
     "--json", "number,state,headRefOid",
   ]) ?? [];
   const pr = prs[0];
+  // A merged pull request ends the card's story whatever column it is
+  // sitting in. CLA-13 was merged by hand while in In Review and carries
+  // no nightly/integration status, so the in-review check below would
+  // have called it unfinished and re-dispatched the test stage against
+  // work that is already on main.
+  if (pr?.state === "MERGED") return true;
   switch (column) {
     // The author's job is to open a pull request. One exists -> it ran.
     case "to-do":
@@ -297,8 +303,14 @@ async function reconcile(dryRun) {
     const route = ROUTES[col.slug];
     if (!route) continue; // inert column: nothing was ever owed here
     for (const task of col.tasks ?? []) {
+      // The raw task id drives branch lookups; ticketId is only ever for
+      // the log line, where a human reads it. The branch is built from
+      // whatever the dispatcher hands the stage, and that is task.id —
+      // PR #98 is on fix/d3kgbstyuu5mmygqtorppai2, not fix/CLA-13.
+      // Searching for the ticketId branch would find nothing, conclude
+      // the work never happened, and re-dispatch a finished card.
       const id = task.id;
-      const label = task.ticketId ?? id;
+      const label = task.ticketId ?? task.id;
       out.checked++;
       try {
         const at = await enteredColumnAt(id);
@@ -318,7 +330,7 @@ async function reconcile(dryRun) {
           out.skipped.push(`${label}: ${route[0]} does not work ${repo}`);
           continue;
         }
-        if (workExists(col.slug, repo, label)) {
+        if (workExists(col.slug, repo, id)) {
           // The work ran; the card is simply waiting on the next stage,
           // or on a human. Not ours to restart.
           out.skipped.push(`${label}: work already exists`);
@@ -330,7 +342,8 @@ async function reconcile(dryRun) {
           continue;
         }
         log(`RECONCILE ${label} stuck in ${col.slug} for ${age}h; re-dispatching`);
-        runStage(repo, route[0], route[1], label);
+        // id, not label: this is what becomes the branch name.
+        runStage(repo, route[0], route[1], id);
         out.redispatched.push(`${label} (${col.slug}, ${age}h)`);
       } catch (err) {
         // An error here must not read as "nothing to do". Report it and

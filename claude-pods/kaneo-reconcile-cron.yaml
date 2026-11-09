@@ -20,6 +20,11 @@ metadata:
   name: kaneo-reconcile
   namespace: claude-pods
 spec:
+  # Suspended until a dry run has been seen on the real board. The sweep
+  # starts agent runs unattended on a clock, so it gets the same treatment
+  # the pipeline itself got: prove it reports the right thing before it is
+  # allowed to act on it.
+  suspend: true
   schedule: "17 * * * *"
   timeZone: America/New_York
   # Forbid, not Replace: a sweep that overruns is talking to GitHub about
