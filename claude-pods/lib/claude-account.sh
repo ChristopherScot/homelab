@@ -98,7 +98,19 @@ preflight_credential() {
     echo "credential: work token missing, using personal" >&2
     return 0
   fi
-  echo "FATAL: no Claude token mounted at $CLAUDE_TOKEN_DIR" >&2
+  # No mounted token is not yet an error. The session pods still
+  # authenticate through ~/.claude/.credentials.json and have no
+  # /run/secrets/claude mount; migrating them needs their own
+  # setup-token credential in Vault and is a separate change. Until
+  # then, saying "no token here" and letting the CLI use the file it
+  # has always used is correct - refusing would stop three nightly jobs
+  # that work today.
+  if [ -s "$HOME/.claude/.credentials.json" ]; then
+    echo "credential: no mounted token; using the CLI's own login" >&2
+    return 0
+  fi
+  echo "FATAL: no Claude token mounted at $CLAUDE_TOKEN_DIR, and no" >&2
+  echo "       ~/.claude/.credentials.json to fall back to." >&2
   echo "       mint one with \`claude setup-token\` and write it to Vault" >&2
   return 1
 }

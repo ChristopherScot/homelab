@@ -75,7 +75,18 @@ run_with_account_failover ok_cmd >/dev/null 2>&1
 [ "$(cat "$attempt_log")" = "personal" ] || { echo "FAIL: no work token should fall straight to personal"; fail=1; }
 
 rm -f "$CLAUDE_TOKEN_DIR/oauth-token-personal"
-preflight_credential >/dev/null 2>&1 && { echo "FAIL: passed with no tokens at all"; fail=1; }
 
-[ "$fail" -eq 0 ] && echo "PASS - work first, personal on a rate limit only, no key leak, both-missing refused"
+# A pod with no mounted token must still pass if the CLI has its own
+# login. The session pods authenticate that way and have no
+# /run/secrets/claude mount; refusing them would stop three nightly jobs
+# that work today, which is what this guards against.
+export HOME="$tmp/home"
+mkdir -p "$HOME/.claude"
+printf '{"claudeAiOauth":{}}' > "$HOME/.claude/.credentials.json"
+preflight_credential >/dev/null 2>&1 || { echo "FAIL: refused a pod that has the CLI's own login"; fail=1; }
+
+rm -f "$HOME/.claude/.credentials.json"
+preflight_credential >/dev/null 2>&1 && { echo "FAIL: passed with no tokens and no CLI login"; fail=1; }
+
+[ "$fail" -eq 0 ] && echo "PASS - work first, personal on a rate limit only, no key leak, CLI login honoured, nothing-at-all refused"
 exit "$fail"
