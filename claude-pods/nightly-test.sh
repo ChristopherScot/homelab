@@ -35,6 +35,17 @@ pick_model
 
 now=$(date +%s)
 
+# The card this run is for, passed by the dispatcher.
+#
+# With it, this tests exactly the pull request that card carries. Without
+# it — a hand-run, or the reconciler's sweep — it falls back to scanning
+# every open branch, which is what the nightly cron did.
+#
+# The distinction matters because an event names one card. The first real
+# run moved CLA-13 to in-review, and this stage ignored it and went off to
+# test an unrelated pull request that happened to be open.
+ONLY_TASK="${1:-}"
+
 for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
   if [[ "$repo" != "$OWNER"/* ]]; then
     continue
@@ -47,11 +58,25 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
   for entry in "${PRS[@]}"; do
     read -r pr updated sha <<<"$entry"
 
-    # Don't test a branch pod 0 may still be pushing to.
-    upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
-    if [ "$upd" -gt 0 ] && [ $(( (now - upd) / 60 )) -lt "$QUIET_MINUTES" ]; then
-      echo "SKIP $repo#$pr: updated $(( (now - upd) / 60 ))m ago, still settling"
-      continue
+    # When the dispatcher named a card, test only that card's branch.
+    if [ -n "$ONLY_TASK" ]; then
+      want="$(kaneo_branch_for_task "$ONLY_TASK")"
+      head="$(gh pr view "$pr" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)"
+      [ "$head" = "$want" ] || continue
+    else
+      # Sweeping, so the quiet window still applies: nothing has told us
+      # the author finished, and a branch updated a minute ago may still
+      # be being pushed to.
+      #
+      # It is deliberately NOT applied above. The author moving the card
+      # to In Review is the signal that it stopped, and the branch was
+      # necessarily just pushed — so the window would reject every
+      # dispatched card for being too fresh, which is exactly backwards.
+      upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
+      if [ "$upd" -gt 0 ] && [ $(( (now - upd) / 60 )) -lt "$QUIET_MINUTES" ]; then
+        echo "SKIP $repo#$pr: updated $(( (now - upd) / 60 ))m ago, still settling"
+        continue
+      fi
     fi
 
     name="$(basename "$repo")"

@@ -33,6 +33,10 @@ pick_model
 
 now=$(date +%s)
 
+# The card this run is for; see nightly-test.sh for the reasoning. Empty
+# means sweep everything, which is what a hand-run or the reconciler does.
+ONLY_TASK="${1:-}"
+
 for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
   if [[ "$repo" != "$OWNER"/* ]]; then
     continue
@@ -45,12 +49,22 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
   for entry in "${PRS[@]}"; do
     read -r pr updated sha <<<"$entry"
 
-    # Don't judge a branch that is still moving: if pod 0 overran, the diff
-    # under review may not be the diff that ends up on the branch.
-    upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
-    if [ "$upd" -gt 0 ] && [ $(( (now - upd) / 60 )) -lt "$QUIET_MINUTES" ]; then
-      echo "SKIP $repo#$pr: updated $(( (now - upd) / 60 ))m ago, still settling"
-      continue
+    # When the dispatcher named a card, judge only that card's branch.
+    if [ -n "$ONLY_TASK" ]; then
+      want="$(kaneo_branch_for_task "$ONLY_TASK")"
+      head="$(gh pr view "$pr" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)"
+      [ "$head" = "$want" ] || continue
+    else
+      # Don't judge a branch that is still moving: if pod 0 overran, the
+      # diff under review may not be the diff that ends up on the branch.
+      # Only meaningful when sweeping — a dispatched card was just moved
+      # to Mergeable by the stage before it, which is the signal that it
+      # settled.
+      upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
+      if [ "$upd" -gt 0 ] && [ $(( (now - upd) / 60 )) -lt "$QUIET_MINUTES" ]; then
+        echo "SKIP $repo#$pr: updated $(( (now - upd) / 60 ))m ago, still settling"
+        continue
+      fi
     fi
 
     # Pod 2's integration testing gates the merge. Its tests are manual and

@@ -25,6 +25,8 @@ const NS = process.env.DISPATCH_NS ?? "claude-pods";
 // Same default and same env var as nightly-common.sh, so a short repo: label
 // resolves to the same full name here as it does in the scripts.
 const OWNER = process.env.NIGHTLY_OWNER ?? "ChristopherScot";
+const BRANCH_PREFIX = process.env.KANEO_BRANCH_PREFIX ?? "fix/";
+const PROJECT = process.env.KANEO_PROJECT_ID ?? "pwz0urubiajnchag39tcbjkl";
 const API_URL =
   process.env.KANEO_API_URL ?? "http://kaneo.kaneo.svc.cluster.local:5173";
 const SECRET_FILE =
@@ -121,7 +123,13 @@ function runStage(repo, pod, script, task) {
     [
       "exec", "-n", NS, pod, "--",
       "sh", "-c",
-      `setsid nohup ${script} >/dev/null 2>&1 < /dev/null &`,
+      // The task is passed to the stage. Without it the stage falls back
+      // to scanning every open PR in every repo it owns, which is what a
+      // nightly cron wanted and an event does not: the webhook names one
+      // card, and that card is the work. The first real run moved CLA-13
+      // to in-review and the test stage went off and tested an unrelated
+      // PR instead.
+      `setsid nohup ${script} ${task} >/dev/null 2>&1 < /dev/null &`,
     ],
     { stdio: "ignore" },
   );
@@ -192,7 +200,184 @@ async function repoForTask(taskId) {
   return names.length === 1 ? names[0] : null;
 }
 
+
+// --- reconcile ---------------------------------------------------------
+//
+// Event dispatch has no retry. If a webhook fires and the work cannot
+// start — the cluster API is down, the dispatcher is mid-restart, the pod
+// is not ready — nothing ever picks it up again, and the card is left
+// looking exactly like one nobody has touched.
+//
+// That is not hypothetical: CLA-11 was moved to To Do on 3 Nov while two
+// nodes were down, the exec failed, and it sat there for five days.
+//
+// Nothing records "this was dispatched". The busy set is in memory and
+// dies with the pod, and a dispatch log would be a second source of truth
+// that disagrees with reality — and would have died that night too. So
+// this compares the column against the world instead, using only state
+// that survives a restart: when the card entered its column, and whether
+// the work that column implies actually exists on GitHub.
+
+const STALE_MS = Number(process.env.RECONCILE_STALE_MS ?? 4 * 60 * 60 * 1000);
+
+async function kaneo(path) {
+  const key = readFileSync(
+    process.env.DISPATCH_API_KEY_FILE ?? "/run/secrets/kaneo/api-key",
+    "utf8",
+  ).trim();
+  const res = await fetch(`${API_URL}/api${path}`, {
+    headers: { Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return res.json();
+}
+
+// When the card last changed column. The task object's updatedAt is null
+// in this Kaneo build, so the activity feed is the only record of it.
+async function enteredColumnAt(taskId) {
+  const acts = await kaneo(`/activity/${encodeURIComponent(taskId)}`);
+  const moves = (Array.isArray(acts) ? acts : [])
+    .filter((a) => a?.type === "status_changed" && a?.createdAt)
+    .map((a) => Date.parse(a.createdAt))
+    .filter((n) => Number.isFinite(n));
+  return moves.length ? Math.max(...moves) : null;
+}
+
+// Has the work this column implies already happened?
+//
+// Asked of GitHub, not of Kaneo: a branch and a commit status survive
+// everything this dispatcher does, and they are what the next stage reads
+// anyway. If the answer is yes, the card is mid-flight and must be left
+// alone — re-dispatching would run a second agent beside a live one.
+// GH_TOKEN comes from the mounted secret rather than `gh auth login`:
+// there is no interactive session in a pod, and the first dry run failed
+// on exactly that — "To get started with GitHub CLI, please run: gh auth
+// login" — for every card it checked.
+function ghEnv() {
+  let token = "";
+  try {
+    token = readFileSync("/run/secrets/git/token", "utf8").trim();
+  } catch {
+    // Left empty on purpose. ghJson throws on a failed call and the
+    // sweep reports it per card, which is the right shape: a missing
+    // token must read as "could not check", never as "no work exists".
+  }
+  return token ? { ...process.env, GH_TOKEN: token } : process.env;
+}
+
+function ghJson(args) {
+  const r = spawnSync("gh", args, { encoding: "utf8", timeout: 30_000, env: ghEnv() });
+  if (r.status !== 0) throw new Error(`gh ${args[0]}: ${(r.stderr || "").trim()}`);
+  return r.stdout.trim() ? JSON.parse(r.stdout) : null;
+}
+
+function workExists(column, repo, task) {
+  const branch = `${BRANCH_PREFIX}${task}`;
+  const prs = ghJson([
+    "pr", "list", "--repo", `${OWNER}/${repo.replace(/^.*\//, "")}`,
+    "--head", branch, "--state", "all",
+    "--json", "number,state,headRefOid",
+  ]) ?? [];
+  const pr = prs[0];
+  // A merged pull request ends the card's story whatever column it is
+  // sitting in. CLA-13 was merged by hand while in In Review and carries
+  // no nightly/integration status, so the in-review check below would
+  // have called it unfinished and re-dispatched the test stage against
+  // work that is already on main.
+  if (pr?.state === "MERGED") return true;
+  switch (column) {
+    // The author's job is to open a pull request. One exists -> it ran.
+    case "to-do":
+      return Boolean(pr);
+    // The test pod's job is to post nightly/integration at the head.
+    case "in-review": {
+      if (!pr) return false;
+      const st = ghJson([
+        "api", `repos/${OWNER}/${repo.replace(/^.*\//, "")}/commits/${pr.headRefOid}/status`,
+        "--jq", '[.statuses[] | select(.context == "nightly/integration")] | length',
+      ]);
+      return Number(st) > 0;
+    }
+    // The merge pod's job is to merge it.
+    case "mergeable":
+      return Boolean(pr) && pr.state === "MERGED";
+    default:
+      return true;
+  }
+}
+
+// One sweep. Returns a summary rather than logging only, so the CronJob's
+// own output says what happened.
+async function reconcile(dryRun) {
+  const board = await kaneo(`/task/tasks/${PROJECT}`);
+  const columns = board?.data?.columns ?? [];
+  const now = Date.now();
+  const out = { checked: 0, redispatched: [], skipped: [], errors: [] };
+
+  for (const col of columns) {
+    const route = ROUTES[col.slug];
+    if (!route) continue; // inert column: nothing was ever owed here
+    for (const task of col.tasks ?? []) {
+      // The raw task id drives branch lookups; ticketId is only ever for
+      // the log line, where a human reads it. The branch is built from
+      // whatever the dispatcher hands the stage, and that is task.id —
+      // PR #98 is on fix/d3kgbstyuu5mmygqtorppai2, not fix/CLA-13.
+      // Searching for the ticketId branch would find nothing, conclude
+      // the work never happened, and re-dispatch a finished card.
+      const id = task.id;
+      const label = task.ticketId ?? task.id;
+      out.checked++;
+      try {
+        const at = await enteredColumnAt(id);
+        // No recorded move means the card was created straight into this
+        // column and never moved, so no webhook ever fired for it. Treat
+        // creation as the clock.
+        const since = at ?? Date.parse(task.createdAt ?? "") ?? null;
+        if (!since || now - since < STALE_MS) {
+          continue; // still within the window a real run could take
+        }
+        const repo = await repoForTask(id);
+        if (!repo) {
+          out.skipped.push(`${label}: no single repo: label`);
+          continue;
+        }
+        if (!podWorksRepo(route[0], repo)) {
+          out.skipped.push(`${label}: ${route[0]} does not work ${repo}`);
+          continue;
+        }
+        if (workExists(col.slug, repo, id)) {
+          // The work ran; the card is simply waiting on the next stage,
+          // or on a human. Not ours to restart.
+          out.skipped.push(`${label}: work already exists`);
+          continue;
+        }
+        const age = Math.round((now - since) / 3600_000);
+        if (dryRun) {
+          out.redispatched.push(`${label} (${col.slug}, ${age}h) [dry-run]`);
+          continue;
+        }
+        log(`RECONCILE ${label} stuck in ${col.slug} for ${age}h; re-dispatching`);
+        // id, not label: this is what becomes the branch name.
+        runStage(repo, route[0], route[1], id);
+        out.redispatched.push(`${label} (${col.slug}, ${age}h)`);
+      } catch (err) {
+        // An error here must not read as "nothing to do". Report it and
+        // leave the card alone.
+        out.errors.push(`${label}: ${err.message}`);
+      }
+    }
+  }
+  return out;
+}
+
 createServer((req, res) => {
+  // Reconcile is a POST so it cannot be triggered by a stray GET, and it
+  // is behind the same HMAC as the webhook — it starts real work.
+  if (req.method === "GET" && req.url?.startsWith("/reconcile")) {
+    res.writeHead(405).end("POST with a signature");
+    return;
+  }
   if (req.method === "GET" && req.url === "/healthz") {
     res.writeHead(200).end("ok");
     return;
@@ -232,6 +417,24 @@ createServer((req, res) => {
       res.writeHead(401).end();
       return;
     }
+    // /reconcile is the sweep, not a webhook. Same signature check, since
+    // it starts the same work.
+    if (req.url?.startsWith("/reconcile")) {
+      const dryRun = req.url.includes("dry");
+      reconcile(dryRun)
+        .then((r) => {
+          log(
+            `RECONCILE done checked=${r.checked} redispatched=${r.redispatched.length} skipped=${r.skipped.length} errors=${r.errors.length}`,
+          );
+          for (const line of r.redispatched) log(`  redispatch ${line}`);
+          for (const line of r.skipped) log(`  skip       ${line}`);
+          for (const line of r.errors) log(`  ERROR      ${line}`);
+        })
+        .catch((e) => log(`RECONCILE failed: ${e.message}`));
+      res.writeHead(202).end();
+      return;
+    }
+
     // Answer before doing the work: Kaneo records delivery health, and a
     // response that waits on a pod run would read as a failed delivery.
     res.writeHead(202).end();
