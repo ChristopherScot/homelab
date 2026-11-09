@@ -4,8 +4,14 @@ namespace: codex-pods
 resources:
   - secrets.yaml
   - statefulset.yaml
+  - daily-cronjob.yaml
 configMapGenerator:
   - name: codex-pod-config
     files:
       - entrypoint.sh
       - config.toml
+      - daily-dependabot.sh
+      - dependabot.mjs
+      - dependabot-prompt.txt
+      - repair.schema.json
+      - review.schema.json
