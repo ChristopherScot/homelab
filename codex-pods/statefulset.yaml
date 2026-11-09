@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codex-session
+  namespace: codex-pods
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codex-session
+  namespace: codex-pods
+spec:
+  clusterIP: None
+  selector:
+    app: codex-session
+  # No listener or inbound remote API: access is through the existing cluster.
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: codex-session
+  namespace: codex-pods
+spec:
+  serviceName: codex-session
+  replicas: 1
+  selector:
+    matchLabels:
+      app: codex-session
+  template:
+    metadata:
+      labels:
+        app: codex-session
+    spec:
+      serviceAccountName: codex-session
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: codex-ghcr-pull
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        fsGroup: 1000
+      # Install the pinned CLI without a new image pipeline or CI job.
+      # The existing Claude image supplies git/gh, Node, Go, and shell tools.
+      initContainers:
+        - name: install-codex
+          image: node:22-trixie-slim
+          command: [npm, install, --prefix, /opt/codex, --no-audit, --no-fund, "@openai/codex@0.167.0"]
+          env:
+            - name: NPM_CONFIG_CACHE
+              value: /tmp/npm-cache
+          volumeMounts:
+            - name: tools
+              mountPath: /opt/codex
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+      containers:
+        - name: codex
+          image: ghcr.io/christopherscot/claude-pod:latest
+          imagePullPolicy: Always
+          command: [bash, /etc/codex-pod/entrypoint.sh]
+          workingDir: /workspace
+          env:
+            - name: HOME
+              value: /home/node
+            - name: CODEX_HOME
+              value: /home/node/.codex
+            - name: PATH
+              value: /opt/codex/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/node/go/bin
+            - name: GIT_AUTHOR_NAME
+              value: Chris (codex-pod)
+            - name: GIT_COMMITTER_NAME
+              value: Chris (codex-pod)
+            - name: GIT_AUTHOR_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: codex-git
+                  key: email
+            - name: GIT_COMMITTER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: codex-git
+                  key: email
+          startupProbe:
+            exec:
+              command: [test, -f, /tmp/codex-ready]
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            exec:
+              command: [test, -f, /tmp/codex-ready]
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+          volumeMounts:
+            - name: home
+              mountPath: /home/node
+            - name: workspace
+              mountPath: /workspace
+            - name: tools
+              mountPath: /opt/codex
+              readOnly: true
+            - name: config
+              mountPath: /etc/codex-pod
+              readOnly: true
+            - name: auth-seed
+              mountPath: /run/secrets/codex
+              readOnly: true
+            - name: git-creds
+              mountPath: /run/secrets/git
+              readOnly: true
+      volumes:
+        - name: tools
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: codex-pod-config
+        - name: auth-seed
+          secret:
+            secretName: codex-auth-seed
+        - name: git-creds
+          secret:
+            secretName: codex-git
+  volumeClaimTemplates:
+    - metadata:
+        name: home
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-single-ssd
+        resources:
+          requests:
+            storage: 5Gi
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-hdd-single
+        resources:
+          requests:
+            storage: 10Gi
