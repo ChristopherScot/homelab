@@ -48,6 +48,12 @@ jobs:
       - name: CronJob manifest
         run: desloppify-pod/test-cronjob.sh
 
+      - name: Credential scope
+        run: desloppify-pod/test-secret-scope.sh
+
+      - name: Account failover
+        run: claude-pods/tests/test-account-failover.sh
+
       # Feeding the hook stdin by hand tests its parsing but not its
       # wiring, and a hook git never invokes passes that test. This one
       # pushes for real against a local remote and asserts main did not

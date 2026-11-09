@@ -78,14 +78,15 @@ GH_TOKEN="$(cat /run/secrets/desloppify/token 2>/dev/null)"
 export GH_TOKEN
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
 
-CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude/oauth-token 2>/dev/null)"
-export CLAUDE_CODE_OAUTH_TOKEN
-if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-  echo "FATAL: no Claude OAuth token"; exit 1
-fi
-# Either of these silently outranks the OAuth token and bills the API
-# account per token.
-unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+# Work account first, personal held in reserve. A rate limit is per
+# account and ends a run in under two seconds with no tool calls and no
+# cost, so retrying on the other one is cheap and the night survives.
+# use_claude_account also clears the API-key variables: either of them
+# silently outranks the OAuth token and bills per token against the API
+# account instead of the subscription.
+# shellcheck source=../claude-pods/lib/claude-account.sh
+. "${CLAUDE_ACCOUNT_LIB:-/usr/local/share/claude-pods/lib/claude-account.sh}"
+preflight_credential || exit 1
 
 # The token must not be able to reach main even if everything else fails.
 # A fine-grained PAT without Administration cannot read protection; an
@@ -189,14 +190,37 @@ if ! command -v desloppify >/dev/null 2>&1; then
 fi
 
 report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
-"${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
-  --repo "$REPO" --dir "$dir" --branch "$branch" \
-  --integration-branch "$INTEGRATION_BRANCH" \
-  --state-dir "$STATE_DIR/webapp" \
-  --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
-  --max-cost "${DESLOP_MAX_COST_USD:-50}" \
-  --timeout "${DESLOP_TIMEOUT_S:-7200}" \
-  > "$report"
+
+# One attempt on the account currently selected, writing its report.
+run_once() {
+  "${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
+    --repo "$REPO" --dir "$dir" --branch "$branch" \
+    --integration-branch "$INTEGRATION_BRANCH" \
+    --state-dir "$STATE_DIR/webapp" \
+    --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
+    --max-cost "${DESLOP_MAX_COST_USD:-50}" \
+    --timeout "${DESLOP_TIMEOUT_S:-7200}" \
+    > "$report"
+}
+
+# The rate-limit signal is read from the report rather than from merged
+# output: run.py already records stop_reason=api_error_429 there, and
+# capturing stderr to look for it would mix it into the JSON this script
+# then parses.
+#
+# One retry, because there are two accounts - a loop would be designing
+# for a third that does not exist.
+run_once
+rc=$?
+if [ "$rc" -ne 0 ] && claude_rate_limited "$(cat "$report" 2>/dev/null)"; then
+  if use_claude_account personal; then
+    echo "work account is rate limited; retrying on personal"
+    run_once
+    rc=$?
+  else
+    echo "work account is rate limited and no personal token is mounted" >&2
+  fi
+fi
 rc=$?
 echo "run rc=$rc report=$report"
 
