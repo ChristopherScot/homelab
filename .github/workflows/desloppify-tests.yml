@@ -48,6 +48,12 @@ jobs:
       - name: CronJob manifest
         run: desloppify-pod/test-cronjob.sh
 
+      # Skips without a checkout of the app repo, which CI does not
+      # have; it is here so a local run before changing the sidecars
+      # catches drift against the compose file.
+      - name: Test sidecars
+        run: desloppify-pod/test-sidecars.sh
+
       - name: Credential scope
         run: desloppify-pod/test-secret-scope.sh
 
