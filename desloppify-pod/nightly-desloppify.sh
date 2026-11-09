@@ -190,14 +190,37 @@ if ! command -v desloppify >/dev/null 2>&1; then
 fi
 
 report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
-"${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
-  --repo "$REPO" --dir "$dir" --branch "$branch" \
-  --integration-branch "$INTEGRATION_BRANCH" \
-  --state-dir "$STATE_DIR/webapp" \
-  --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
-  --max-cost "${DESLOP_MAX_COST_USD:-50}" \
-  --timeout "${DESLOP_TIMEOUT_S:-7200}" \
-  > "$report"
+
+# One attempt on the account currently selected, writing its report.
+run_once() {
+  "${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
+    --repo "$REPO" --dir "$dir" --branch "$branch" \
+    --integration-branch "$INTEGRATION_BRANCH" \
+    --state-dir "$STATE_DIR/webapp" \
+    --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
+    --max-cost "${DESLOP_MAX_COST_USD:-50}" \
+    --timeout "${DESLOP_TIMEOUT_S:-7200}" \
+    > "$report"
+}
+
+# The rate-limit signal is read from the report rather than from merged
+# output: run.py already records stop_reason=api_error_429 there, and
+# capturing stderr to look for it would mix it into the JSON this script
+# then parses.
+#
+# One retry, because there are two accounts - a loop would be designing
+# for a third that does not exist.
+run_once
+rc=$?
+if [ "$rc" -ne 0 ] && claude_rate_limited "$(cat "$report" 2>/dev/null)"; then
+  if use_claude_account personal; then
+    echo "work account is rate limited; retrying on personal"
+    run_once
+    rc=$?
+  else
+    echo "work account is rate limited and no personal token is mounted" >&2
+  fi
+fi
 rc=$?
 echo "run rc=$rc report=$report"
 

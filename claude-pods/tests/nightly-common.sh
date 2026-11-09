@@ -40,7 +40,8 @@ done
 #    updating the scripts is exactly what should fail.
 out=$(bash -uo pipefail -c '
   source "$1" || exit 1
-  for fn in pick_model render_prompt log_to require_gh_token cred_ok preflight_credential; do
+  for fn in pick_model render_prompt log_to require_gh_token preflight_credential \
+            use_claude_account claude_rate_limited run_with_account_failover; do
     declare -F "$fn" >/dev/null || { echo "missing $fn"; exit 1; }
   done
   [ -n "${MODEL:-}" ] && [ -n "${PROMPT_DIR:-}" ] && [ -n "${STATE_DIR:-}" ] && [ -n "${OWNER:-}" ] \
