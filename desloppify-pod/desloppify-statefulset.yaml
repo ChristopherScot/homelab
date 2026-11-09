@@ -24,7 +24,11 @@ metadata:
   namespace: claude-pods
 spec:
   serviceName: desloppify
-  replicas: 1
+  # No replicas: field — the nightly-desloppify CronJob scales this
+  # between 0 (asleep, the steady state) and 1 (during its run); see
+  # desloppify-cronjob.yaml. A value here would make Argo selfHeal
+  # fight that scaling on every sync. Initial creation defaults to 1;
+  # the first nightly cycle puts it to sleep.
   selector:
     matchLabels:
       app: desloppify
