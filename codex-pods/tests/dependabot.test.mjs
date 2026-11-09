@@ -121,7 +121,8 @@ async function runScenario(t, scenario) {
     { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   localGit(['init', '--initial-branch=main']);
   writeFileSync(join(source, 'app.js'), 'export const value = 1;\n');
-  localGit(['add', 'app.js']);
+  writeFileSync(join(source, 'app.test.js'), 'assert.equal(value, 1);\n');
+  localGit(['add', 'app.js', 'app.test.js']);
   localGit(['commit', '-m', 'Initial dependency update']);
   const candidate = { ...pr(), headRefOid: localGit(['rev-parse', 'HEAD']) };
   localGit(['branch', candidate.headRefName]);
@@ -153,12 +154,22 @@ async function runScenario(t, scenario) {
         const isRepair = args.includes(join(configDirForTest(), 'repair.schema.json'));
         if (isRepair) {
           writeFileSync(join(options.stateDir, 'app', 'app.js'), 'export const value = 2;\n');
+          if (scenario === 'review-unstaged') {
+            writeFileSync(join(options.stateDir, 'app', 'app.test.js'), 'assert.equal(value, 2);\n');
+          }
           if (scenario === 'workflow') {
             mkdirSync(join(options.stateDir, 'app', '.github', 'workflows'), { recursive: true });
             writeFileSync(join(options.stateDir, 'app', '.github', 'workflows', 'unsafe.yml'), 'disabled: true\n');
           }
         } else if (scenario === 'review-edited') {
           writeFileSync(join(options.stateDir, 'app', 'app.js'), 'export const value = 3;\n');
+        } else if (scenario === 'review-unstaged') {
+          localGit(['restore', '--staged', 'app.test.js'], join(options.stateDir, 'app'));
+        } else if (scenario === 'review-index-only') {
+          const blob = join(options.stateDir, 'unreviewed-content');
+          writeFileSync(blob, 'export const value = 3;\n');
+          const oid = localGit(['hash-object', '-w', blob], join(options.stateDir, 'app'));
+          localGit(['update-index', '--cacheinfo', `100644,${oid},app.js`], join(options.stateDir, 'app'));
         }
         const response = isRepair ? repair : scenario === 'rejected'
           ? { approved: false, findings: ['Incorrect compatibility fix'] } : review;
@@ -188,7 +199,7 @@ test('reviewed fix fast-forwards only the original Dependabot branch', async t =
   assert.equal(pushes.some(c => c.args.some(a => a.startsWith('--force'))), false);
 });
 
-for (const scenario of ['rejected', 'stale', 'review-edited', 'workflow']) {
+for (const scenario of ['rejected', 'stale', 'review-edited', 'review-unstaged', 'review-index-only', 'workflow']) {
   test(`${scenario} repair never updates any remote ref`, async t => {
     const result = await runScenario(t, scenario);
     assert.deepEqual(result.summary.repaired, []);

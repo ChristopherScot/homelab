@@ -30,11 +30,15 @@ if [ ! -d /workspace/homelab/.git ]; then
   git clone https://github.com/ChristopherScot/homelab.git /workspace/homelab
 fi
 
-# A real response, rather than login-status alone, proves subscription auth.
-# Run outside the repo so no repository instructions or tasks are executed.
+# Prove both subscription auth and shell execution inside this container.
+# A chat-only probe previously passed while every real task failed to start
+# Bubblewrap. Run outside the repo; no repository instructions/tasks are used.
 timeout --kill-after=15s 180s codex exec --cd /tmp --skip-git-repo-check \
-  --ephemeral --sandbox read-only --output-last-message "$CODEX_HOME/startup-check.txt" \
-  'Reply with exactly CODEX_POD_OK. Do not use tools or access any files.'
+  --ephemeral --sandbox danger-full-access -c 'approval_policy="never"' --json \
+  --output-last-message "$CODEX_HOME/startup-check.txt" \
+  'Use the shell tool to run exactly: printf CODEX_POD_TOOL_OK. Only after it succeeds, reply with exactly CODEX_POD_OK. Do not access files or run any other command.' \
+  | tee "$CODEX_HOME/startup-check.jsonl"
+jq -se -f /etc/codex-pod/startup-check.jq "$CODEX_HOME/startup-check.jsonl" >/dev/null
 grep -qx 'CODEX_POD_OK' "$CODEX_HOME/startup-check.txt"
 touch /tmp/codex-ready
 echo 'Codex ready: ChatGPT login verified; repository cloned; waiting for instructions.'
