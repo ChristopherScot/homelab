@@ -69,12 +69,13 @@ func (d *dispatcher) reconcile(ctx context.Context, dryRun bool) (sweep, error) 
 }
 
 // reconcileCard decides one card in a dispatching column: leave it, say
-// why it was skipped, or start the work it is owed. Every uncertain
-// answer lands in errors: an error here must not read as "nothing to do",
-// because a card nobody can see is the failure this sweep exists for.
+// why it was skipped, or start the work it is owed. Anything the sweep
+// could not find out lands in errors, never in silence: an error here
+// must not read as "nothing to do", because a card nobody can see is the
+// failure this sweep exists for.
 func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, dryRun bool, out *sweep) {
 	st := routes[column]
-	fail := func(err error) { out.errors = append(out.errors, c.label()+": "+err.Error()) }
+	fail := func(err error) { out.errors = append(out.errors, c.name()+": "+err.Error()) }
 
 	since, err := d.enteredColumnAt(ctx, c.ID)
 	if err != nil {
@@ -86,10 +87,11 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, d
 		// column and never moved, so no webhook ever fired for it. Treat
 		// creation as the clock.
 		if c.CreatedAt == "" {
-			out.skipped = append(out.skipped, c.label()+": no move and no createdAt, so no clock")
+			fail(fmt.Errorf("no recorded move and no createdAt, so nothing dates it"))
 			return
 		}
-		if since, err = time.Parse(time.RFC3339Nano, c.CreatedAt); err != nil {
+		since, err = time.Parse(time.RFC3339Nano, c.CreatedAt)
+		if err != nil {
 			fail(fmt.Errorf("createdAt %q: %w", c.CreatedAt, err))
 			return
 		}
@@ -104,7 +106,7 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, d
 		return
 	}
 	if skip != "" {
-		out.skipped = append(out.skipped, c.label()+": "+skip)
+		out.skipped = append(out.skipped, c.name()+": "+skip)
 		return
 	}
 	exists, err := d.workExists(ctx, column, repo, c.ID)
@@ -115,15 +117,15 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, d
 	if exists {
 		// The work ran; the card is simply waiting on the next stage, or
 		// on a human. Not ours to restart.
-		out.skipped = append(out.skipped, c.label()+": work already exists")
+		out.skipped = append(out.skipped, c.name()+": work already exists")
 		return
 	}
-	line := fmt.Sprintf("%s (%s, %dh)", c.label(), column, int(age.Hours()))
+	line := fmt.Sprintf("%s (%s, %dh)", c.name(), column, int(age.Hours()))
 	if dryRun {
 		out.redispatched = append(out.redispatched, line+" [dry-run]")
 		return
 	}
-	slog.Info("reconcile: stuck card, re-dispatching", "task", c.label(), "column", column, "since", since)
+	slog.Info("reconcile: stuck card, re-dispatching", "task", c.name(), "column", column, "since", since)
 	d.runStage(ctx, repo, st, c)
 	out.redispatched = append(out.redispatched, line)
 }
@@ -197,15 +199,15 @@ func (d *dispatcher) workExists(ctx context.Context, column, repo, id string) (b
 		return true, nil
 	case "in-review":
 		// The test pod's job is to post nightly/integration at the head.
-		var st struct {
+		var status struct {
 			Statuses []struct {
 				Context string `json:"context"`
 			} `json:"statuses"`
 		}
-		if err := d.github(ctx, fmt.Sprintf("/repos/%s/%s/commits/%s/status", owner, name, pr.Head.SHA), &st); err != nil {
+		if err := d.github(ctx, fmt.Sprintf("/repos/%s/%s/commits/%s/status", owner, name, pr.Head.SHA), &status); err != nil {
 			return false, err
 		}
-		for _, s := range st.Statuses {
+		for _, s := range status.Statuses {
 			if s.Context == "nightly/integration" {
 				return true, nil
 			}
@@ -215,7 +217,9 @@ func (d *dispatcher) workExists(ctx context.Context, column, repo, id string) (b
 		// The merge pod's job is to merge it, and it is not merged.
 		return false, nil
 	default:
-		return true, nil
+		// A route with no completion check here would be swept as "done"
+		// forever. Loud instead: it lands in the sweep's errors.
+		return false, fmt.Errorf("no work check for column %q; see routes", column)
 	}
 }
 

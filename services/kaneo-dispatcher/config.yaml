@@ -91,9 +91,10 @@ patches:
 
 # The template's rolling update is kept. The hand-written Deployment
 # this replaces used Recreate because an in-memory busy set could not be
-# shared between two replicas; the busy check now asks the pod's own
-# lock file (see podIsBusy), which two overlapping dispatchers read the
-# same way.
+# shared between two replicas. Nothing in this process guards a pod any
+# more: the scripts take a lock in the pod itself (take_pod_lock), so a
+# second dispatcher overlapping the first during a rollout can at worst
+# start a run that exits at once.
 resources:
     cpuRequest: 10m
     memoryRequest: 32Mi

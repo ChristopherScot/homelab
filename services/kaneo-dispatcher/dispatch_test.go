@@ -1,12 +1,13 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"io"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,7 @@ import (
 func TestUnsignedPostIsRefused(t *testing.T) {
 	f := newFixture(t)
 	if w := f.post("/", move("t1", "to-do")); w.Code != http.StatusUnauthorized {
-		t.Errorf("unsigned POST = %d, want 401", w.Code)
+		t.Errorf("unsigned POST / = %d, want 401", w.Code)
 	}
 	f.wantNoLaunch()
 }
@@ -28,7 +29,7 @@ func TestWrongSignatureIsRefused(t *testing.T) {
 		{"Short", "abcd"},
 	} {
 		if w := f.post("/", body, "X-Kaneo-Signature", tc.sig); w.Code != http.StatusUnauthorized {
-			t.Errorf("%s: got %d, want 401", tc.name, w.Code)
+			t.Errorf("POST / with %s signature = %d, want 401", tc.name, w.Code)
 		}
 	}
 	f.wantNoLaunch()
@@ -102,7 +103,7 @@ func TestDispatchingColumnLaunchesTheStageInItsPod(t *testing.T) {
 	// The script and the raw task id arrive as positional arguments, so
 	// neither is spliced into shell text.
 	want := []string{"sh", "-c", launchLine, "/usr/local/bin/nightly-author", "t2"}
-	if strings.Join(l[0].argv, "\x00") != strings.Join(want, "\x00") {
+	if !slices.Equal(l[0].argv, want) {
 		t.Errorf("argv = %q, want %q", l[0].argv, want)
 	}
 	f.wantLog("msg=start task=t2 repo=TestOwner/testrepo pod=claude-session-0 script=nightly-author")
@@ -139,12 +140,24 @@ func TestBusyProbeRunsInTheStagePodBeforeTheLaunch(t *testing.T) {
 		t.Fatalf("calls = %v, want the busy probe then the launch", calls)
 	}
 	want := []string{"sh", "-c", busyProbe}
-	if calls[0].pod != "claude-session-0" || strings.Join(calls[0].argv, "\x00") != strings.Join(want, "\x00") {
+	if calls[0].pod != "claude-session-0" || !slices.Equal(calls[0].argv, want) {
 		t.Errorf("first call = %v, want %q in claude-session-0", calls[0], want)
 	}
-	// The probe locks the file the scripts lock, override included.
-	if !strings.Contains(busyProbe, `"${NIGHTLY_LOCK:-/tmp/nightly.lock}"`) {
-		t.Errorf("busyProbe = %q does not use the scripts' lock path expression", busyProbe)
+}
+
+// The probe must lock the file the scripts lock, override included. Read
+// from the script itself, so a change there fails here.
+func TestBusyProbeLocksWhatTheScriptsLock(t *testing.T) {
+	src, err := os.ReadFile("../../claude-pods/lib/nightly-common.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const lockExpr = `"${NIGHTLY_LOCK:-/tmp/nightly.lock}"`
+	if !strings.Contains(string(src), lockExpr) {
+		t.Fatalf("nightly-common.sh no longer locks %s; busyProbe must change with it", lockExpr)
+	}
+	if !strings.Contains(busyProbe, lockExpr) {
+		t.Errorf("busyProbe = %q does not lock %s", busyProbe, lockExpr)
 	}
 }
 
@@ -180,23 +193,23 @@ func TestPodThatDoesNotWorkTheRepoIsSkipped(t *testing.T) {
 }
 
 // A short label resolves under the owner once, in repoForTask, so the
-// busy list and the GitHub lookup see the same owner/name.
+// pod's list and the GitHub lookup see the same owner/name.
 func TestRepoLabelResolvesToOwnerAndName(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.labels["short"] = []string{"repo:alpha"}
 	f.kaneo.labels["full"] = []string{"repo:Other/gamma"}
 	for id, want := range map[string]string{"short": "TestOwner/alpha", "full": "Other/gamma"} {
-		got, err := f.d.repoForTask(context.Background(), id)
-		if err != nil || got != want {
-			t.Errorf("repoForTask(%s) = %q, %v; want %q", id, got, err, want)
+		got, ok, err := f.d.repoForTask(t.Context(), id)
+		if err != nil || !ok || got != want {
+			t.Errorf("repoForTask(%s) = %q, %v, %v; want %q", id, got, ok, err, want)
 		}
 	}
 }
 
 func TestRepoListIsMatchedByFullName(t *testing.T) {
-	d := &dispatcher{repos: map[string]string{
-		"0": "TestOwner/alpha,TestOwner/beta\nOther/gamma",
-		"1": "",
+	d := &dispatcher{repos: map[string][]string{
+		"0": {"TestOwner/alpha", "TestOwner/beta", "Other/gamma"},
+		"1": {},
 	}}
 	for repo, want := range map[string]bool{
 		"TestOwner/alpha": true,
@@ -218,10 +231,10 @@ func TestRepoListIsMatchedByFullName(t *testing.T) {
 }
 
 func TestReposComeFromTheEnvironmentByOrdinal(t *testing.T) {
-	environ := []string{"PATH=/bin", "REPOS_POD0=a/b", "REPOS_POD2=c/d, e/f", "REPOS=ignored", "NOEQUALS"}
+	environ := []string{"PATH=/bin", "REPOS_POD0=a/b", "REPOS_POD2=c/d, e/f\ng/h", "REPOS=ignored", "NOEQUALS"}
 	got := reposFromEnv(environ)
-	want := map[string]string{"0": "a/b", "2": "c/d, e/f"}
-	if !maps.Equal(got, want) {
+	want := map[string][]string{"0": {"a/b"}, "2": {"c/d", "e/f", "g/h"}}
+	if !maps.EqualFunc(got, want, slices.Equal) {
 		t.Errorf("reposFromEnv(%q) = %v, want %v", environ, got, want)
 	}
 }
@@ -231,9 +244,9 @@ func TestCardWithoutExactlyOneRepoLabelIsSkipped(t *testing.T) {
 		name   string
 		labels []string
 	}{
-		{"NoLabels", nil},
-		{"NoRepoLabel", []string{"bug"}},
-		{"TwoRepoLabels", []string{"repo:a", "repo:b"}},
+		{name: "NoLabels"},
+		{name: "NoRepoLabel", labels: []string{"bug"}},
+		{name: "TwoRepoLabels", labels: []string{"repo:a", "repo:b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)

@@ -24,6 +24,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +38,12 @@ type stage struct {
 }
 
 // routes maps a column slug to its stage. Anything not here is inert.
+//
+// The column set is known in three other places, and a new route has to
+// reach all of them: workExists in reconcile.go says what finished work
+// looks like for the column, the graph in claude-pods/lib/nightly-common.sh
+// says which columns the scripts may move a card to, and the README
+// describes the pipeline.
 var routes = map[string]stage{
 	"to-do":     {"claude-session-0", "/usr/local/bin/nightly-author"},
 	"in-review": {"claude-session-2", "/usr/local/bin/nightly-test"},
@@ -49,7 +56,7 @@ var routes = map[string]stage{
 const (
 	// busyProbe asks whether a stage is already running. The scripts take
 	// a lock themselves (take_pod_lock in nightly-common.sh), so what is
-	// checked is what a run actually holds: flock -n succeeds only if
+	// probed is what a run actually holds: flock -n succeeds only if
 	// nothing holds it, so exit 0 means idle and anything else means busy.
 	// The path expression is the scripts' own, NIGHTLY_LOCK override
 	// included, so the two sides cannot lock different files.
@@ -88,37 +95,44 @@ type dispatcher struct {
 	apiKey       string // Kaneo: reads a card's labels, and the board
 	secret       []byte // the HMAC key Kaneo signs deliveries with
 	ghToken      string
-	repos        map[string]string // pod ordinal -> the repos it works
-	stale        time.Duration     // how long a card may sit before the sweep asks why
+	repos        map[string][]string // pod ordinal -> the owner/name repos it works
+	stale        time.Duration       // how long a card may sit before the sweep asks why
 	exec         execer
 	client       *http.Client
 
 	// inflight counts work started after a 202 was already sent, which
-	// is everything that talks to Kaneo, GitHub or a pod. Tests wait on
-	// it; nothing else does, because a launched run is detached in the
-	// pod and outlives this process anyway.
+	// is everything that talks to Kaneo, GitHub or a pod. main drains it
+	// on shutdown and the tests wait on it; a launched run is detached in
+	// the pod and outlives this process either way.
 	inflight sync.WaitGroup
 }
 
 // fromEnv is the production configuration.
 func fromEnv() (*dispatcher, error) {
-	// Refused at startup rather than at the first delivery: without
-	// either of these the pod is healthy, answers every delivery, and
-	// never runs anything - a 401 to each one without the secret, a
-	// "cannot read labels" for each one without the key. A crash loop is
-	// visible; that is not.
-	secret := os.Getenv("KANEO_WEBHOOK_SECRET")
-	if secret == "" {
-		return nil, fmt.Errorf("KANEO_WEBHOOK_SECRET is not set; every delivery would be refused")
+	// Refused at startup rather than at the first use: without any of
+	// these the pod is healthy, answers every delivery, and never does the
+	// right thing - a 401 to each one without the secret, a "cannot read
+	// labels" for each one without the key, the wrong board for the sweep
+	// without the project. A crash loop is visible; that is not.
+	var missing []string
+	need := func(key string) string {
+		v := os.Getenv(key)
+		if v == "" {
+			missing = append(missing, key)
+		}
+		return v
 	}
-	apiKey := os.Getenv("KANEO_API_KEY")
-	if apiKey == "" {
-		return nil, fmt.Errorf("KANEO_API_KEY is not set; no card's label could be read")
+	secret := need("KANEO_WEBHOOK_SECRET")
+	apiKey := need("KANEO_API_KEY")
+	project := need("KANEO_PROJECT_ID")
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%s not set; see config.yaml", strings.Join(missing, ", "))
 	}
 	stale := 4 * time.Hour
 	if s := os.Getenv("RECONCILE_STALE"); s != "" {
 		var err error
-		if stale, err = time.ParseDuration(s); err != nil {
+		stale, err = time.ParseDuration(s)
+		if err != nil {
 			return nil, fmt.Errorf("RECONCILE_STALE: %w", err)
 		}
 	}
@@ -132,7 +146,7 @@ func fromEnv() (*dispatcher, error) {
 		// as in the scripts.
 		owner:        envOr("NIGHTLY_OWNER", "ChristopherScot"),
 		branchPrefix: envOr("KANEO_BRANCH_PREFIX", "fix/"),
-		project:      envOr("KANEO_PROJECT_ID", "pwz0urubiajnchag39tcbjkl"), // the claude-pods board; config.yaml sets it
+		project:      project,
 		kaneoURL:     envOr("KANEO_API_URL", "http://kaneo.kaneo.svc.cluster.local:5173"),
 		githubURL:    envOr("GITHUB_API_URL", "https://api.github.com"),
 		apiKey:       apiKey,
@@ -154,18 +168,19 @@ func envOr(key, def string) string {
 	return def
 }
 
-// reposFromEnv reads REPOS_POD<n> into a map keyed by <n>. The variables
-// come from the Vault-backed secret, one per session pod; a pod with no
-// entry is not refused anything, see podWorksRepo.
-func reposFromEnv(environ []string) map[string]string {
-	out := map[string]string{}
+// reposFromEnv reads REPOS_POD<n> into lists keyed by <n>. The variables
+// come from the Vault-backed secret, one per session pod, as the same
+// comma or whitespace separated owner/name list the pods themselves read.
+func reposFromEnv(environ []string) map[string][]string {
+	isSep := func(c rune) bool { return c == ',' || unicode.IsSpace(c) }
+	out := map[string][]string{}
 	for _, kv := range environ {
 		k, v, ok := strings.Cut(kv, "=")
 		if !ok {
 			continue
 		}
 		if n, found := strings.CutPrefix(k, "REPOS_POD"); found {
-			out[n] = v
+			out[n] = strings.FieldsFunc(v, isSep)
 		}
 	}
 	return out
@@ -184,8 +199,8 @@ type card struct {
 	CreatedAt string `json:"createdAt"`
 }
 
-// label is what the log calls the card.
-func (c card) label() string {
+// name is what the log calls the card.
+func (c card) name() string {
 	if c.TicketID != "" {
 		return c.TicketID
 	}
@@ -230,22 +245,22 @@ func (d *dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		// Inert columns are logged, not dropped: this is the audit trail
 		// of every card movement, Chris's included.
-		slog.Info("noop", "task", ev.Task.label(), "column", column)
+		slog.Info("noop", "task", ev.Task.name(), "column", column)
 		return
 	}
 	if ev.Task.ID == "" {
-		slog.Warn("skip", "task", ev.Task.label(), "column", column, "reason", "payload names no task id")
+		slog.Warn("skip", "task", ev.Task.name(), "column", column, "reason", "payload names no task id")
 		return
 	}
-	// The 202 has gone, so from here the work is genuinely asynchronous.
-	// Detached from the request's cancellation, which fires when this
-	// handler returns, but not from its values.
+	d.detach(r, func(ctx context.Context) { d.dispatch(ctx, column, st, ev.Task) })
+}
+
+// detach runs work after the response has gone. The context keeps the
+// request's values but not its cancellation, which fires the moment the
+// handler returns - before the work has made its first call.
+func (d *dispatcher) detach(r *http.Request, work func(ctx context.Context)) {
 	ctx := context.WithoutCancel(r.Context())
-	d.inflight.Add(1)
-	go func() {
-		defer d.inflight.Done()
-		d.dispatch(ctx, column, st, ev.Task)
-	}()
+	d.inflight.Go(func() { work(ctx) })
 }
 
 // dispatch runs the stage a column implies for one card, or logs one line
@@ -253,11 +268,11 @@ func (d *dispatcher) webhook(w http.ResponseWriter, r *http.Request) {
 func (d *dispatcher) dispatch(ctx context.Context, column string, st stage, c card) {
 	repo, skip, err := d.repoFor(ctx, c.ID, st.pod)
 	if err != nil {
-		slog.Error("cannot read labels", "task", c.label(), "column", column, "err", err)
+		slog.Error("cannot read labels", "task", c.name(), "column", column, "err", err)
 		return
 	}
 	if skip != "" {
-		slog.Warn("skip", "task", c.label(), "column", column, "reason", skip)
+		slog.Warn("skip", "task", c.name(), "column", column, "reason", skip)
 		return
 	}
 	d.runStage(ctx, repo, st, c)
@@ -271,11 +286,11 @@ func (d *dispatcher) dispatch(ctx context.Context, column string, st stage, c ca
 // label": saying so keeps a Kaneo outage from looking like a board full
 // of unlabelled cards.
 func (d *dispatcher) repoFor(ctx context.Context, id, pod string) (repo, skip string, err error) {
-	repo, err = d.repoForTask(ctx, id)
+	repo, ok, err := d.repoForTask(ctx, id)
 	if err != nil {
 		return "", "", err
 	}
-	if repo == "" {
+	if !ok {
 		return "", "card needs exactly one repo: label", nil
 	}
 	if !d.podWorksRepo(pod, repo) {
@@ -290,33 +305,35 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 		// Dropped rather than queued: the card stays where it is, so
 		// moving it again once the current run finishes is the retry. A
 		// queue here would silently stack up work nobody asked for twice.
-		slog.Warn("busy", "task", c.label(), "repo", repo, "pod", st.pod, "hint", "move the card again later")
+		slog.Warn("busy", "task", c.name(), "repo", repo, "pod", st.pod, "hint", "move the card again later")
 		return
 	}
-	slog.Info("start", "task", c.label(), "repo", repo, "pod", st.pod, "script", path.Base(st.script))
-	// Bounded like the busy check. The shell returns as soon as the run is
+	slog.Info("start", "task", c.name(), "repo", repo, "pod", st.pod, "script", path.Base(st.script))
+	// Bounded like the busy probe. The shell returns as soon as the run is
 	// backgrounded, so a launch that takes this long is a stream that
 	// hung, and cancelling it cannot reach the detached run anyway.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	rc, err := d.exec(ctx, st.pod, []string{"sh", "-c", launchLine, st.script, c.ID})
 	if err != nil {
-		slog.Error("launch failed", "task", c.label(), "repo", repo, "err", err)
+		slog.Error("launch failed", "task", c.name(), "repo", repo, "err", err)
 		return
 	}
 	// "launched", not "finished": the run is detached and outlives this.
 	// The log in the pod and the card are where the outcome lives.
-	slog.Info("launched", "task", c.label(), "repo", repo, "rc", rc)
+	slog.Info("launched", "task", c.name(), "repo", repo, "rc", rc)
 }
 
 // podIsBusy reports whether a stage is already running in this pod, or
-// whether that could not be determined - which counts as busy. Starting
-// a second agent on a live clone is the one thing this guard exists to
-// prevent, so an unanswered question must not read as idle.
+// whether that could not be determined - which counts as busy, because
+// an unanswered question must not start a second agent on a live clone.
 //
-// Asked of the pod, not of this process: the run is detached, so anything
-// remembered here would clear the moment the launch returned, and would
-// not survive a restart either. See busyProbe.
+// Advisory: the probe and the launch are two execs, so two dispatchers
+// can both see idle. The atomic refusal is take_pod_lock in the script
+// itself; this buys the `busy` log line and saves starting a run that
+// would exit at once. Asked of the pod, not of this process: the run is
+// detached, so anything remembered here would clear the moment the
+// launch returned, and would not survive a restart either.
 func (d *dispatcher) podIsBusy(ctx context.Context, pod string) bool {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -347,13 +364,7 @@ func (d *dispatcher) podWorksRepo(pod, repo string) bool {
 	if !ok {
 		return true
 	}
-	isSep := func(c rune) bool { return c == ',' || unicode.IsSpace(c) }
-	for _, r := range strings.FieldsFunc(list, isSep) {
-		if r == repo {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(list, repo)
 }
 
 // repoForTask is the repo a card is for, as owner/name, from its
@@ -361,20 +372,20 @@ func (d *dispatcher) podWorksRepo(pod, repo string) bool {
 // one, the same way the scripts resolve it; this is the one place that
 // happens, so every later comparison and lookup sees the same string.
 //
-// It returns "" when the card does not carry exactly one repo: label, and
-// an error when the lookup itself failed.
-func (d *dispatcher) repoForTask(ctx context.Context, id string) (string, error) {
+// ok is false when the card does not carry exactly one repo: label. An
+// error is a lookup that failed, which is a different thing.
+func (d *dispatcher) repoForTask(ctx context.Context, id string) (repo string, ok bool, err error) {
 	// /api/label/task/{id}, not /api/task/{id}: the task endpoint does not
 	// return labels at all.
 	var labels []struct {
 		Name string `json:"name"`
 	}
 	if err := d.kaneo(ctx, "/label/task/"+url.PathEscape(id), &labels); err != nil {
-		return "", err
+		return "", false, err
 	}
 	var repos []string
 	for _, l := range labels {
-		if r, ok := strings.CutPrefix(l.Name, "repo:"); ok {
+		if r, found := strings.CutPrefix(l.Name, "repo:"); found {
 			if !strings.Contains(r, "/") {
 				r = d.owner + "/" + r
 			}
@@ -382,9 +393,9 @@ func (d *dispatcher) repoForTask(ctx context.Context, id string) (string, error)
 		}
 	}
 	if len(repos) != 1 {
-		return "", nil
+		return "", false, nil
 	}
-	return repos[0], nil
+	return repos[0], true, nil
 }
 
 // kaneo GETs a path under /api and decodes the JSON it returns.
@@ -410,7 +421,8 @@ func getJSON(ctx context.Context, client *http.Client, u, bearer string, out any
 		return err
 	}
 	// Drained so the connection is reusable: the sweep makes several
-	// calls per card against the same two hosts.
+	// calls per card against the same two hosts. Neither error can change
+	// what Decode has already returned by the time this runs.
 	defer func() {
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()

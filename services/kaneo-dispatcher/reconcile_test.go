@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,7 +36,7 @@ func (f *fixture) stale(column string) {
 
 func (f *fixture) reconcile(dry bool) sweep {
 	f.t.Helper()
-	s, err := f.d.reconcile(context.Background(), dry)
+	s, err := f.d.reconcile(f.t.Context(), dry)
 	if err != nil {
 		f.t.Fatalf("reconcile: %v", err)
 	}
@@ -120,22 +119,21 @@ func TestCardWithNoMovesUsesItsCreationTime(t *testing.T) {
 	}
 }
 
-// A card the sweep cannot date must say so, not pass as fresh forever.
-func TestCardWithoutAClockIsReportedNotIgnored(t *testing.T) {
+// A card the sweep cannot date must be reported, not pass as fresh
+// forever.
+func TestCardWithoutAClockIsAnError(t *testing.T) {
 	for _, tc := range []struct {
 		name, createdAt string
-		wantSkipped     int
-		wantErrors      int
 	}{
-		{"NoCreatedAt", "", 1, 0},
-		{"UnparseableCreatedAt", "yesterday-ish", 0, 1},
+		{name: "NoCreatedAt"},
+		{name: "UnparseableCreatedAt", createdAt: "yesterday-ish"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.kaneo.board = boardWith("to-do", "t1", "T-1", tc.createdAt)
 			s := f.reconcile(true)
-			if len(s.skipped) != tc.wantSkipped || len(s.errors) != tc.wantErrors {
-				t.Errorf("sweep = %+v, want %d skipped and %d errors", s, tc.wantSkipped, tc.wantErrors)
+			if len(s.errors) != 1 || len(s.redispatched)+len(s.skipped) != 0 {
+				t.Errorf("sweep = %+v, want exactly one error", s)
 			}
 		})
 	}
@@ -157,9 +155,9 @@ func TestInReviewNeedsTheIntegrationStatus(t *testing.T) {
 		wantSkipped      int
 		wantRedispatched int
 	}{
-		{"NoStatus", nil, 0, 1},
-		{"UnrelatedStatus", []string{"ci/build"}, 0, 1},
-		{"IntegrationStatus", []string{"ci/build", "nightly/integration"}, 1, 0},
+		{name: "NoStatus", wantRedispatched: 1},
+		{name: "UnrelatedStatus", contexts: []string{"ci/build"}, wantRedispatched: 1},
+		{name: "IntegrationStatus", contexts: []string{"ci/build", "nightly/integration"}, wantSkipped: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
@@ -214,6 +212,25 @@ func TestMergeableWithAnUnmergedPullRequestIsRedispatched(t *testing.T) {
 	}
 }
 
+// Every route must say what finished work looks like; a column that has
+// no answer must not be swept as done.
+func TestEveryRouteHasAWorkCheck(t *testing.T) {
+	for column := range routes {
+		t.Run(column, func(t *testing.T) {
+			f := newFixture(t)
+			f.github.prs["TestOwner:fix/t1"] = openPR("abc")
+			if _, err := f.d.workExists(t.Context(), column, "TestOwner/testrepo", "t1"); err != nil {
+				t.Errorf("workExists(%s) = %v", column, err)
+			}
+		})
+	}
+	f := newFixture(t)
+	f.github.prs["TestOwner:fix/t1"] = openPR("abc")
+	if _, err := f.d.workExists(t.Context(), "not-a-route", "TestOwner/testrepo", "t1"); err == nil {
+		t.Error("an unknown column was answered instead of refused")
+	}
+}
+
 // An error must not read as "nothing to do".
 func TestGitHubFailureIsReportedNotTreatedAsNoWork(t *testing.T) {
 	f := newFixture(t)
@@ -232,7 +249,7 @@ func TestOwnerQualifiedLabelIsLookedUpUnderThatOwner(t *testing.T) {
 	f := newFixture(t)
 	f.stale("to-do")
 	f.kaneo.labels["t1"] = []string{"repo:Other/gamma"}
-	f.d.repos = map[string]string{"0": "Other/gamma"}
+	f.d.repos = map[string][]string{"0": {"Other/gamma"}}
 	f.reconcile(true)
 	hits := f.github.calls()
 	if len(hits) != 1 || !strings.HasPrefix(hits[0], "/repos/Other/gamma/pulls?head=Other%3Afix%2Ft1") {
@@ -245,15 +262,16 @@ func TestSkipReasonsReadTheSameAsTheWebhookLogs(t *testing.T) {
 	f.stale("to-do")
 	f.kaneo.labels["t1"] = []string{"repo:elsewhere"}
 	s := f.reconcile(true)
-	if len(s.skipped) != 1 || s.skipped[0] != "T-1: claude-session-0 does not work TestOwner/elsewhere" {
-		t.Errorf("skipped = %v", s.skipped)
+	want := "T-1: claude-session-0 does not work TestOwner/elsewhere"
+	if len(s.skipped) != 1 || s.skipped[0] != want {
+		t.Errorf("skipped = %v, want [%q]", s.skipped, want)
 	}
 }
 
 func TestUnreadableBoardIsAnError(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = `{"error":"nope"}`
-	if _, err := f.d.reconcile(context.Background(), false); err == nil {
+	if _, err := f.d.reconcile(t.Context(), false); err == nil {
 		t.Error("a board that is not a board was swept without error")
 	}
 }
@@ -279,8 +297,7 @@ func TestReconcileEndpoint(t *testing.T) {
 	if w := f.signed("/reconcile?foundry=1", ""); w.Code != http.StatusAccepted {
 		t.Errorf("signed POST = %d, want 202", w.Code)
 	}
-	f.wantLog(`msg="reconcile done"`)
-	f.wantLog("redispatched=1")
+	f.wantLog(`card="T-1 (to-do, 5h)"`)
 	if len(f.pods.launches()) != 1 {
 		t.Error("a real sweep did not launch the stuck card's stage")
 	}

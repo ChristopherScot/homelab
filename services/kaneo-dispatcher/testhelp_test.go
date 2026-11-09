@@ -23,7 +23,7 @@ const testSecret = "testsecret"
 
 func sign(body string) string {
 	mac := hmac.New(sha256.New, []byte(testSecret))
-	mac.Write([]byte(body))
+	_, _ = mac.Write([]byte(body))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -31,6 +31,14 @@ func sign(body string) string {
 type execCall struct {
 	pod  string
 	argv []string
+}
+
+// script is what `sh -c` was given.
+func (c execCall) script() string {
+	if len(c.argv) > 2 {
+		return c.argv[2]
+	}
+	return ""
 }
 
 // recorder stands in for the session pods. The busy probe answers idle
@@ -45,11 +53,12 @@ type recorder struct {
 func (r *recorder) exec(_ context.Context, pod string, argv []string) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.calls = append(r.calls, execCall{pod, argv})
+	c := execCall{pod, argv}
+	r.calls = append(r.calls, c)
 	if r.fail != nil {
 		return 0, r.fail
 	}
-	if r.busy && argv[len(argv)-1] == busyProbe {
+	if r.busy && c.script() == busyProbe {
 		return 1, nil
 	}
 	return 0, nil
@@ -67,14 +76,15 @@ func (r *recorder) all() []execCall {
 func (r *recorder) launches() []execCall {
 	var out []execCall
 	for _, c := range r.all() {
-		if len(c.argv) > 2 && c.argv[2] == launchLine {
+		if c.script() == launchLine {
 			out = append(out, c)
 		}
 	}
 	return out
 }
 
-// stubKaneo answers the three API calls the dispatcher makes.
+// stubKaneo answers the three API calls the dispatcher makes. Empty
+// answers are encoded as [] rather than null, as the real API does.
 type stubKaneo struct {
 	mu       sync.Mutex
 	labels   map[string][]string // task id -> label names
@@ -195,6 +205,9 @@ type fixture struct {
 	log    *lockedBuffer
 }
 
+// newFixture builds one. Tests using it must not call t.Parallel(): the
+// default logger is process-global, and two fixtures at once would read
+// each other's lines.
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
@@ -222,7 +235,7 @@ func newFixture(t *testing.T) *fixture {
 		apiKey:       "testkey",
 		secret:       []byte(testSecret),
 		ghToken:      "ghtoken",
-		repos:        map[string]string{"0": "TestOwner/testrepo, TestOwner/other", "2": "TestOwner/testrepo"},
+		repos:        map[string][]string{"0": {"TestOwner/testrepo", "TestOwner/other"}, "2": {"TestOwner/testrepo"}},
 		stale:        4 * time.Hour,
 		exec:         f.pods.exec,
 		client:       &http.Client{Timeout: 5 * time.Second},

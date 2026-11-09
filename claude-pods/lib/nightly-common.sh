@@ -297,9 +297,11 @@ KANEO_REQUIRED_COLUMNS="backlog to-do in-progress in-review needs-human-review m
 # The branch a card's work lives on.
 #
 # One fact, one place. This convention is the join between a pull request
-# and the card it came from, and it is read by four things: the author
+# and the card it came from, and it is read by five things: the author
 # (creating it), the author prompt (told to use it), kaneo_task_for_pr
-# (parsing it back), and the PR filters in the test and merge pods. It was
+# (parsing it back), the PR filters in the test and merge pods, and the
+# dispatcher's reconcile sweep (services/kaneo-dispatcher, which carries
+# the same default and reads the same variable). It was
 # previously written out at each of those sites, and when the prefix changed
 # from fix/issue-<n> to fix/<task> two of them were missed — so the test and
 # merge pods matched nothing and every card stopped dead in In Review while

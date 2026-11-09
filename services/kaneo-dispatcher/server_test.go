@@ -49,14 +49,16 @@ func TestMetricsAreLabelledByRoute(t *testing.T) {
 	}
 }
 
-// Both credentials are refused at startup rather than at the first
-// delivery; the message names the variable, which is what a crash loop
-// shows and a person then greps for.
-func TestStartupRefusesToRunWithoutItsCredentials(t *testing.T) {
-	for _, missing := range []string{"KANEO_WEBHOOK_SECRET", "KANEO_API_KEY"} {
+// Each of these is refused at startup rather than at first use. The
+// message naming the variable is the contract: it is what a crash loop
+// shows and what a person then greps config.yaml for.
+func TestStartupRefusesToRunWithoutItsSettings(t *testing.T) {
+	required := []string{"KANEO_WEBHOOK_SECRET", "KANEO_API_KEY", "KANEO_PROJECT_ID"}
+	for _, missing := range required {
 		t.Run(missing, func(t *testing.T) {
-			t.Setenv("KANEO_WEBHOOK_SECRET", "s")
-			t.Setenv("KANEO_API_KEY", "k")
+			for _, k := range required {
+				t.Setenv(k, "set")
+			}
 			t.Setenv(missing, "")
 			_, err := fromEnv()
 			if err == nil || !strings.Contains(err.Error(), missing) {

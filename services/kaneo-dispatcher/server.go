@@ -78,12 +78,15 @@ func observe(route string, next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func handler() (http.Handler, error) {
+// handler is what main serves, and drain is what it waits on after the
+// listener is closed: work that was accepted with a 202 and is still
+// talking to Kaneo, GitHub or a pod.
+func handler() (h http.Handler, drain func(), err error) {
 	d, err := fromEnv()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return d.mux(), nil
+	return d.mux(), d.inflight.Wait, nil
 }
 
 // mux is the route table. Separate from handler so a test can build a
@@ -103,17 +106,10 @@ func (d *dispatcher) mux() http.Handler {
 
 	// Reconcile is a POST so it cannot be triggered by a stray GET, and it
 	// is behind the same HMAC as the webhook - it starts real work.
-	//
-	// Both spellings are registered because a bare "/reconcile/" pattern
-	// would answer the exact path with a 301 to the slash form, and a
-	// redirect drops a POST body - and its signature with it.
-	refuse := func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("GET /reconcile", func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "POST with a signature", http.StatusMethodNotAllowed)
-	}
-	mux.HandleFunc("GET /reconcile", refuse)
-	mux.HandleFunc("GET /reconcile/", refuse)
+	})
 	mux.HandleFunc("POST /reconcile", observe("reconcile", d.reconcileHandler))
-	mux.HandleFunc("POST /reconcile/", observe("reconcile", d.reconcileHandler))
 
 	// Every other POST is a delivery, whatever its path: Kaneo is
 	// configured with the Service's root, and this is also what makes any
@@ -131,14 +127,7 @@ func (d *dispatcher) reconcileHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	dryRun := r.URL.Query().Has("dry")
 	w.WriteHeader(http.StatusAccepted)
-	// Detached from the request's cancellation, which fires when this
-	// handler returns - before the sweep has made its first call.
-	ctx := context.WithoutCancel(r.Context())
-	d.inflight.Add(1)
-	go func() {
-		defer d.inflight.Done()
-		d.runSweep(ctx, dryRun)
-	}()
+	d.detach(r, func(ctx context.Context) { d.runSweep(ctx, dryRun) })
 }
 
 // maxBody bounds a delivery. A task.status_changed payload is a few KB;

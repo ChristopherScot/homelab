@@ -16,9 +16,12 @@ name: build kaneo-dispatcher
 on:
   push:
     branches: [main]
-    paths: ['services/kaneo-dispatcher/**', '.github/workflows/kaneo-dispatcher.yaml']
+    # kaneo-dispatcher/argocd.json is the registration the ApplicationSet
+    # reads; a test in the service pins it to the rendered copy, so an
+    # edit to it alone must run the tests too.
+    paths: ['services/kaneo-dispatcher/**', 'kaneo-dispatcher/argocd.json', '.github/workflows/kaneo-dispatcher.yaml']
   pull_request:
-    paths: ['services/kaneo-dispatcher/**']
+    paths: ['services/kaneo-dispatcher/**', 'kaneo-dispatcher/argocd.json']
   workflow_dispatch:
 
 # Two pushes in quick succession otherwise race to publish :latest, and
