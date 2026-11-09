@@ -64,7 +64,15 @@ spec:
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
-  startingDeadlineSeconds: 3600
+  # 15 minutes, not the forgiving hour the other nightly crons get: the
+  # ScaledObject's window end must satisfy
+  #   end >= schedule + startingDeadlineSeconds + activeDeadlineSeconds
+  # (03:00 + 900 + 11400 = 06:25 <= 06:30), because activeDeadlineSeconds
+  # counts from job creation - a later start would still be running when
+  # the window closes and be killed half-done, the exact state
+  # backoffLimit: 0 exists to avoid. A night that can't start by 03:15
+  # is skipped instead.
+  startingDeadlineSeconds: 900
   jobTemplate:
     spec:
       # One attempt. A desloppify session that failed halfway has already
@@ -72,10 +80,11 @@ spec:
       # starting again from the top would duplicate that work rather than
       # resume it.
       backoffLimit: 0
-      # 3h for the run itself (the historical budget) plus 10 minutes
-      # for the wait-ready initContainer when the 02:55 wake-up is still
-      # pulling images. The ScaledObject's window end is scheduled after
-      # 03:00 + this deadline.
+      # 3h for the run itself (the historical budget) plus 10 minutes —
+      # wait-ready's --timeout below, the same fact in seconds — for when
+      # the 02:55 wake-up is still pulling images. The ScaledObject's
+      # window end is derived from this; see the invariant on
+      # startingDeadlineSeconds above.
       activeDeadlineSeconds: 11400
       template:
         spec:

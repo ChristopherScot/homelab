@@ -7,10 +7,12 @@
 #   02:55  wake, five minutes before the 03:00 trigger, so the image pull
 #          and sidecars are usually ready before the exec's own
 #          rollout-status wait even starts.
-#   06:30  03:00 + the job's activeDeadlineSeconds (11400s = 06:10) with
-#          slack. Window end is also what ends a run the deadline killed,
-#          so the pod never stays awake all day after a bad night.
-# Move these if the schedule or the deadline moves.
+#   06:30  >= 03:00 + startingDeadlineSeconds (900) + activeDeadlineSeconds
+#          (11400) = 06:25 — the latest a legitimately-started run can
+#          live, since the active deadline counts from job creation, not
+#          from 03:00. Window end is also what ends a run the deadline
+#          killed, so the pod never stays awake all day after a bad night.
+# Move these together: all three inputs live on the CronJob.
 #
 # Manual daytime use: KEDA reverts a bare `kubectl scale` within its
 # polling interval. To hold the pod awake, pause autoscaling instead:
