@@ -121,7 +121,13 @@ function runStage(repo, pod, script, task) {
     [
       "exec", "-n", NS, pod, "--",
       "sh", "-c",
-      `setsid nohup ${script} >/dev/null 2>&1 < /dev/null &`,
+      // The task is passed to the stage. Without it the stage falls back
+      // to scanning every open PR in every repo it owns, which is what a
+      // nightly cron wanted and an event does not: the webhook names one
+      // card, and that card is the work. The first real run moved CLA-13
+      // to in-review and the test stage went off and tested an unrelated
+      // PR instead.
+      `setsid nohup ${script} ${task} >/dev/null 2>&1 < /dev/null &`,
     ],
     { stdio: "ignore" },
   );

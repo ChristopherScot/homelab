@@ -426,6 +426,12 @@ kaneo_move() {
 kaneo_link_pr() {
   local task="$1" url="$2" title="${3:-pull request}"
   [ -n "$task" ] || return 0
+  # Adding the same link twice is not harmless: the card ends up listing
+  # one pull request several times, and a re-run is exactly when that
+  # happens. Checked rather than assumed, because the CLI has no upsert.
+  if kaneo task link list "$task" --jq ".[].url" 2>/dev/null | grep -qxF "$url"; then
+    return 0
+  fi
   kaneo task link add "$task" "$url" --title "$title" \
     >/dev/null 2>&1 || echo "   kaneo: FAILED to link $url to $task" >&2
 }
