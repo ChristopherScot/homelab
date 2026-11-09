@@ -427,6 +427,28 @@ kaneo_task_repo() {
   esac
 }
 
+# Work pushed for this card that never reached a pull request.
+#
+# A run can stop between its first commit and `gh pr create` — a usage
+# limit, a timeout, a node going away — and then the branch exists on the
+# remote with real work on it while the card looks untouched. Without
+# this the next run checks out main, resets hard, and starts the ticket
+# over, abandoning what was already done.
+#
+# Prints the number of commits the branch is ahead of the default branch,
+# or returns 1 when there is no such branch.
+kaneo_unfinished_branch() {
+  local repo="$1" task="$2" branch ahead
+  branch="$(kaneo_branch_for_task "$task")"
+  git ls-remote --exit-code --heads "https://github.com/$repo" "$branch" >/dev/null 2>&1 || return 1
+  ahead="$(gh api "repos/$repo/compare/HEAD...$branch" --jq .ahead_by 2>/dev/null)"
+  case "$ahead" in
+    ''|*[!0-9]*) return 1 ;;
+    0) return 1 ;;
+    *) printf '%s' "$ahead" ;;
+  esac
+}
+
 # The open pull request already attached to a card, if there is one.
 #
 # This is what tells a fresh ticket from a revision. Both arrive in To Do —
