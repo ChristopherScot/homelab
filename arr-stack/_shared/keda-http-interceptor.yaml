@@ -7,6 +7,11 @@
 # header against HTTPScaledObject.spec.hosts, scales the workload 0 -> 1,
 # holds the request until a pod is ready, then forwards. See
 # raw/shelfmark/scale-to-zero.yaml for the per-app half.
+#
+# The proxy listens on 8080 — a chart-internal fact, like the service
+# name above. An ExternalName Service cannot remap ports, so every
+# Ingress backend pointing here must say 8080, whatever port the app's
+# own Service uses.
 apiVersion: v1
 kind: Service
 metadata:

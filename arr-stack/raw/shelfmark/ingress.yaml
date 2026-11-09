@@ -43,7 +43,8 @@ spec:
             backend:
               service:
                 # KEDA HTTP interceptor (scale-to-zero), not the app's
-                # own Service — see scale-to-zero.yaml.
+                # own Service — see scale-to-zero.yaml. 8080 is the
+                # interceptor's port; shelfmark still serves 8084.
                 name: keda-http-interceptor
                 port:
                   number: 8080
