@@ -182,6 +182,16 @@ your work there, push it, and open ONE pull request:
 The PR body should say what findings you resolved, what the score did, and
 anything you deliberately deferred.
 
+## Tests
+
+Hasura, Postgres and Redis run beside you in this pod on the ports
+`src/tests/.envs/.env.test.local` names, so `yarn test:containers-up` is
+unnecessary - they are already up. Run the suite before you commit.
+
+A refactor verified only by typecheck and lint has not been verified:
+neither catches a behavioural regression, which is most of what a
+refactor can break.
+
 ## Dependencies
 
 If you change `package.json`, run `yarn install` afterwards and commit the

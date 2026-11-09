@@ -59,7 +59,7 @@ spec:
             # report, rather than as an OOMKill that takes the pod with
             # it and leaves no log.
             - name: NODE_OPTIONS
-              value: "--max_old_space_size=7168"
+              value: "--max_old_space_size=6144"
             - name: DESLOP_STATE_DIR
               value: /workspace/.desloppify-state
             - name: DESLOP_WORK_ROOT
@@ -92,9 +92,90 @@ spec:
             # told to cap node's heap below it rather than rely on the
             # repo's own 8GB setting, which leaves nothing for the rest
             # of the process.
+            #
+            # 8Gi rather than 9: the test sidecars below add 1.5Gi of
+            # ceiling, and the nodes have ~11.6Gi allocatable while
+            # running other workloads. The node heap cap is set below
+            # this so an oversized type-check fails in node rather than
+            # as an OOMKill.
             limits:
-              memory: 9Gi
+              memory: 8Gi
+
+        # The vitest suite talks to Hasura, Postgres and Redis. Without
+        # them a run verifies with typecheck and lint only, which is how
+        # a 239-file refactor of the client/server seam shipped with no
+        # test ever executed against it.
+        #
+        # Sidecars rather than Services: containers in a pod share a
+        # network namespace, so these answer on localhost at the ports
+        # src/tests/.envs/.env.test.local already names, and the suite
+        # needs no change. The usual `yarn test:containers-up` is a
+        # no-op here - they are already up.
+        #
+        # Mirrors projects/webapp/src/tests/docker-compose.yml, which
+        # lives in another repo and can change without reference to this
+        # file. test-sidecars.sh compares the two and fails on drift;
+        # fixing it is a hand edit, which is the accepted cost of
+        # keeping the suite on localhost.
+        - name: postgres-test
+          image: postgres:16-alpine
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data-tests/pgdata
+            - name: POSTGRES_USER
+              value: shw
+            - name: POSTGRES_PASSWORD
+              value: shw
+            - name: POSTGRES_DB
+              value: shw
+            - name: TZ
+              value: UTC
+            - name: PGTZ
+              value: UTC
+          args: ["-p", "5430"]
+          volumeMounts:
+            - name: test-pgdata
+              mountPath: /var/lib/postgresql/data-tests
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 512Mi
+
+        - name: redis-tests
+          image: redis:6-alpine
+          args: ["--port", "6377"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 256Mi
+
+        - name: hasura-tests
+          image: hasura/graphql-engine:v2.45.1
+          env:
+            - name: HASURA_GRAPHQL_SERVER_PORT
+              value: "8078"
+            # The compose file reads these from .env.test.local, which
+            # is committed in the app repo. They are test-only values
+            # against a throwaway database in this pod.
+            - name: HASURA_GRAPHQL_DATABASE_URL
+              value: postgres://shw:shw@localhost:5430/shw
+            - name: HASURA_GRAPHQL_ENABLE_CONSOLE
+              value: "false"
+          resources:
+            requests:
+              cpu: 10m
+              memory: 128Mi
+            limits:
+              memory: 768Mi
       volumes:
+        # Throwaway: the suite creates what it needs and nothing here
+        # outlives the pod.
+        - name: test-pgdata
+          emptyDir: {}
         - name: desloppify-git
           secret:
             secretName: desloppify-git
