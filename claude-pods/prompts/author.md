@@ -66,7 +66,24 @@ the card is what a human reads.
    existing code only where it is in the path of this fix.
    Re-run the tests after every round.
 
-9. Push the branch and open a PR with gh pr create. If the repo has a
+9. Push the branch as soon as you have your first commit, and again
+   after each review round — do not wait until the end.
+
+   A run can stop for reasons that have nothing to do with the work: a
+   usage limit, a timeout, a node going away. Commits that exist only in
+   this pod's clone die with it, and the clone is reset to origin at the
+   start of every ticket, so unpushed work is lost even if the pod
+   survives. A pushed branch costs nothing and means a stopped run
+   resumes from where it got to instead of starting over.
+
+     git push -u origin $branch     # first commit
+     git push                        # after each round
+
+   One run reached review round 2 of 3 on a 3,000-line change, hit a
+   usage limit, and left all of it unpushed. Nothing was wrong with the
+   work.
+
+10. Open the PR with gh pr create. If the repo has a
    template at .github/pull_request_template.md, follow its structure.
    The body must link the card so a reviewer can find the reasoning:
      Kaneo: $KANEO_WEB_URL/dashboard/task/$task
@@ -76,5 +93,5 @@ the card is what a human reads.
    Do NOT write "Closes #..." — there is no issue, and the card is moved by
    the pipeline, not by GitHub.
 
-10. Do not merge. Do not touch main. Do not move the card yourself — the
+11. Do not merge. Do not touch main. Do not move the card yourself — the
     scripts move it, and a card moved twice is a card that skips a stage.

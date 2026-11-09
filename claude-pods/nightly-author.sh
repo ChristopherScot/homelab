@@ -108,15 +108,37 @@ for t in "${TICKETS[@]}"; do
   # nothing was attempted.
   kaneo_move "$task" in-progress
   git -C "$dir" fetch --quiet origin 2>/dev/null
-  git -C "$dir" checkout --quiet "$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)" 2>/dev/null
-  git -C "$dir" reset --hard --quiet origin/HEAD 2>/dev/null
+  if [ "$mode" = resume ] || [ "$mode" = rework ]; then
+    # Check out the existing work instead of resetting to main. Resetting
+    # here is what would throw away a resumable branch — the clone is
+    # shared and the reset is how a fresh ticket gets a clean tree, but
+    # for these two modes the branch IS the starting point.
+    branch="$(kaneo_branch_for_task "$task")"
+    git -C "$dir" checkout --quiet -B "$branch" "origin/$branch" 2>/dev/null \
+      || { echo "   SKIP $t: cannot check out $branch"; continue; }
+  else
+    git -C "$dir" checkout --quiet "$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)" 2>/dev/null
+    git -C "$dir" reset --hard --quiet origin/HEAD 2>/dev/null
+  fi
 
   # Fresh ticket or revision? Both arrive in To Do; the card's links are
   # what tells them apart. A card carrying an open PR was sent back by the
   # review panel, so it gets the rework prompt and pushes to the branch
   # that already exists — starting over would throw away the history the
   # panel's objection refers to.
+  # Three states, not two. A card can have a pull request (rework), or
+  # pushed commits with no pull request (resume), or nothing (author).
+  # Resume exists because a run that stops between its first commit and
+  # `gh pr create` leaves real work on the remote while the card looks
+  # untouched — and the checkout below would otherwise abandon it.
   pr_url="$(kaneo_task_pr "$task")" && mode=rework || mode=author
+  if [ "$mode" = author ]; then
+    if resume_ahead="$(kaneo_unfinished_branch "$repo" "$task")"; then
+      mode=resume
+      echo "   $task has $resume_ahead unpushed-to-PR commit(s); resuming rather than starting over"
+      export resume_ahead
+    fi
+  fi
   if [ "$mode" = rework ] && [ "$(kaneo_rework_count "$task")" = "0" ]; then
     # A pull request with no requeue behind it has not been reviewed, so
     # there is no objection for rework.md to read — it would tell the
@@ -154,6 +176,28 @@ for t in "${TICKETS[@]}"; do
     --add-dir "$dir" < "$STATE_DIR/prompt.txt"
 
   rc=$?
+
+  # Belt and braces on the push, the same way the old flow verified the
+  # issue link: the prompt asks for a push after each round, but a prompt
+  # is not a guarantee and the agent may have been cut off before it got
+  # there. Commits that exist only in this clone die with the pod, and the
+  # next ticket resets this checkout to origin — so unpushed work is lost
+  # even when nothing is wrong with it.
+  #
+  # One run reached review round 2 of 3 on a 3,000-line change, hit a
+  # usage limit, and left every commit local.
+  branch="$(kaneo_branch_for_task "$task")"
+  if git -C "$dir" rev-parse --verify --quiet "$branch" >/dev/null 2>&1; then
+    ahead="$(git -C "$dir" rev-list --count "origin/HEAD..$branch" 2>/dev/null || echo 0)"
+    if [ "${ahead:-0}" -gt 0 ]; then
+      if git -C "$dir" push -u origin "$branch" >/dev/null 2>&1; then
+        echo "   pushed $branch ($ahead commit(s)) — work is safe even if this run stopped early"
+      else
+        echo "   FAILED to push $branch; $ahead commit(s) exist only in this pod" >&2
+      fi
+    fi
+  fi
+
   # A timeout leaves the card in In Progress, deliberately. There is no
   # janitor sweeping stuck cards: the column is the signal, and a card
   # sitting in In Progress with no run behind it is visible on the board
