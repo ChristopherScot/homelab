@@ -1,0 +1,28 @@
+# The desloppify pod was the one directory in this repo Argo did not
+# watch, so merging a manifest changed nothing until someone ran
+# kubectl apply by hand. Twice that went unnoticed: the pod ran without
+# its test sidecars for a day, and the reserve Claude token sat in Vault
+# while the live ExternalSecret still asked for one key - in both cases
+# git said the change had landed and the cluster disagreed.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: desloppify-pod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: desloppify-pod
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: claude-pods
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
