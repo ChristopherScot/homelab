@@ -1,0 +1,46 @@
+# KEDA owns codex-session-0's wake/sleep: 1 replica around the daily
+# dependabot window, 0 the rest of the day. Same pattern as
+# desloppify-pod/desloppify-scaledobject.yaml.
+#
+# The window brackets the codex-dependabot CronJob (daily-cronjob.yaml):
+#   05:55  wake, five minutes before the 06:00 trigger. The pod's
+#          install-codex initContainer runs `npm install` on every start,
+#          so a wake needs the npm registry — accepted: the window
+#          pre-warms, nothing waits on the start, and a failed wake fails
+#          the day's job visibly rather than silently.
+#   12:45  >= 06:00 + startingDeadlineSeconds (900) + activeDeadlineSeconds
+#          (22320) = 12:27 — the latest a legitimately-started run can
+#          live, since the active deadline counts from job creation, not
+#          from 06:00. All three inputs live on the CronJob; move them
+#          together.
+#
+# Manual daytime use: KEDA reverts a bare `kubectl scale` within its
+# polling interval. Pause autoscaling instead:
+#   kubectl annotate scaledobject codex-session -n codex-pods \
+#     autoscaling.keda.sh/paused-replicas="1"
+# and remove it to hand control back:
+#   kubectl annotate scaledobject codex-session -n codex-pods \
+#     autoscaling.keda.sh/paused-replicas-
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: codex-session
+  namespace: codex-pods
+  annotations:
+    # A missing KEDA CRD must fail only this resource, not block the
+    # whole app's sync.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: codex-session
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  triggers:
+    - type: cron
+      metadata:
+        timezone: America/New_York
+        start: 55 5 * * *
+        end: 45 12 * * *
+        desiredReplicas: "1"

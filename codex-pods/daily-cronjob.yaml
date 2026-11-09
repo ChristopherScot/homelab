@@ -18,6 +18,17 @@ rules:
     resources: [pods/exec]
     resourceNames: [codex-session-0]
     verbs: [create]
+  # `kubectl rollout status` GETs the StatefulSet (name-scoped below) and
+  # then WATCHes it. RBAC cannot scope list/watch by resourceName, so
+  # those two are namespace-wide; scaling stays KEDA's, so there is no
+  # scale write here.
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    resourceNames: [codex-session]
+    verbs: [get]
+  - apiGroups: [apps]
+    resources: [statefulsets]
+    verbs: [list, watch]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -42,17 +53,43 @@ spec:
   schedule: "0 6 * * *"
   timeZone: America/New_York
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 3600
+  # 15 minutes, not an hour: the ScaledObject's window end must satisfy
+  #   end >= schedule + startingDeadlineSeconds + activeDeadlineSeconds
+  # (06:00 + 900 + 22320 = 12:27 <= 12:45), because the active deadline
+  # counts from job creation - a later-admitted run would still be going
+  # when KEDA closes the window and be killed half-done. A morning that
+  # can't start by 06:15 is skipped instead.
+  startingDeadlineSeconds: 900
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 21720
+      # The run's 6h budget (21720) plus 10 minutes - wait-ready's
+      # --timeout below, the same fact in seconds - for when the 05:55
+      # wake is still npm-installing the CLI. The ScaledObject's window
+      # end is derived from this; see startingDeadlineSeconds above.
+      activeDeadlineSeconds: 22320
       template:
         spec:
           serviceAccountName: codex-daily-runner
           restartPolicy: Never
+          initContainers:
+            # Wait for the pod KEDA woke at 05:55 (codex-scaledobject.yaml)
+            # to be ready before the exec. rollout status watches the
+            # StatefulSet itself, so it doesn't race the controller
+            # creating the pod object. If KEDA never woke it, this times
+            # out and the job fails visibly instead of exec'ing into
+            # nothing.
+            - name: wait-ready
+              image: registry.k8s.io/kubectl:v1.30.14
+              args:
+                - rollout
+                - status
+                - statefulset/codex-session
+                - -n
+                - codex-pods
+                - --timeout=600s
           containers:
             - name: trigger
               image: registry.k8s.io/kubectl:v1.30.14

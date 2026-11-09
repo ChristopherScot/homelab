@@ -5,6 +5,7 @@ resources:
   - secrets.yaml
   - statefulset.yaml
   - daily-cronjob.yaml
+  - codex-scaledobject.yaml
 configMapGenerator:
   - name: codex-pod-config
     files:
