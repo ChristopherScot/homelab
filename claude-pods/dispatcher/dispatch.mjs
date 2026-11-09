@@ -44,24 +44,6 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 // A Kaneo task.status_changed payload is a few KB; 1 MiB is generous.
 const MAX_BODY = 1024 * 1024;
 
-// One run per POD at a time, not per repo.
-//
-// Per-repo was wrong: each stage runs a fixed script in a fixed pod, and
-// that script writes $STATE_DIR/prompt.txt — one fixed path — before
-// feeding it to the agent. Two runs in the same pod race on that file and
-// the second writer wins, so one ticket gets the other's prompt. They also
-// share the clones under /workspace, where nightly-author does
-// `git reset --hard` before each ticket.
-//
-// Pod is the real resource, and it is also the coarser lock, so it covers
-// the repo case for free.
-//
-// In-process only: a dispatcher restart forgets what is in flight. That is
-// why the Deployment is replicas:1 with strategy Recreate — a second
-// replica would have its own empty set and start a run on top of a live
-// one. A lockfile inside the pod would survive restarts and is the better
-// fix if this ever needs more than one replica.
-const busy = new Set();
 
 function verify(rawBody, sigHex) {
   let secret;
@@ -83,25 +65,79 @@ function verify(rawBody, sigHex) {
   return got.length === want.length && timingSafeEqual(got, want);
 }
 
+// Is a stage already running in this pod?
+//
+// Asked of the pod, not of this process. The run is detached so it
+// outlives the exec that started it, and the in-memory set would clear the
+// moment the launch returned — which would let the next card start a second
+// agent beside a live one. The pod's own process table is the only thing
+// that knows, and it survives a dispatcher restart too, which the set never
+// did.
+function podIsBusy(pod) {
+  const r = spawnSync(
+    "kubectl",
+    // A lockfile, not a process scan. The scripts take the lock
+    // themselves (see nightly-common.sh), so what is checked here is what
+    // the run actually holds — a cmdline grep guesses at that from
+    // outside and gets it wrong for a script invoked as `sh <path>`.
+    //
+    // flock -n succeeds only if nothing holds it, so exit 0 here means
+    // IDLE and 1 means busy.
+    ["exec", "-n", NS, pod, "--", "sh", "-c",
+     "flock -n /tmp/nightly.lock true"],
+    { encoding: "utf8", timeout: 20_000 },
+  );
+  // A failed check must not read as idle: starting a second agent on a
+  // live clone is the one thing this guard exists to prevent.
+  if (r.error || r.status === null) {
+    log(`WARN  cannot tell whether ${pod} is busy; assuming it is`);
+    return true;
+  }
+  // flock succeeded -> nobody holds it -> the pod is idle.
+  return r.status !== 0;
+}
+
 function runStage(repo, pod, script, task) {
-  if (busy.has(pod)) {
+  if (podIsBusy(pod)) {
     // Dropped rather than queued: the card stays where it is, so moving it
     // again once the current run finishes is the retry. A queue here would
     // silently stack up work nobody asked for twice.
     log(`BUSY  ${pod} — ${task} (${repo}) not started; move the card again later`);
     return;
   }
-  busy.add(pod);
   log(`START ${task} repo=${repo} pod=${pod} ${script.split("/").pop()}`);
-  const child = spawn("kubectl", ["exec", "-n", NS, pod, "--", script], {
-    stdio: "ignore",
-  });
+  // setsid + nohup, and the exec returns as soon as the run is launched.
+  //
+  // A plain `kubectl exec` ties the run's life to the connection: the API
+  // server, a dispatcher restart, a rollout, or a network blip kills the
+  // agent mid-ticket. An author run takes up to an hour, so that window is
+  // most of the run. The first real dispatch died this way within seconds
+  // of starting.
+  //
+  // Detaching means the exec exits immediately and rc here says only
+  // "the run was launched", not "the run succeeded" — the log in the pod
+  // and the card are where the outcome lives, which is where the rest of
+  // this design already looks for it.
+  const child = spawn(
+    "kubectl",
+    [
+      "exec", "-n", NS, pod, "--",
+      "sh", "-c",
+      // The task is passed to the stage. Without it the stage falls back
+      // to scanning every open PR in every repo it owns, which is what a
+      // nightly cron wanted and an event does not: the webhook names one
+      // card, and that card is the work. The first real run moved CLA-13
+      // to in-review and the test stage went off and tested an unrelated
+      // PR instead.
+      `setsid nohup ${script} ${task} >/dev/null 2>&1 < /dev/null &`,
+    ],
+    { stdio: "ignore" },
+  );
   child.on("exit", (code, signal) => {
-    busy.delete(pod);
-    log(`END   ${task} repo=${repo} rc=${code ?? signal}`);
+    // "launched", not "finished" — the run is detached and outlives this.
+    log(`LAUNCHED ${task} repo=${repo} rc=${code ?? signal}`);
   });
   child.on("error", (err) => {
-    busy.delete(pod);
     log(`ERROR ${task} repo=${repo}: ${err.message}`);
   });
 }

@@ -249,6 +249,26 @@ preflight_credential() {
   return 1
 }
 
+# One stage at a time in this pod.
+#
+# The three stages share a clone per repository and a single fixed
+# $STATE_DIR/prompt.txt, so two runs in one pod race: the second writer
+# wins and a ticket gets the other one's prompt.
+#
+# Taken here rather than tracked by the dispatcher, because the run is
+# detached and outlives the exec that launched it — anything the dispatcher
+# held in memory would be released the moment the launch returned, and
+# would be lost entirely on a restart. The lock lives with the thing it
+# protects. The dispatcher reads it with `flock -n ... true` before
+# launching.
+take_pod_lock() {
+  exec 9>"${NIGHTLY_LOCK:-/tmp/nightly.lock}"
+  if ! flock -n 9; then
+    echo "another nightly stage is already running in this pod; exiting" >&2
+    return 1
+  fi
+}
+
 # --- Kaneo -----------------------------------------------------------------
 # The board at kaneo.home.chrisscotmartin.com IS the work queue. Chris files
 # tickets there, the pods move them through the columns, and a card in
@@ -316,8 +336,19 @@ kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
 # work on should say so rather than appear to run successfully.
 require_kaneo_key() {
   KANEO_API_KEY="$(cat /run/secrets/kaneo/api-key 2>/dev/null)"
-  KANEO_API_URL="${KANEO_API_URL:-https://kaneo.home.chrisscotmartin.com}"
-  export KANEO_API_KEY KANEO_API_URL
+  # In-cluster Service, not the public hostname: cluster DNS does not
+  # resolve *.home.chrisscotmartin.com, so the pods got ENOTFOUND and every
+  # run died at the enrolment check. The dispatcher hit this first and was
+  # pointed at the Service for the same reason; this is the other half.
+  #
+  # It also keeps a run that never leaves the cluster from depending on the
+  # LAN's DNS and the ingress being healthy.
+  KANEO_API_URL="${KANEO_API_URL:-http://kaneo.kaneo.svc.cluster.local:5173}"
+  # Where a HUMAN opens the board. The Service URL above is unroutable
+  # outside the cluster, so a card link built from it in a pull request
+  # body would be dead for everyone who reads it.
+  KANEO_WEB_URL="${KANEO_WEB_URL:-https://kaneo.home.chrisscotmartin.com}"
+  export KANEO_API_KEY KANEO_API_URL KANEO_WEB_URL
   # Both blockers in one pass: preflight exists so a single restart
   # surfaces everything that is wrong, not the first thing.
   local bad=0
@@ -330,10 +361,10 @@ require_kaneo_key() {
 # a project that has them is worked, one that does not is left alone, and
 # nothing anywhere lists which projects are live. The board is the config.
 #
-# Silent when a project has NONE of the six — that is a project deliberately
-# kept out of this flow, and a nightly line about it would be noise that
-# teaches you to skim the log. A project with SOME of them is likely a typo
-# or a renamed column, so that one says what is missing.
+# Silent when a project has NONE of the required columns — that is a project
+# deliberately kept out of this flow, and a nightly line about it would be
+# noise that teaches you to skim the log. A project with SOME of them is
+# likely a typo or a renamed column, so that one says what is missing.
 kaneo_enrolled() {
   local project="${1:-$KANEO_PROJECT}" have missing want total found=0
   have="$(kaneo column list --project "$project" --jq '.[].slug' 2>/dev/null)"
@@ -372,7 +403,12 @@ kaneo_move() {
   # move, and silence here leaves it sitting in Mergeable with nothing
   # anywhere saying why.
   [ -n "$task" ] || { echo "   kaneo: no card for this PR; not moved to $to" >&2; return 0; }
-  if kaneo task move "$task" --status "$to" >/dev/null 2>&1; then
+  # `task status`, not `task move`: move is for sending a card to another
+  # PROJECT and fails with "there is no other project to move it to" on a
+  # single-project workspace. Every column change the pipeline makes went
+  # through that failing path, so the board never advanced past To Do even
+  # when the work ran.
+  if kaneo task status "$task" "$to" >/dev/null 2>&1; then
     echo "   kaneo: $task -> $to"
   else
     echo "   kaneo: FAILED to move $task -> $to" >&2
@@ -390,6 +426,12 @@ kaneo_move() {
 kaneo_link_pr() {
   local task="$1" url="$2" title="${3:-pull request}"
   [ -n "$task" ] || return 0
+  # Adding the same link twice is not harmless: the card ends up listing
+  # one pull request several times, and a re-run is exactly when that
+  # happens. Checked rather than assumed, because the CLI has no upsert.
+  if kaneo task link list "$task" --jq ".[].url" 2>/dev/null | grep -qxF "$url"; then
+    return 0
+  fi
   kaneo task link add "$task" "$url" --title "$title" \
     >/dev/null 2>&1 || echo "   kaneo: FAILED to link $url to $task" >&2
 }
