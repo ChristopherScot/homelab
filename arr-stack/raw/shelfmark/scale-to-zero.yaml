@@ -1,0 +1,42 @@
+# Scale-to-zero for shelfmark via the KEDA HTTP add-on. Both shelfmark
+# Ingresses (main and socket) route to the interceptor — the mechanism is
+# documented on _shared/keda-http-interceptor.yaml — and this object tells
+# it what to wake for this host. The first request after sleep waits out
+# the settings-merge initContainer and app boot inside the interceptor's
+# 300s response-header hold; after that it's a normal proxy.
+#
+# Shelfmark is a good candidate: it only matters while a human is using
+# it, and its background sync (supernote-shelf-sync) runs as its own
+# Deployment. Apps that do their own scheduled work (sonarr, qbittorrent)
+# are not — asleep means the work doesn't happen. Neither is any app a
+# sleeper has a required podAffinity on: shelfmark can only schedule
+# where autocaliweb runs, so waking depends on autocaliweb being awake —
+# don't opt autocaliweb in while that affinity stands.
+#
+# The Deployment has no `replicas:` field; the comment there says why.
+apiVersion: http.keda.sh/v1alpha1
+kind: HTTPScaledObject
+metadata:
+  name: shelfmark
+  namespace: media
+  annotations:
+    # Don't let this file block the whole arr-stack sync on a fresh
+    # bootstrap, before the keda app has installed its CRDs.
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  # Must match the rule hosts in ingress.yaml: the interceptor routes by
+  # Host header, so a renamed host with a stale entry here never wakes.
+  hosts:
+    - shelfmark.home.chrisscotmartin.com
+  scaleTargetRef:
+    name: shelfmark
+    kind: Deployment
+    apiVersion: apps/v1
+    service: shelfmark
+    port: 8084
+  replicas:
+    min: 0
+    max: 1
+  # Seconds without traffic before scaling back to zero. Open Socket.IO
+  # connections count as traffic, so an active search keeps it awake.
+  scaledownPeriod: 900
