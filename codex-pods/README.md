@@ -20,6 +20,14 @@ initial ChatGPT login cache. `codex-auth-seed` syncs it through the existing
 `bootstrap/codex-vault.sh` declares the namespace-scoped Vault Kubernetes role
 and its read-only policy. It is also called by `bootstrap/vault-policies.sh`.
 
+The seed must come from a **separate OAuth login reserved for this pod**, not a
+copy of a laptop login that remains in use. Two machines refreshing the same
+credential bundle can invalidate each other's authentication. Create the pod's
+login with an isolated `CODEX_HOME` and file-based credential storage, complete
+its OAuth authorization, and seed that cache into Vault. Stop using that
+isolated login locally after transferring it to the pod. Browser sign-in or
+human verification may be required for that initial authorization.
+
 The entrypoint copies the seed only if `$CODEX_HOME/auth.json` is absent. Codex
 refreshes that writable file on the home PVC, which must survive restarts.
 The original Vault seed does not track refreshed tokens and must not overwrite
@@ -28,6 +36,7 @@ recreating the pod. A revoked or expired login may require authenticating again;
 this does not bypass ChatGPT plan limits or account policies.
 
 Official documentation: [headless authentication and login caching](https://learn.chatgpt.com/docs/auth?surface=cli).
+See also [one refresh stream per credential bundle](https://learn.chatgpt.com/docs/auth/ci-cd-auth).
 
 ## Use and inspect
 
