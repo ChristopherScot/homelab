@@ -72,6 +72,14 @@ spec:
             - name: repos
               mountPath: /run/secrets/repos
               readOnly: true
+            # The reconcile sweep asks GitHub whether a card's work
+            # already exists — a branch, a commit status, a merge — before
+            # re-dispatching it. Without a token every one of those
+            # lookups fails and the sweep can do nothing but report
+            # errors.
+            - name: git-creds
+              mountPath: /run/secrets/git
+              readOnly: true
           resources:
             requests:
               cpu: 10m
@@ -96,6 +104,10 @@ spec:
         - name: repos
           secret:
             secretName: claude-repos
+            optional: true
+        - name: git-creds
+          secret:
+            secretName: claude-git-creds
             optional: true
 ---
 apiVersion: v1
