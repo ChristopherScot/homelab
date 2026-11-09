@@ -20,6 +20,8 @@ metadata:
   name: shelfmark
   namespace: media
 spec:
+  # Must match the rule hosts in ingress.yaml: the interceptor routes by
+  # Host header, so a renamed host with a stale entry here never wakes.
   hosts:
     - shelfmark.home.chrisscotmartin.com
   scaleTargetRef:
