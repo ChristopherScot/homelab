@@ -250,8 +250,24 @@ async function enteredColumnAt(taskId) {
 // everything this dispatcher does, and they are what the next stage reads
 // anyway. If the answer is yes, the card is mid-flight and must be left
 // alone — re-dispatching would run a second agent beside a live one.
+// GH_TOKEN comes from the mounted secret rather than `gh auth login`:
+// there is no interactive session in a pod, and the first dry run failed
+// on exactly that — "To get started with GitHub CLI, please run: gh auth
+// login" — for every card it checked.
+function ghEnv() {
+  let token = "";
+  try {
+    token = readFileSync("/run/secrets/git/token", "utf8").trim();
+  } catch {
+    // Left empty on purpose. ghJson throws on a failed call and the
+    // sweep reports it per card, which is the right shape: a missing
+    // token must read as "could not check", never as "no work exists".
+  }
+  return token ? { ...process.env, GH_TOKEN: token } : process.env;
+}
+
 function ghJson(args) {
-  const r = spawnSync("gh", args, { encoding: "utf8", timeout: 30_000 });
+  const r = spawnSync("gh", args, { encoding: "utf8", timeout: 30_000, env: ghEnv() });
   if (r.status !== 0) throw new Error(`gh ${args[0]}: ${(r.stderr || "").trim()}`);
   return r.stdout.trim() ? JSON.parse(r.stdout) : null;
 }
