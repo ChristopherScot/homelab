@@ -77,5 +77,36 @@ while read -r port; do
   fi
 done <<< "$ports"
 
-[ "$fail" -eq 0 ] && echo "PASS - sidecars match the compose file (services, images, ports)"
+# They must be native sidecars. An initContainer without
+# restartPolicy: Always runs once and exits, so the pod would wait
+# forever for a database that has already stopped.
+while read -r svc; do
+  [ -n "$svc" ] || continue
+  if ! awk -v s="$svc" '
+    $0 ~ "- name: " s "$" { found=1; next }
+    found && /restartPolicy: Always/ { ok=1; exit }
+    found && /- name: / { exit }
+    END { exit !ok }
+  ' "$spec"; then
+    echo "FAIL: '$svc' is not a native sidecar (no restartPolicy: Always)"
+    fail=1
+  fi
+done <<< "$services"
+
+# And readiness, or "started" only means the process exists - the suite
+# can then run against a Postgres that is still initialising.
+while read -r svc; do
+  [ -n "$svc" ] || continue
+  if ! awk -v s="$svc" '
+    $0 ~ "- name: " s "$" { found=1; next }
+    found && /readinessProbe:/ { ok=1; exit }
+    found && /^        - name: / { exit }
+    END { exit !ok }
+  ' "$spec"; then
+    echo "FAIL: '$svc' has no readinessProbe"
+    fail=1
+  fi
+done <<< "$services"
+
+[ "$fail" -eq 0 ] && echo "PASS - sidecars match the compose file, are native, and gate on readiness"
 exit "$fail"
