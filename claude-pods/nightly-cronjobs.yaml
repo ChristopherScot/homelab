@@ -59,13 +59,21 @@ rules:
     resources: ["pods/exec"]
     verbs: ["create"]
   # The dispatcher wakes the session StatefulSet before an exec and the
-  # session-sleep cron puts it back; `kubectl rollout status` reads it,
-  # `kubectl scale` reads and writes its scale subresource.
+  # session-sleep cron puts it back. get and the scale writes are
+  # name-scoped so nightly-runner cannot scale desloppify, which shares
+  # this namespace; `kubectl rollout status` also WATCHes the object, and
+  # RBAC cannot scope list/watch by resourceName, so those two are
+  # namespace-wide.
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
-    verbs: ["get", "list", "watch"]
+    resourceNames: ["claude-session"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["list", "watch"]
   - apiGroups: ["apps"]
     resources: ["statefulsets/scale"]
+    resourceNames: ["claude-session"]
     verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
@@ -99,6 +107,13 @@ spec:
   # Also: these scripts no longer read GitHub issues at all, so a run on
   # the old schedule against the new scripts would find no work and look
   # like a silent failure.
+  #
+  # Reverting is no longer just unsuspending: the StatefulSet now sleeps
+  # at 0 replicas when idle (session-sleep-cron.yaml) and this job execs
+  # by pod name with no wake — against a sleeping set it fails at exec,
+  # in exactly the dispatcher-is-broken scenario it exists for. To
+  # revert, also suspend session-sleep and scale the set back up:
+  #   kubectl scale sts claude-session -n claude-pods --replicas=3
   suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -150,6 +165,13 @@ spec:
   # Also: these scripts no longer read GitHub issues at all, so a run on
   # the old schedule against the new scripts would find no work and look
   # like a silent failure.
+  #
+  # Reverting is no longer just unsuspending: the StatefulSet now sleeps
+  # at 0 replicas when idle (session-sleep-cron.yaml) and this job execs
+  # by pod name with no wake — against a sleeping set it fails at exec,
+  # in exactly the dispatcher-is-broken scenario it exists for. To
+  # revert, also suspend session-sleep and scale the set back up:
+  #   kubectl scale sts claude-session -n claude-pods --replicas=3
   suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
@@ -201,6 +223,13 @@ spec:
   # Also: these scripts no longer read GitHub issues at all, so a run on
   # the old schedule against the new scripts would find no work and look
   # like a silent failure.
+  #
+  # Reverting is no longer just unsuspending: the StatefulSet now sleeps
+  # at 0 replicas when idle (session-sleep-cron.yaml) and this job execs
+  # by pod name with no wake — against a sleeping set it fails at exec,
+  # in exactly the dispatcher-is-broken scenario it exists for. To
+  # revert, also suspend session-sleep and scale the set back up:
+  #   kubectl scale sts claude-session -n claude-pods --replicas=3
   suspend: true
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3

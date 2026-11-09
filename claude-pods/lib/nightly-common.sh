@@ -212,8 +212,15 @@ revert_pr() {
 # detached and outlives the exec that launched it — anything the dispatcher
 # held in memory would be released the moment the launch returned, and
 # would be lost entirely on a restart. The lock lives with the thing it
-# protects. The dispatcher reads it with `flock -n ... true` before
-# launching.
+# protects.
+#
+# TWO readers probe it with `flock -n <path> true`, both hardcoding
+# /tmp/nightly.lock: the dispatcher before launching a stage
+# (dispatch.mjs podIsBusy) and the session-sleep cron before scaling the
+# pods to 0. The stakes differ: a dispatcher misread starts a duplicate
+# agent; a reaper misread TERMINATES a live run as "idle". So the
+# NIGHTLY_LOCK override below must never be set in a session pod — a run
+# holding a different path is invisible to both readers.
 take_pod_lock() {
   exec 9>"${NIGHTLY_LOCK:-/tmp/nightly.lock}"
   if ! flock -n 9; then

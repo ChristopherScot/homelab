@@ -5,19 +5,40 @@
 # The dispatcher is the wake (ensureAwake in dispatcher/dispatch.mjs:
 # scale to 3, wait ready, exec); this cron is the matching sleep.
 #
-# "In use" is three different things, each checked per existing pod:
+# "In use" is four different things, checked per existing pod:
 #   - a dispatched run holds /tmp/nightly.lock — the same flock the
 #     dispatcher checks before starting one
-#   - interactive work is a tmux session, attached or NOT: a detached
+#   - a tmux session other than `rc` exists, attached or NOT: a detached
 #     tmux with an agent running in it is still work
+#   - the `rc` session was ACTIVE in the last 30 minutes. rc exists on
+#     every pod from boot (entrypoint.sh starts the phone remote-control
+#     loop in it), so its mere presence says nothing — but driving it
+#     from the phone produces output, which advances #{session_activity}.
+#     Judging rc by presence would make this cron a no-op forever;
+#     judging it by staleness protects live phone work and nothing else.
 #   - a pod younger than 15 minutes may belong to a dispatch that has
-#     not taken the lock yet, so a fresh set is left alone
+#     not taken the lock yet (the dispatcher's 600s wake wait plus exec
+#     lag fits inside 900s), so a fresh set is left alone
 # Any one of them keeps the whole set awake: ROUTES pins stages to pods
 # by ordinal and a StatefulSet cannot run ordinal 2 without 0 and 1, so
 # sleep is all-or-nothing by construction.
 #
-# An exec that errors (pod not ready, API blip) reads as "busy", never as
-# "idle" — same fail-closed rule as the dispatcher's podIsBusy.
+# The probe is one exec that must POSITIVELY print "idle" — an exec that
+# errors, a pod that can't be reached, or any surprise prints nothing and
+# reads as busy. Same fail-closed rule as the dispatcher's podIsBusy.
+#
+# The race this does NOT close: a dispatch landing on a long-awake set
+# between this job's last idle probe and its scale-to-0 dies with the
+# pods. Deliberate: that window is seconds wide per half-hour tick, and
+# the kaneo reconcile sweep re-dispatches the card — hourly sweep, cards
+# picked up once ~4h stale (RECONCILE_STALE_MS), so recovery is slow but
+# certain. Don't add a lock here to "fix" it, and don't widen the age
+# guard for it — the guard covers a different window (wake to first
+# flock).
+#
+# A bare `kubectl exec -it ... bash` shell is NOT one of the four
+# signals — interactive work must live in tmux (rclaude does this) or
+# the set will be scaled away under it. statefulset.yaml says the same.
 #
 # Same image as the session pods, same reasoning as kaneo-reconcile: the
 # script needs a shell and kubectl, and that image already carries both.
@@ -64,12 +85,18 @@ spec:
                       echo "$pod is ${age}s old; a wake may be mid-dispatch"
                       exit 0
                     fi
-                    if ! kubectl exec -n $ns "$pod" -- sh -c 'flock -n /tmp/nightly.lock true' 2>/dev/null; then
-                      echo "$pod holds the nightly lock (or could not be asked); leaving awake"
-                      exit 0
-                    fi
-                    if kubectl exec -n $ns "$pod" -- sh -c 'tmux list-sessions' >/dev/null 2>&1; then
-                      echo "$pod has tmux sessions (interactive work); leaving awake"
+                    state=$(kubectl exec -n $ns "$pod" -- sh -c '
+                      flock -n /tmp/nightly.lock true || exit 0
+                      tmux list-sessions -F "#{session_name} #{session_activity} #{session_attached}" 2>/dev/null |
+                        awk -v now="$(date +%s)" "
+                          \$3 != 0 { busy=1 }
+                          \$1 != \"rc\" { busy=1 }
+                          \$1 == \"rc\" && now - \$2 < 1800 { busy=1 }
+                          END { if (!busy) print \"idle\" }
+                        "
+                    ' 2>/dev/null) || true
+                    if [ "$state" != "idle" ]; then
+                      echo "$pod busy or unreachable; leaving awake"
                       exit 0
                     fi
                   done

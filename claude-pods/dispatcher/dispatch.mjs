@@ -107,42 +107,74 @@ function podIsBusy(pod) {
 // Scale-up is idempotent (3 -> 3 is a no-op), so an awake set costs one
 // cheap kubectl call per dispatch. The rollout wait bounds a wake that
 // cannot finish — image pull against an unreachable ghcr, a node gone —
-// and failing here is caught by the caller and logged per card, where the
-// hourly reconcile sweep is already the retry.
-const STS = process.env.DISPATCH_STS ?? "claude-session";
-const WAKE_REPLICAS = 3;
+// and failing here is caught by the caller and logged per card. The
+// reconcile sweep is the retry, priced honestly: it runs hourly but only
+// re-dispatches cards stale past RECONCILE_STALE_MS (~4h), so a dropped
+// wake costs hours, not forever.
+//
+// Not an env knob like NS: ROUTES hardcodes claude-session-<n> pod names,
+// so a different StatefulSet name here would wake one workload and exec
+// into another. One fact, one place.
+const STS = "claude-session";
+// One past the highest ordinal ROUTES names: stages are pinned to pods
+// by ordinal and a StatefulSet cannot run ordinal 2 without 0 and 1.
+// Derived so adding a fourth stage to ROUTES is one edit, not two.
+const WAKE_REPLICAS =
+  1 +
+  Math.max(
+    ...Object.values(ROUTES).map(([pod]) =>
+      Number(pod.slice(pod.lastIndexOf("-") + 1)),
+    ),
+  );
 
-// spawn, awaited: podIsBusy can afford spawnSync's 20s, but a cold wake
-// legitimately takes minutes and blocking the server that long would hold
-// up every other webhook behind one scale-up.
-function run(cmd, args, timeoutMs) {
+// kubectl, spawned and awaited, stderr kept. Awaited rather than
+// spawnSync (podIsBusy can afford 20s; a cold wake legitimately takes
+// minutes, and blocking the server that long would hold every other
+// webhook behind one scale-up). stderr kept because a wake that fails
+// must say WHY — an RBAC denial and an API timeout need different
+// mornings, and "DeadlineExceeded with no logs" is this repo's recorded
+// incident shape (see kaneo-reconcile-cron.yaml).
+function kubectl(args, timeoutMs) {
   return new Promise((resolve) => {
-    const child = spawn(cmd, args, { stdio: "ignore" });
+    const child = spawn("kubectl", args, {
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    let err = "";
+    child.stderr.on("data", (c) => {
+      err = (err + c).slice(-500);
+    });
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.on("exit", (code) => {
       clearTimeout(timer);
-      resolve(code);
+      resolve({ code, err: err.trim() });
     });
-    child.on("error", () => {
+    child.on("error", (e) => {
       clearTimeout(timer);
-      resolve(null);
+      resolve({ code: null, err: e.message });
     });
   });
 }
 
 async function ensureAwake() {
-  const scaled = await run(
-    "kubectl",
+  const scaled = await kubectl(
     ["scale", "-n", NS, `statefulset/${STS}`, `--replicas=${WAKE_REPLICAS}`],
     30_000,
   );
-  if (scaled !== 0) throw new Error(`cannot scale ${STS} to ${WAKE_REPLICAS}`);
-  const ready = await run(
-    "kubectl",
+  if (scaled.code !== 0) {
+    throw new Error(
+      `cannot scale ${STS} to ${WAKE_REPLICAS}: ${scaled.err || `exit ${scaled.code}`}`,
+    );
+  }
+  // 630s: the --timeout below plus 30s for kubectl's own startup/teardown.
+  const ready = await kubectl(
     ["rollout", "status", "-n", NS, `statefulset/${STS}`, "--timeout=600s"],
     630_000,
   );
-  if (ready !== 0) throw new Error(`${STS} not ready within 600s of waking`);
+  if (ready.code !== 0) {
+    throw new Error(
+      `${STS} not ready within 600s of waking: ${ready.err || `exit ${ready.code}`}`,
+    );
+  }
 }
 
 async function runStage(repo, pod, script, task) {
