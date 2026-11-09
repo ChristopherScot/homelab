@@ -20,11 +20,15 @@ metadata:
   name: kaneo-reconcile
   namespace: claude-pods
 spec:
-  # Suspended until a dry run has been seen on the real board. The sweep
-  # starts agent runs unattended on a clock, so it gets the same treatment
-  # the pipeline itself got: prove it reports the right thing before it is
-  # allowed to act on it.
-  suspend: true
+  # Unsuspended after a dry run on the real board reported correctly:
+  #
+  #   RECONCILE done checked=1 redispatched=0 skipped=1 errors=0
+  #     skip d3kgbsty...: work already exists
+  #
+  # That card was 27.5h stale in In Review, well past the window, so a
+  # sweep that only looked at the clock would have re-dispatched it. It
+  # found the merged pull request instead and left it alone, which is the
+  # behaviour that makes an hourly sweep safe to run unattended.
   schedule: "17 * * * *"
   timeZone: America/New_York
   # Forbid, not Replace: a sweep that overruns is talking to GitHub about
