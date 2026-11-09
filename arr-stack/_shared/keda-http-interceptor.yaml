@@ -1,0 +1,17 @@
+# In-namespace alias for the KEDA HTTP add-on's interceptor proxy
+# (installed by app-of-apps/apps/keda.yaml), because an Ingress backend
+# can only name a Service in its own namespace.
+#
+# Scale-to-zero routing: an opted-in app's Ingress points here instead of
+# at the app's own Service. The interceptor matches the request's Host
+# header against HTTPScaledObject.spec.hosts, scales the workload 0 -> 1,
+# holds the request until a pod is ready, then forwards. See
+# raw/shelfmark/scale-to-zero.yaml for the per-app half.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keda-http-interceptor
+  namespace: media
+spec:
+  type: ExternalName
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local

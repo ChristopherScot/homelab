@@ -8,7 +8,9 @@ metadata:
     # qbit/prowlarr config land without manual rollout.
     reloader.stakater.com/auto: "true"
 spec:
-  replicas: 1
+  # No replicas: field — KEDA scales this between 0 and 1 (see
+  # scale-to-zero.yaml), and a value here would make Argo selfHeal
+  # fight it back on every sync.
   strategy:
     type: Recreate
   selector:

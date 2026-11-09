@@ -42,9 +42,11 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: shelfmark
+                # KEDA HTTP interceptor (scale-to-zero), not the app's
+                # own Service — see scale-to-zero.yaml.
+                name: keda-http-interceptor
                 port:
-                  number: 8084
+                  number: 8080
 ---
 # Socket.IO, exempt from Authelia.
 #
@@ -102,6 +104,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: shelfmark
+                # Also via the interceptor: a socket.io handshake must be
+                # able to wake the app, and an open socket counts as
+                # traffic that keeps it awake (see scale-to-zero.yaml).
+                name: keda-http-interceptor
                 port:
-                  number: 8084
+                  number: 8080
