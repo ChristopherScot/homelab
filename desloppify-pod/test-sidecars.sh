@@ -84,8 +84,10 @@ done <<< "$ports"
 # The other direction: a sidecar listening on a port the compose file no
 # longer publishes is an orphan burning its memory limit against the
 # pod's ceiling, and a subset test never reports it.
-spec_ports=$(grep -oE '"(5[0-9]{3}|6[0-9]{3}|8[0-9]{3})"' "$spec" 2>/dev/null \
-             | tr -d '"' | sort -u)
+# 4-5 digits, not a fixed prefix: a sidecar moved to 15430 slipped past
+# a pattern that required 5xxx/6xxx/8xxx, and the forward check still
+# passed because 5430 remained in a readiness probe.
+spec_ports=$(grep -oE '"[0-9]{4,5}"' "$spec" 2>/dev/null | tr -d '"' | sort -u)
 while read -r sp; do
   [ -n "$sp" ] || continue
   if ! printf '%s\n' "$ports" | grep -qx "$sp"; then
