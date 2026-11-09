@@ -340,4 +340,7 @@ if [ -n "$OIDC_CLIENT_SECRET" ]; then
 JSON
 fi
 
+# Separate entrypoint also permits reconciling just this role during rollout.
+bash "$(dirname -- "${BASH_SOURCE[0]}")/codex-vault.sh"
+
 echo "done"

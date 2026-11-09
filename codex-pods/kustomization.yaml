@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: codex-pods
+resources:
+  - secrets.yaml
+  - statefulset.yaml
+configMapGenerator:
+  - name: codex-pod-config
+    files:
+      - entrypoint.sh
+      - config.toml
