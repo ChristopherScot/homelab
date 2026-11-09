@@ -37,7 +37,9 @@ spec:
   source:
     repoURL: https://kedacore.github.io/charts
     chart: keda-add-ons-http
-    targetRevision: 1.1.0
+    # The add-on charts version independently of KEDA core (0.x while
+    # core is 2.x) — don't "fix" this to match the core version above.
+    targetRevision: 0.16.0
     helm:
       # The interceptor proxy Service is named <releaseName>-interceptor-proxy;
       # the ExternalName Services that route Ingresses to it depend on this
