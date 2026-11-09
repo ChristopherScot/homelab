@@ -19,8 +19,9 @@ If required services, credentials, memory, or tools are unavailable, report bloc
 and explain it. Never claim validation passed if you could not run it.
 
 Leave edits uncommitted. Do not commit, push, merge, close PRs, post comments, change
-GitHub settings, or operate on any other PR/repository. The host will independently
-review your patch and push it to this PR only if validation and review pass.
+GitHub settings, or operate on any other PR/repository. The pod's Node runner
+(/etc/codex-pod/dependabot.mjs) will launch a separate review agent, then commit
+and push your patch to this PR only if validation and review pass.
 Return status=ready only if a focused fix exists and all reported validation passed;
 otherwise return status=blocked with the reason. List commands actually run and their
 results. A separate reviewer checks the execution log against these claims.
