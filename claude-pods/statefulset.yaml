@@ -110,6 +110,13 @@ spec:
             - name: kaneo-api
               mountPath: /run/secrets/kaneo
               readOnly: true
+            # Claude subscription tokens, shared with the desloppify pod
+            # from kv/claude-pods/claude. preflight_credential prefers
+            # these over ~/.claude/.credentials.json, which is the file
+            # that keeps arriving blanked with expiresAt=0.
+            - name: claude-oauth
+              mountPath: /run/secrets/claude
+              readOnly: true
           # Requests are a SCHEDULING RESERVATION, not a quota: 500m CPU
           # was held against ~5m actual use, so three pods parked 1.5
           # cores the scheduler could not give anything else. There is
@@ -147,6 +154,12 @@ spec:
             # preflight with a clear message, not sit in
             # CreateContainerConfigError where the reason is three kubectl
             # commands away.
+            optional: true
+        - name: claude-oauth
+          secret:
+            secretName: claude-oauth
+            # Same reasoning: a pod without it falls back to
+            # ~/.claude/.credentials.json rather than failing to start.
             optional: true
   volumeClaimTemplates:
     # $HOME — SSD (1 replica). Small + latency-sensitive; the interactive
