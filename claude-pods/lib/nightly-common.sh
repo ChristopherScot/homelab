@@ -197,57 +197,10 @@ revert_pr() {
 }
 
 # --- Claude credential -----------------------------------------------------
-# Refuse to start on a credential that cannot work.
-#
-# ~/.claude/.credentials.json is periodically found with accessToken and
-# refreshToken as EMPTY STRINGS and expiresAt=0. Valid JSON, right shape,
-# no tokens. Claude Code reads it as expired-in-1970 and cannot renew,
-# because the refresh token it would renew with was blanked too.
-#
-# Cause unknown. It has hit different pods on different nights, and never
-# all three at once — so a healthy peer is normally available to copy
-# from. Without this check the run burns its whole window failing every
-# ticket on "OAuth session expired".
-#
-# cred_ok POD: 0 if POD's ~/.claude/.credentials.json holds non-empty
-# access and refresh tokens and an expiry still in the future; 1
-# otherwise, including when kubectl cannot reach POD.
-cred_ok() {
-  kubectl exec -n "$NIGHTLY_NS" "$1" -- node -e '
-    const f = process.env.HOME + "/.claude/.credentials.json";
-    let d; try { d = require(f).claudeAiOauth; } catch (e) { process.exit(1); }
-    if (!d || !d.accessToken || !d.refreshToken) process.exit(1);
-    if (!(d.expiresAt > Date.now())) process.exit(1);
-  ' >/dev/null 2>&1
-}
-
-# Returns 0 once this pod has a usable credential — repairing it from a
-# healthy peer if it must, which overwrites ~/.claude/.credentials.json —
-# or 1 if none could be found, or found but not copied.
-preflight_credential() {
-  local me="${HOSTNAME:-unknown}"
-  if cred_ok "$me"; then
-    echo "credential: ok"
-    return 0
-  fi
-  echo "credential: INVALID on $me — looking for a healthy peer" >&2
-  local peer
-  for peer in $(kubectl get pods -n "$NIGHTLY_NS" -l app=claude-session \
-                  --field-selector status.phase=Running \
-                  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-    [ "$peer" = "$me" ] && continue
-    if cred_ok "$peer"; then
-      kubectl exec -n "$NIGHTLY_NS" "$peer" -- cat /home/node/.claude/.credentials.json 2>/dev/null \
-        | kubectl exec -i -n "$NIGHTLY_NS" "$me" -- sh -c 'umask 077; cat > "$HOME/.claude/.credentials.json"' 2>/dev/null
-      if cred_ok "$me"; then
-        echo "credential: repaired from $peer" >&2
-        return 0
-      fi
-    fi
-  done
-  echo "FATAL: no pod has a usable credential; run scripts/claude-pods-login.sh" >&2
-  return 1
-}
+# In its own file so the desloppify image can take the account helpers
+# without the kubectl and Kaneo machinery below.
+# shellcheck source=claude-account.sh
+. "$(dirname "${BASH_SOURCE[0]}")/claude-account.sh"
 
 # One stage at a time in this pod.
 #

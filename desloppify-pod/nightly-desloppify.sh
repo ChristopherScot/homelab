@@ -78,14 +78,15 @@ GH_TOKEN="$(cat /run/secrets/desloppify/token 2>/dev/null)"
 export GH_TOKEN
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
 
-CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude/oauth-token 2>/dev/null)"
-export CLAUDE_CODE_OAUTH_TOKEN
-if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-  echo "FATAL: no Claude OAuth token"; exit 1
-fi
-# Either of these silently outranks the OAuth token and bills the API
-# account per token.
-unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+# Work account first, personal held in reserve. A rate limit is per
+# account and ends a run in under two seconds with no tool calls and no
+# cost, so retrying on the other one is cheap and the night survives.
+# use_claude_account also clears the API-key variables: either of them
+# silently outranks the OAuth token and bills per token against the API
+# account instead of the subscription.
+# shellcheck source=../claude-pods/lib/claude-account.sh
+. "${CLAUDE_ACCOUNT_LIB:-/usr/local/share/claude-pods/lib/claude-account.sh}"
+preflight_credential || exit 1
 
 # The token must not be able to reach main even if everything else fails.
 # A fine-grained PAT without Administration cannot read protection; an
