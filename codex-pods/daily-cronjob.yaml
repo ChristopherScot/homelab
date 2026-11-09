@@ -1,0 +1,74 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codex-daily-runner
+  namespace: codex-pods
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codex-daily-runner
+  namespace: codex-pods
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    resourceNames: [codex-session-0]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    resourceNames: [codex-session-0]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codex-daily-runner
+  namespace: codex-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: codex-daily-runner
+subjects:
+  - kind: ServiceAccount
+    name: codex-daily-runner
+    namespace: codex-pods
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: codex-dependabot
+  namespace: codex-pods
+spec:
+  schedule: "0 6 * * *"
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 21720
+      template:
+        spec:
+          serviceAccountName: codex-daily-runner
+          restartPolicy: Never
+          containers:
+            - name: trigger
+              image: registry.k8s.io/kubectl:v1.30.14
+              args:
+                - exec
+                - -n
+                - codex-pods
+                - codex-session-0
+                - -c
+                - codex
+                - --
+                - bash
+                - /etc/codex-pod/daily-dependabot.sh
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
