@@ -9,15 +9,13 @@
 # work runs in desloppify-0 with its PVCs, its Vault-mounted tokens and
 # its node_modules cache.
 #
-# desloppify-0 sleeps (replicas 0) outside its nightly window: initContainers
-# scale it up and wait for ready before the exec, and the separate sleep
-# CronJob at the end of this file scales it back down. The sleep cron is
-# time-based rather than tied to the run's exit so that a run killed by
-# activeDeadlineSeconds (which a trap inside the job could never observe,
-# and this image has no shell for one anyway) still ends asleep.
+# desloppify-0 sleeps (replicas 0) outside its nightly window. KEDA's cron
+# scaler owns the wake and sleep (desloppify-scaledobject.yaml); this job
+# only waits for ready and execs. The wait matters: KEDA wakes the pod at
+# 02:55, but a cold image pull can outlast the five-minute head start.
 ---
-# Only what the trigger needs: find the pod, scale its StatefulSet,
-# and exec one script in it.
+# Only what the trigger needs: find the pod, see it become ready, exec
+# one script in it. Scaling is KEDA's, not this ServiceAccount's.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -36,14 +34,10 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
-  # `kubectl rollout status` reads the StatefulSet; `kubectl scale`
-  # reads and writes its scale subresource.
+  # `kubectl rollout status` watches the StatefulSet.
   - apiGroups: ["apps"]
     resources: ["statefulsets"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["apps"]
-    resources: ["statefulsets/scale"]
-    verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -79,8 +73,8 @@ spec:
       # resume it.
       backoffLimit: 0
       # 3h for the run itself (the historical budget) plus 10 minutes
-      # for wake-up: scale-up, image pulls on a cold node, sidecars
-      # becoming ready. The sleep cron below is scheduled after
+      # for the wait-ready initContainer when the 02:55 wake-up is still
+      # pulling images. The ScaledObject's window end is scheduled after
       # 03:00 + this deadline.
       activeDeadlineSeconds: 11400
       template:
@@ -88,21 +82,12 @@ spec:
           serviceAccountName: desloppify-runner
           restartPolicy: Never
           initContainers:
-            # Wake desloppify-0. Idempotent: scaling 1 -> 1 is a no-op,
-            # so a pod left awake (deadline-killed previous run, manual
-            # scale-up) doesn't break the trigger.
-            - name: wake
-              image: registry.k8s.io/kubectl:v1.30.14
-              args:
-                - scale
-                - statefulset
-                - desloppify
-                - -n
-                - claude-pods
-                - --replicas=1
-            # Wait for ready before the exec. rollout status watches the
-            # StatefulSet itself, so it doesn't race the controller
-            # creating the pod object the way `kubectl wait pod` would.
+            # Wait for the pod KEDA woke at 02:55 to be ready before the
+            # exec. rollout status watches the StatefulSet itself, so it
+            # doesn't race the controller creating the pod object the way
+            # `kubectl wait pod` would. If KEDA never woke it (KEDA down,
+            # ScaledObject missing), this times out and the job fails
+            # visibly instead of exec'ing into nothing.
             - name: wait-ready
               image: registry.k8s.io/kubectl:v1.30.14
               args:
@@ -136,47 +121,3 @@ spec:
                 - env
                 - DESLOP_MAX_COST_USD=50
                 - /usr/local/bin/nightly-desloppify.sh
----
-# Puts desloppify-0 back to sleep, unconditionally.
-#
-# Time-based rather than run-from-the-job because this covers every exit:
-# success, failure, and the run the deadline killed - the case a cleanup
-# step inside the job can never reach. 06:30 is 03:00 plus the job's
-# activeDeadlineSeconds (11400s = 06:10) with slack; move it if either
-# of those moves.
-#
-# Scaling to 0 while someone is exec'd into the pod kills that session.
-# At 06:30 that is the deliberate trade; for daytime poking, scale up
-# manually and expect this to tuck it back in the next morning.
-apiVersion: batch/v1
-kind: CronJob
-metadata:
-  name: nightly-desloppify-sleep
-  namespace: claude-pods
-spec:
-  schedule: "30 6 * * *"
-  timeZone: "America/New_York"
-  concurrencyPolicy: Forbid
-  successfulJobsHistoryLimit: 1
-  failedJobsHistoryLimit: 3
-  startingDeadlineSeconds: 3600
-  jobTemplate:
-    spec:
-      # Scale-to-zero is idempotent, so retrying a transient API error
-      # is safe - unlike the run trigger, where backoffLimit is 0.
-      backoffLimit: 2
-      activeDeadlineSeconds: 300
-      template:
-        spec:
-          serviceAccountName: desloppify-runner
-          restartPolicy: Never
-          containers:
-            - name: sleep
-              image: registry.k8s.io/kubectl:v1.30.14
-              args:
-                - scale
-                - statefulset
-                - desloppify
-                - -n
-                - claude-pods
-                - --replicas=0

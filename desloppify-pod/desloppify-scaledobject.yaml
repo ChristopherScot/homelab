@@ -1,0 +1,44 @@
+# KEDA owns desloppify-0's wake/sleep cycle: 1 replica during the nightly
+# window, 0 outside it. This is KEDA's cron scaler — its recommended shape
+# for a workload that runs on a schedule — rather than kubectl scale
+# commands baked into the trigger CronJob.
+#
+# The window brackets the nightly-desloppify CronJob (desloppify-cronjob.yaml):
+#   02:55  wake, five minutes before the 03:00 trigger, so the image pull
+#          and sidecars are usually ready before the exec's own
+#          rollout-status wait even starts.
+#   06:30  03:00 + the job's activeDeadlineSeconds (11400s = 06:10) with
+#          slack. Window end is also what ends a run the deadline killed,
+#          so the pod never stays awake all day after a bad night.
+# Move these if the schedule or the deadline moves.
+#
+# Manual daytime use: KEDA reverts a bare `kubectl scale` within its
+# polling interval. To hold the pod awake, pause autoscaling instead:
+#   kubectl annotate scaledobject desloppify -n claude-pods \
+#     autoscaling.keda.sh/paused-replicas="1"
+# and remove the annotation to hand control back:
+#   kubectl annotate scaledobject desloppify -n claude-pods \
+#     autoscaling.keda.sh/paused-replicas-
+#
+# Requires KEDA core (app-of-apps/apps/keda.yaml). Until its CRDs exist
+# the desloppify-pod app shows a sync error for this file; Argo's retry
+# clears it once the keda app lands.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: desloppify
+  namespace: claude-pods
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: desloppify
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  triggers:
+    - type: cron
+      metadata:
+        timezone: America/New_York
+        start: 55 2 * * *
+        end: 30 6 * * *
+        desiredReplicas: "1"
