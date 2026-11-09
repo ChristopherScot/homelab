@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,30 @@ const pr = () => ({ number: 17054, title: 'Bump a dependency', author: { login: 
   statusCheckRollup: [{ name: 'check-biome', status: 'COMPLETED', conclusion: 'FAILURE' }] });
 const repair = { status: 'ready', validation: [{ command: 'yarn lint:biome', result: 'passed' }] };
 const review = { approved: true, findings: [] };
+
+test('ConfigMap symlink invocation executes the runner entrypoint', t => {
+  const options = fixture(t);
+  const revision = join(options.stateDir, '..2026_projection');
+  mkdirSync(revision);
+  copyFileSync(new URL('../dependabot.mjs', import.meta.url), join(revision, 'dependabot.mjs'));
+  symlinkSync(revision, join(options.stateDir, '..data'), 'dir');
+  const visibleRunner = join(options.stateDir, 'dependabot.mjs');
+  symlinkSync('..data/dependabot.mjs', visibleRunner);
+  // Stop immediately on the first credential read, proving main was entered
+  // without ever reading a real token, reaching GitHub, or writing run state.
+  const preload = join(options.stateDir, 'deny-live-token.mjs');
+  writeFileSync(preload, `import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const originalRead = fs.readFileSync;
+fs.readFileSync = (file, ...args) => {
+  if (file === '/run/secrets/git/token') throw new Error('ENTRYPOINT_EXECUTED');
+  return originalRead(file, ...args);
+};
+syncBuiltinESMExports();`);
+  const result = spawnSync(process.execPath, ['--import', preload, visibleRunner, '--dry-run'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /ENTRYPOINT_EXECUTED/);
+});
 
 test('selects failing Dependabot checks and legacy failure statuses', () => {
   assert.equal(eligible(pr()), true);

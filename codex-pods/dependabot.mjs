@@ -3,9 +3,9 @@
 // propose edits and review them. No path in this runner merges a pull request.
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 export const REPO = 'schoolhouse-world/app';
 const configDir = dirname(fileURLToPath(import.meta.url));
@@ -209,6 +209,8 @@ Return approved=true only with no actionable findings and credible passing valid
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Node resolves import.meta.url through symlinks, while argv keeps the visible
+// ConfigMap path. Compare resolved paths or a mounted script silently does nothing.
+if (process.argv[1] && process.argv[1] !== '-' && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main({ dryRun: process.argv.includes('--dry-run') }).catch(error => { log(error.message); process.exitCode = 1; });
 }
