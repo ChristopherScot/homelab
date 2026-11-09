@@ -1,0 +1,77 @@
+# Puts the claude-session StatefulSet to sleep when nothing is using it.
+#
+# Not KEDA: these pods wake on Kaneo card moves, not on a clock (no cron
+# window fits) and receive no HTTP (nothing for the interceptor to see).
+# The dispatcher is the wake (ensureAwake in dispatcher/dispatch.mjs:
+# scale to 3, wait ready, exec); this cron is the matching sleep.
+#
+# "In use" is three different things, each checked per existing pod:
+#   - a dispatched run holds /tmp/nightly.lock — the same flock the
+#     dispatcher checks before starting one
+#   - interactive work is a tmux session, attached or NOT: a detached
+#     tmux with an agent running in it is still work
+#   - a pod younger than 15 minutes may belong to a dispatch that has
+#     not taken the lock yet, so a fresh set is left alone
+# Any one of them keeps the whole set awake: ROUTES pins stages to pods
+# by ordinal and a StatefulSet cannot run ordinal 2 without 0 and 1, so
+# sleep is all-or-nothing by construction.
+#
+# An exec that errors (pod not ready, API blip) reads as "busy", never as
+# "idle" — same fail-closed rule as the dispatcher's podIsBusy.
+#
+# Same image as the session pods, same reasoning as kaneo-reconcile: the
+# script needs a shell and kubectl, and that image already carries both.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: session-sleep
+  namespace: claude-pods
+spec:
+  schedule: "*/30 * * * *"
+  timeZone: "America/New_York"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Scaling to 0 is idempotent and the checks are read-only, so a
+      # retry after a transient API error is safe.
+      backoffLimit: 1
+      activeDeadlineSeconds: 240
+      template:
+        spec:
+          serviceAccountName: nightly-runner
+          restartPolicy: Never
+          containers:
+            - name: sleep
+              image: ghcr.io/christopherscot/claude-pod:latest
+              command:
+                - sh
+                - -c
+                - |
+                  set -eu
+                  ns=claude-pods
+                  pods=$(kubectl get pods -n $ns -l app=claude-session -o jsonpath='{.items[*].metadata.name}')
+                  if [ -z "$pods" ]; then
+                    echo "already asleep"
+                    exit 0
+                  fi
+                  now=$(date +%s)
+                  for pod in $pods; do
+                    created=$(kubectl get pod -n $ns "$pod" -o jsonpath='{.metadata.creationTimestamp}')
+                    age=$(( now - $(date -d "$created" +%s) ))
+                    if [ "$age" -lt 900 ]; then
+                      echo "$pod is ${age}s old; a wake may be mid-dispatch"
+                      exit 0
+                    fi
+                    if ! kubectl exec -n $ns "$pod" -- sh -c 'flock -n /tmp/nightly.lock true' 2>/dev/null; then
+                      echo "$pod holds the nightly lock (or could not be asked); leaving awake"
+                      exit 0
+                    fi
+                    if kubectl exec -n $ns "$pod" -- sh -c 'tmux list-sessions' >/dev/null 2>&1; then
+                      echo "$pod has tmux sessions (interactive work); leaving awake"
+                      exit 0
+                    fi
+                  done
+                  echo "all session pods idle; scaling to 0"
+                  kubectl scale statefulset claude-session -n $ns --replicas=0

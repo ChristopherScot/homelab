@@ -97,7 +97,56 @@ function podIsBusy(pod) {
   return r.status !== 0;
 }
 
-function runStage(repo, pod, script, task) {
+// --- wake ----------------------------------------------------------------
+//
+// The session StatefulSet sleeps at 0 replicas when idle; the
+// session-sleep CronJob puts it there and this is the matching wake.
+// Always all three ordinals: ROUTES pins stages to pods by ordinal, and a
+// StatefulSet cannot run ordinal 2 without 0 and 1.
+//
+// Scale-up is idempotent (3 -> 3 is a no-op), so an awake set costs one
+// cheap kubectl call per dispatch. The rollout wait bounds a wake that
+// cannot finish — image pull against an unreachable ghcr, a node gone —
+// and failing here is caught by the caller and logged per card, where the
+// hourly reconcile sweep is already the retry.
+const STS = process.env.DISPATCH_STS ?? "claude-session";
+const WAKE_REPLICAS = 3;
+
+// spawn, awaited: podIsBusy can afford spawnSync's 20s, but a cold wake
+// legitimately takes minutes and blocking the server that long would hold
+// up every other webhook behind one scale-up.
+function run(cmd, args, timeoutMs) {
+  return new Promise((resolve) => {
+    const child = spawn(cmd, args, { stdio: "ignore" });
+    const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      resolve(code);
+    });
+    child.on("error", () => {
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
+}
+
+async function ensureAwake() {
+  const scaled = await run(
+    "kubectl",
+    ["scale", "-n", NS, `statefulset/${STS}`, `--replicas=${WAKE_REPLICAS}`],
+    30_000,
+  );
+  if (scaled !== 0) throw new Error(`cannot scale ${STS} to ${WAKE_REPLICAS}`);
+  const ready = await run(
+    "kubectl",
+    ["rollout", "status", "-n", NS, `statefulset/${STS}`, "--timeout=600s"],
+    630_000,
+  );
+  if (ready !== 0) throw new Error(`${STS} not ready within 600s of waking`);
+}
+
+async function runStage(repo, pod, script, task) {
+  await ensureAwake();
   if (podIsBusy(pod)) {
     // Dropped rather than queued: the card stays where it is, so moving it
     // again once the current run finishes is the retry. A queue here would
@@ -359,7 +408,7 @@ async function reconcile(dryRun) {
         }
         log(`RECONCILE ${label} stuck in ${col.slug} for ${age}h; re-dispatching`);
         // id, not label: this is what becomes the branch name.
-        runStage(repo, route[0], route[1], id);
+        await runStage(repo, route[0], route[1], id);
         out.redispatched.push(`${label} (${col.slug}, ${age}h)`);
       } catch (err) {
         // An error here must not read as "nothing to do". Report it and
@@ -473,7 +522,11 @@ createServer((req, res) => {
           log(`SKIP  ${id} -> ${column}: ${route[0]} does not work ${repo}`);
           return;
         }
-        runStage(repo, route[0], route[1], id);
+        // Own catch, inside the label-lookup chain: a wake that fails must
+        // not be reported as "cannot read labels".
+        return runStage(repo, route[0], route[1], id).catch((err) => {
+          log(`ERROR ${id} -> ${column}: ${err.message}`);
+        });
       })
       .catch((err) => {
         // A failed lookup is not "no label". Saying so keeps a Kaneo

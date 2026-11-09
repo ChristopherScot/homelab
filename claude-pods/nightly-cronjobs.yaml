@@ -58,6 +58,15 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
+  # The dispatcher wakes the session StatefulSet before an exec and the
+  # session-sleep cron puts it back; `kubectl rollout status` reads it,
+  # `kubectl scale` reads and writes its scale subresource.
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    verbs: ["get", "update", "patch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
