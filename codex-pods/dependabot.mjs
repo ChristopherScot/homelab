@@ -119,8 +119,10 @@ export async function main({ dryRun = false, tokenFile = '/run/secrets/git/token
     let result;
     try {
       result = await agentRun('codex', ['exec',
-        '--cd', repoDir, '--ephemeral', '--sandbox', kind === 'repair' ? 'workspace-write' : 'read-only',
-        '-c', 'approval_policy="never"', '-c', 'sandbox_workspace_write.network_access=true',
+        // The unprivileged pod cannot create Bubblewrap's nested mount
+        // namespace. Use the container boundary for these trusted repo runs.
+        '--cd', repoDir, '--ephemeral', '--sandbox', 'danger-full-access',
+        '-c', 'approval_policy="never"',
         '--output-schema', join(configDir, `${kind}.schema.json`), '--output-last-message', output, '-'],
       { env, input: prompt, stdio: ['pipe', fd, fd], timeoutMs: seconds * 1000, signal: controller.signal });
     } finally { closeSync(fd); }
@@ -175,6 +177,7 @@ export async function main({ dryRun = false, tokenFile = '/run/secrets/git/token
         }
         const changed = git(['diff', '--cached', '--name-only']).split('\n');
         if (changed.some(p => p.startsWith('.github/workflows/'))) throw new Error('workflow edits require human review');
+        const reviewedTree = git(['write-tree']);
         const beforeReview = treeHash();
         const review = await agent('review', `Independently review the staged repair to ${REPO} PR #${number}.
 Read repository instructions. Review git diff --cached against ${pr.headRefOid}.
@@ -184,12 +187,17 @@ Read ${join(directory, 'repair.log')} to check the claimed tests actually ran an
 Check correctness, dependency compatibility, focused scope, and test evidence. Reject reverted dependency upgrades,
 disabled checks, unsupported validation claims, or unrelated cleanup. Do not change files, commit, push, or merge.
 Return approved=true only with no actionable findings and credible passing validation.`, directory, 900);
-        if (treeHash() !== beforeReview || git(['rev-parse', 'HEAD']) !== pr.headRefOid) {
+        if (treeHash() !== beforeReview || git(['write-tree']) !== reviewedTree
+          || git(['rev-parse', 'HEAD']) !== pr.headRefOid) {
           throw new Error('working tree changed during independent review');
         }
         if (!publishable(pr, currentPr(number), repair, review)) throw new Error('review rejected repair or PR changed');
         git(['diff', '--cached', '--check']);
         git(['commit', '-m', `Fix CI for Dependabot PR #${number}`]);
+        if (git(['rev-parse', 'HEAD^{tree}']) !== reviewedTree
+          || git(['rev-parse', 'HEAD^']) !== pr.headRefOid) {
+          throw new Error('commit differs from the reviewed patch or parent');
+        }
         // Normal fast-forward push only: a concurrent Dependabot update causes
         // rejection rather than overwriting someone else's work. Never merge.
         git(['push', 'origin', `HEAD:refs/heads/${pr.headRefName}`]);

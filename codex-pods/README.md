@@ -7,8 +7,10 @@ Codex CLI installed by an init container. No new image build or CI job is needed
 The `codex-pods` Argo CD Application owns its deployment.
 
 On startup it checks ChatGPT authentication, verifies GitHub repository access,
-clones `ChristopherScot/homelab`, and requests the literal `CODEX_POD_OK` outside
-the repository. Readiness requires that real model response. The pod then waits
+clones `ChristopherScot/homelab`, and asks Codex to execute `printf CODEX_POD_TOOL_OK`
+outside the repository. Readiness requires a successful shell-tool event with
+that output in Codex's JSONL events, plus the final `CODEX_POD_OK` response. A
+chat-only response cannot pass the check. The pod then waits
 for work. No Kubernetes service account token is mounted in the Codex container.
 
 ## Daily Dependabot repair
@@ -18,6 +20,17 @@ Its trigger has permission only to inspect and exec into `codex-session-0`.
 The work runs there, using the existing writable ChatGPT login and the mounted
 GitHub credential, whose Schoolhouse repository/CI read access was verified.
 The narrower PAT used by the other repair pod lacks Actions and Checks access.
+
+The startup probe and daily repair/review processes use `--sandbox danger-full-access`
+inside this unprivileged container. The pod cannot create Bubblewrap's nested
+mount namespace, so the container is the isolation boundary for these trusted
+repository runs, as described in the [official container guidance](https://learn.chatgpt.com/docs/agent-approvals-security).
+This adds no privileged container, host mount, Kubernetes API token, or Linux
+capability. The reviewer is instructed not to edit; the runner also checks that
+the working files, staged tree, and HEAD have not changed during review. The
+resulting commit must contain that exact reviewed tree and parent before a push.
+Other
+Codex invocations retain the configured default permissions.
 
 The runner lists open Dependabot PRs in **schoolhouse-world/app**, selects those
 with completed failing checks, and skips drafts, forks, green checks, and checks
