@@ -25,6 +25,13 @@ spec:
   # records for the ApplicationSet, and the same fix. Scoped to the one
   # field the updater owns; everything else in a child still reconciles.
   #
+  # It applies to every child Application, not only the pinned ones. No
+  # child sets spec.source.kustomize in git today; if one ever does,
+  # edits to that block will not be reconciled by this app. The ignore
+  # is deliberately not scoped by name: this file is not synced, so a
+  # per-app list here would need a manual apply for every new pinned
+  # app, and the whole point is that enrolling one is an annotation.
+  #
   # RespectIgnoreDifferences below is what makes the ignore apply at
   # sync time as well as at diff time. Without it the field still shows
   # as in sync but the next sync overwrites it anyway.

@@ -23,9 +23,13 @@ resources:
   - session-sleep-cron.yaml
   - statefulset.yaml
   - storageclass.yaml
-# The floor the image updater overrides. It rewrites every reference to
-# this image across the resources above - the session StatefulSet, the
-# dispatcher Deployment and the CronJobs move to the new digest together.
+# Names the image the updater's override targets. The override itself
+# (spec.source.kustomize.images on the live Application) creates the
+# entry if absent, so this is not load-bearing; it is here so the file
+# says which image is managed, and so the test can check that name
+# against the Application's annotation. Whatever the entry resolves to
+# applies to every reference across the resources above: the session
+# StatefulSet, the dispatcher Deployment and the CronJobs move together.
 images:
   - name: ghcr.io/christopherscot/claude-pod
     newTag: latest

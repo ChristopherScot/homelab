@@ -1,11 +1,8 @@
 # Switches the desloppify-pod Argo Application from directory mode to
 # kustomize mode so argocd-image-updater can pin the image by digest on
-# the live Application. See claude-pods/kustomization.yaml for the full
-# story; this is the same shape for the second image.
-#
-# Only what is listed under resources is deployed from now on. A new
-# top-level manifest must be added here or it is silently skipped;
-# claude-pods/tests/image-pinning.sh fails on that.
+# the live Application. Same shape as claude-pods/kustomization.yaml,
+# which carries the reasoning - including why only what is listed
+# under resources is deployed from now on.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
@@ -13,7 +10,6 @@ resources:
   - desloppify-scaledobject.yaml
   - desloppify-secrets.yaml
   - desloppify-statefulset.yaml
-# The floor the image updater overrides with the resolved digest.
 images:
   - name: ghcr.io/christopherscot/desloppify-pod
     newTag: latest

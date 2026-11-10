@@ -17,8 +17,8 @@ metadata:
     argocd-image-updater.argoproj.io/image-list: claude-pod=ghcr.io/christopherscot/claude-pod:latest
     argocd-image-updater.argoproj.io/claude-pod.update-strategy: digest
     # The image is private. Without this the updater's registry poll
-    # 401s and nothing ever updates; the pokedex apps skip it because
-    # their images are public. The updater's own RBAC only reaches
+    # 401s and nothing ever updates; apps with public images need no
+    # pull-secret annotation. The updater's own RBAC only reaches
     # secrets in the argocd namespace, so claude-pods/rbac.yaml grants
     # it get on this one secret.
     argocd-image-updater.argoproj.io/claude-pod.pull-secret: pullsecret:claude-pods/ghcr-pull

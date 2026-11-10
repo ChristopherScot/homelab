@@ -71,7 +71,7 @@ spec:
           containers:
             - name: sleep
               image: ghcr.io/christopherscot/claude-pod:latest
-              # Digest-pinned via kustomization.yaml; pull-on-change, cache otherwise.
+              # Digest-pinned by argocd-image-updater via kustomization.yaml; pull-on-change, cache otherwise.
               imagePullPolicy: IfNotPresent
               command:
                 - sh
