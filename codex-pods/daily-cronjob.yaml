@@ -49,6 +49,10 @@ spec:
               value: "/home/node/.codex"
             - name: PATH
               value: "/home/node/.codex/tools/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/node/go/bin"
+            # Node's 250 ms address-family switching abandons healthy IPv4
+            # connects on this route. Keep npm/Yarn on the IPv4-only pod network.
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=1024 --dns-result-order=ipv4first --no-network-family-autoselection"
             - name: GIT_AUTHOR_NAME
               value: Chris (codex-pod)
             - name: GIT_COMMITTER_NAME
