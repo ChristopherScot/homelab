@@ -14,24 +14,14 @@ spec:
     requests:
       storage: 2Ti
 ---
-# qBittorrent config — kept on iSCSI because it's the only app with
-# meaningful I/O (download piece state, fastresume files). SQLite-on-iSCSI
-# is also unambiguously fine for single-writer.
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: qbittorrent-config
-  namespace: media
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: synology-iscsi
-  resources:
-    requests:
-      storage: 5Gi
----
-# Gluetun config — kept on iSCSI for the same reason as qbit (sibling in
-# the same pod; pulling its config off iSCSI would mean the pod still has
-# both NFS + iSCSI mounts, no real win).
+# Gluetun config — holds servers.json (7MB, refetched on startup) and an
+# auth dir; Proton creds come from the protonvpn-credentials Secret, so
+# the volume is regenerable.
+#
+# Still on synology-iscsi, and now the pod's ONLY iSCSI mount since qbit
+# moved to Longhorn — the old "its sibling already needs iSCSI anyway"
+# argument no longer holds. Low enough value that it has not been worth a
+# migration of its own; move it to Longhorn next time this pod is touched.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -62,8 +52,19 @@ spec:
     requests:
       storage: 2Gi
 ---
-# Replaces prowlarr-config-nfs. Configs on Longhorn (sqlite + heavy
-# Definitions cache); NFS reserved for bulk media only.
+# qBittorrent config — BT_backup fastresume files and download piece
+# state. Was on synology-iscsi, the one app deliberately kept there for
+# its I/O.
+#
+# Abandoned 2026-11-10: a node dropped during the wired migration and
+# btrfs came back with `parent transid verify failed` on BOTH mirrors
+# (state EA), remounting read-only on every fresh iSCSI session. There was
+# no restore point — synology-iscsi has no CSI snapshot class in this
+# cluster — so the 12.3M of BT_backup state was rsync'd off by hand.
+# authelia/db.yaml records the same class remounting read-only on iSCSI
+# hiccups, 2026-09-13.
+#
+# Longhorn's 3-replica block storage is the point. Don't move config back.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
