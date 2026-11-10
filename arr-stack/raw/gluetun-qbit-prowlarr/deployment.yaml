@@ -511,7 +511,7 @@ spec:
       volumes:
         - name: gluetun-config
           persistentVolumeClaim:
-            claimName: gluetun-config
+            claimName: gluetun-config-longhorn
         - name: gluetun-auth-template
           configMap:
             name: gluetun-auth-template
