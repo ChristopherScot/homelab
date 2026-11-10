@@ -81,7 +81,12 @@ export async function main({ dryRun = false, tokenFile = '/run/secrets/git/token
   // check-run access. Use it consistently in git, gh, and agent subprocesses.
   const token = readFileSync(tokenFile, 'utf8').trim();
   if (!token) throw new Error('Schoolhouse GitHub token is empty');
-  const env = { ...process.env, GH_TOKEN: token, GIT_TERMINAL_PROMPT: '0' };
+  const env = { ...process.env, GH_TOKEN: token, GIT_TERMINAL_PROMPT: '0',
+    // Yarn otherwise sizes its heavy-task pool from the node's CPU count,
+    // which does not account for this pod's small memory limit.
+    YARN_TASK_POOL_CONCURRENCY: '2', YARN_NETWORK_CONCURRENCY: '8',
+    NODE_OPTIONS: process.env.NODE_OPTIONS ?? '--max-old-space-size=1024',
+  };
   for (const key of ['GITHUB_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL']) delete env[key];
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const runDir = mkdtempSync(join(stateDir, 'run-'));

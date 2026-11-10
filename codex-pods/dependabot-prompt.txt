@@ -8,8 +8,13 @@ Use gh to inspect failing checks and their logs for this exact PR head. Reproduc
 the relevant failure locally, then make the smallest correct repair that preserves
 the intended dependency upgrade. Follow the repository's pinned Node/Yarn versions;
 use corepack yarn or its checked-in Yarn release, without modifying global tooling.
-Install dependencies with an immutable lockfile before testing. Fix compatibility
-problems in source/tests/configuration rather than reverting the upgrade, weakening
+Install dependencies with an immutable lockfile before testing.
+
+The runner supplies YARN_TASK_POOL_CONCURRENCY=2, YARN_NETWORK_CONCURRENCY=8,
+and a default 1024 MiB Node heap cap to reduce pressure on the pod's 4 GiB memory ceiling.
+Keep these limits during installation and checks; do not copy larger CI heap
+settings or raise concurrency. Report blocked if a command cannot fit.
+Fix compatibility problems in source/tests/configuration rather than reverting the upgrade, weakening
 checks, editing workflow files, or suppressing errors. Avoid unrelated cleanup.
 
 Run the corresponding CI commands after the repair, including any failing steps
