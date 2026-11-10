@@ -14,23 +14,32 @@ spec:
     requests:
       storage: 2Ti
 ---
-# Gluetun config — holds servers.json (7MB, refetched on startup) and an
-# auth dir; Proton creds come from the protonvpn-credentials Secret, so
-# the contents are regenerable and nothing was migrated across.
-#
-# Moved off synology-iscsi 2026-11-10, hours after qbit went the same way:
-# the backing LUN vanished from the NAS entirely, leaving the PVC and PV
-# claiming Bound while the CSI driver answered "Volume[...] is not found".
-# gluetun read an empty mount, failed with "decoding servers: unexpected
-# end of JSON input", and crash-looped 15 times, taking qbittorrent and
-# prowlarr with it since they share its network namespace.
-#
-# That makes two iSCSI volumes lost in one day. synology-iscsi has no CSI
-# snapshot class here, so there is no restore path for any of them.
+# Gluetun config — retired 2026-11-10, replaced by gluetun-config-longhorn
+# below. Left here (Retain) like the other retired iSCSI claims; there is
+# no LUN behind it any more.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: gluetun-config
+  namespace: media
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: synology-iscsi
+  resources:
+    requests:
+      storage: 1Gi
+---
+# Gluetun config — servers.json (refetched on startup) and an auth dir;
+# Proton creds live in the protonvpn-credentials Secret, so the contents
+# are regenerable and nothing was migrated across.
+#
+# Longhorn, not synology-iscsi: the backing LUN vanished 2026-11-10 while
+# the PVC and PV both still read Bound, hours after qbit's volume went the
+# same way. See synology-csi-config/storageclasses.yaml.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: gluetun-config-longhorn
   namespace: media
 spec:
   accessModes: [ReadWriteOnce]
