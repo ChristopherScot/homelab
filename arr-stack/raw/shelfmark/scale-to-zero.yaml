@@ -54,7 +54,7 @@ data:
       <div class="card">
         <span class="book">&#128214;</span>
         <h1>Shelfmark is waking up</h1>
-        <p>It was asleep to save power. About 25 seconds &mdash; this page refreshes itself.</p>
+        <p>It was asleep to save power. Under half a minute &mdash; this page refreshes itself.</p>
       </div>
     </body>
     </html>
@@ -78,8 +78,14 @@ spec:
   rules:
     - hosts:
         - shelfmark.home.chrisscotmartin.com
+      # Paths are coupled to ingress.yaml the same way hosts are: every
+      # path an Ingress routes to the interceptor must match a rule here,
+      # or requests on it never wake the app. `/` is a prefix match that
+      # should cover everything; /socket.io is listed anyway so the
+      # auth-exempt socket Ingress doesn't ride on that assumption.
       paths:
         - value: /
+        - value: /socket.io
   # requestRate 100 was HTTPScaledObject's implicit default; the new API
   # makes it explicit. Mostly moot at min 0 / max 1 — active vs inactive
   # is what drives the scaling.
