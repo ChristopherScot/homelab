@@ -107,7 +107,9 @@ ADDR_COUNT=$(nmcli -g IP4.ADDRESS dev show "$WIRED_DEV" | grep -c . || true)
 [ "$ADDR_COUNT" = 1 ] || die "$WIRED_DEV has $ADDR_COUNT IPv4 addresses; this script freezes exactly one - resolve manually"
 ADDR=$(nmcli -g IP4.ADDRESS dev show "$WIRED_DEV" | head -1)
 GW=$(nmcli -g IP4.GATEWAY dev show "$WIRED_DEV" | head -1)
-DNS=$(nmcli -g IP4.DNS dev show "$WIRED_DEV" | paste -sd, -)
+# nmcli -g joins multiple values on one line with " | "; ipv4.dns wants
+# commas. (Caught by the pop-os --detect-only preview.)
+DNS=$(nmcli -g IP4.DNS dev show "$WIRED_DEV" | sed 's/ | /,/g' | paste -sd, -)
 [ -n "$ADDR" ] && [ -n "$GW" ] || die "could not read current IPv4 address/gateway from $WIRED_DEV"
 
 # Refuse if ANY established SSH session terminates on a wifi address:
