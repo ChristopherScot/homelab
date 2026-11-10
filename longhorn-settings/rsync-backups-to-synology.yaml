@@ -67,7 +67,7 @@ spec:
           volumes:
             - name: source-node2
               nfs:
-                server: 192.168.50.77
+                server: 192.168.50.3
                 path: /media/chris/node2-hdd
                 readOnly: true
             - name: dest-synology
