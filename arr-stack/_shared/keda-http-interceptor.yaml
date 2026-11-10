@@ -13,6 +13,10 @@
 # name above. An ExternalName Service cannot remap ports, so every
 # Ingress backend pointing here must say 8080, whatever port the app's
 # own Service uses.
+#
+# A new sleeper also gets a line on the fleet dashboard: extend the
+# regex roster in monitoring/grafanadashboard-scale-to-zero.yaml (one
+# alternation per namespace, shared by its tiles and its history).
 apiVersion: v1
 kind: Service
 metadata:

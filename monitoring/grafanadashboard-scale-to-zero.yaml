@@ -9,6 +9,13 @@
 # shows here seconds before the pod is Ready — this board answers "what
 # did the autoscaling decide", not "is the pod up yet".
 #
+# ONBOARDING A NEW SLEEPER: add it to the regex alternation in the
+# matching target expression — the SAME three expressions feed both the
+# stat row and the timeline (the stat panel renders one tile per
+# returned series), so there is exactly one place per namespace to
+# extend and the tiles and history cannot drift apart.
+# arr-stack/_shared/keda-http-interceptor.yaml points here.
+#
 # resyncPeriod re-pushes the dashboard even without a CR change — reverts
 # UI edits that drift from git (same convention as the MAM dashboard).
 apiVersion: grafana.integreatly.org/v1beta1
@@ -34,10 +41,14 @@ spec:
       "liveNow": false,
       "panels": [
         {
-          "type": "stat", "title": "claude-session",
-          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+          "type": "stat", "title": "Fleet — desired replicas",
+          "gridPos": { "h": 5, "w": 24, "x": 0, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
-          "targets": [{ "expr": "kube_statefulset_replicas{namespace=\"claude-pods\",statefulset=\"claude-session\"}", "instant": true, "refId": "A" }],
+          "targets": [
+            { "expr": "kube_statefulset_replicas{namespace=\"claude-pods\",statefulset=~\"claude-session|desloppify\"}", "legendFormat": "{{statefulset}}", "instant": true, "refId": "A" },
+            { "expr": "kube_deployment_spec_replicas{namespace=\"media\",deployment=~\"shelfmark|jellyseerr\"}", "legendFormat": "{{deployment}}", "instant": true, "refId": "B" },
+            { "expr": "kube_deployment_spec_replicas{namespace=\"paperless\",deployment=~\"paperless|paperless-sync-trigger\"}", "legendFormat": "{{deployment}}", "instant": true, "refId": "C" }
+          ],
           "fieldConfig": { "defaults": {
             "mappings": [
               { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
@@ -46,86 +57,11 @@ spec:
             "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
             "unit": "none"
           }, "overrides": [] },
-          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] }, "orientation": "auto" }
         },
         {
-          "type": "stat", "title": "desloppify",
-          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
-          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
-          "targets": [{ "expr": "kube_statefulset_replicas{namespace=\"claude-pods\",statefulset=\"desloppify\"}", "instant": true, "refId": "A" }],
-          "fieldConfig": { "defaults": {
-            "mappings": [
-              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
-              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
-            ],
-            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
-            "unit": "none"
-          }, "overrides": [] },
-          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
-        },
-        {
-          "type": "stat", "title": "shelfmark",
-          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
-          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
-          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"media\",deployment=\"shelfmark\"}", "instant": true, "refId": "A" }],
-          "fieldConfig": { "defaults": {
-            "mappings": [
-              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
-              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
-            ],
-            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
-            "unit": "none"
-          }, "overrides": [] },
-          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
-        },
-        {
-          "type": "stat", "title": "jellyseerr",
-          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
-          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
-          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"media\",deployment=\"jellyseerr\"}", "instant": true, "refId": "A" }],
-          "fieldConfig": { "defaults": {
-            "mappings": [
-              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
-              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
-            ],
-            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
-            "unit": "none"
-          }, "overrides": [] },
-          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
-        },
-        {
-          "type": "stat", "title": "paperless",
-          "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
-          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
-          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"paperless\",deployment=\"paperless\"}", "instant": true, "refId": "A" }],
-          "fieldConfig": { "defaults": {
-            "mappings": [
-              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
-              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
-            ],
-            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
-            "unit": "none"
-          }, "overrides": [] },
-          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
-        },
-        {
-          "type": "stat", "title": "paperless-sync",
-          "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
-          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
-          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"paperless\",deployment=\"paperless-sync-trigger\"}", "instant": true, "refId": "A" }],
-          "fieldConfig": { "defaults": {
-            "mappings": [
-              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
-              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
-            ],
-            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
-            "unit": "none"
-          }, "overrides": [] },
-          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
-        },
-        {
-          "type": "timeseries", "title": "Desired replicas (wake/sleep history)",
-          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 4 },
+          "type": "timeseries", "title": "Wake/sleep history",
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
           "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
           "targets": [
             { "expr": "kube_statefulset_replicas{namespace=\"claude-pods\",statefulset=~\"claude-session|desloppify\"}", "legendFormat": "{{statefulset}}", "refId": "A" },
