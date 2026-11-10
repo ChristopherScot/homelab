@@ -24,7 +24,7 @@ The CronJob runs at **06:00 America/New_York**. It scans open Dependabot PRs in 
 
 Codex reads CI logs, makes focused repairs that preserve the dependency upgrade, and runs relevant checks. A separate Codex process reviews the exact staged patch and execution log. The runner checks working files, staged tree, HEAD, current PR head, and committed tree/parent before a normal push to the original Dependabot branch. It never merges, force-pushes, creates PRs, or posts comments. Workflow changes require human review.
 
-Yarn uses two heavy-task workers and eight network requests; Node subprocesses default to a 1024 MiB old-space heap cap. The pod limit is **4 GiB**, with a **512 MiB** scheduling request. The heap cap is per process, not total container memory. Missing resources and failed validation are reported rather than claimed as a pass.
+Yarn uses two heavy-task workers and eight network requests; Node subprocesses default to a 1024 MiB old-space heap cap. The pod limit is **4 GiB**, with a **512 MiB** scheduling request. Node prefers IPv4 and disables automatic address-family switching: the default 250 ms attempts failed against npm on the current cluster route, while a single IPv4 connection succeeded. These settings cover bootstrap npm and task subprocesses. The heap cap is per process, not total container memory. Missing resources and failed validation are reported rather than claimed as a pass.
 
 Logs and summaries persist under `/workspace/.codex-dependabot/run-*`. `daily-dependabot.sh --dry-run` only discovers candidates, without model calls, checkouts, commits, or pushes.
 
