@@ -68,9 +68,12 @@ data:
     </body>
     </html>
 ---
-# Hosts and paths are coupled to ingress.yaml (and to media-cleanup's
-# JELLYSEERR constant for the wake alias): an entry missing here never
-# wakes the app.
+# Hosts and paths are coupled to ingress.yaml: an entry missing here
+# never wakes the app. Browser traffic only — the wake alias has its own
+# route below, because the placeholder here is served to EVERY request
+# on the route while the pod starts (per the add-on's cold-start
+# contract), and an API caller must get a held request, not a 503 HTML
+# page it would read as failure.
 apiVersion: http.keda.sh/v1beta1
 kind: InterceptorRoute
 metadata:
@@ -85,7 +88,6 @@ spec:
   rules:
     - hosts:
         - seerr.home.chrisscotmartin.com
-        - jellyseerr-wake.media.svc.cluster.local
       paths:
         - value: /
   scalingMetric:
@@ -99,6 +101,35 @@ spec:
           key: index.html
         headers:
           Refresh: "5"
+---
+# The in-cluster callers' route: same target, NO coldStart block, so a
+# cold request is held until the pod is ready and then answered for
+# real — which is what media-cleanup's decline needs (a 503 waking page
+# would read as a failed decline after the deletes already ran).
+#
+# The host matches what callers dial. They dial :8080, so the Host
+# header arrives port-suffixed — verified against the live interceptor
+# (curl with "Host: <host>:8080" matched identically to the bare host):
+# the interceptor strips the port before matching.
+apiVersion: http.keda.sh/v1beta1
+kind: InterceptorRoute
+metadata:
+  name: jellyseerr-wake
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  target:
+    service: jellyseerr
+    port: 5055
+  rules:
+    - hosts:
+        - jellyseerr-wake.media.svc.cluster.local
+      paths:
+        - value: /
+  scalingMetric:
+    requestRate:
+      targetValue: 100
 ---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -116,8 +147,15 @@ spec:
   maxReplicaCount: 1
   # Seconds without traffic before scaling back to zero.
   cooldownPeriod: 900
+  # One trigger per route: KEDA ORs them, so traffic on either the
+  # browser route or the wake-alias route scales the app up and keeps
+  # it awake.
   triggers:
     - type: external-push
       metadata:
         scalerAddress: keda-add-ons-http-external-scaler.keda:9090
         interceptorRoute: jellyseerr
+    - type: external-push
+      metadata:
+        scalerAddress: keda-add-ons-http-external-scaler.keda:9090
+        interceptorRoute: jellyseerr-wake

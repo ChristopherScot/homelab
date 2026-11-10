@@ -94,7 +94,10 @@ data:
             return {'skipped': 'no api key'}
         # Find requests for this tmdb. Jellyseerr's /request endpoint lists by
         # media; we filter client-side because the filter param is finicky.
-        status, body = http('GET', f'{base}/api/v1/request?take=200', {'X-Api-Key': key})
+        # timeout=90, not the default 10: this first call pays the wake
+        # (the interceptor holds it while jellyseerr scales from zero,
+        # ~30-60s with the volume attach). Later calls hit a warm app.
+        status, body = http('GET', f'{base}/api/v1/request?take=200', {'X-Api-Key': key}, timeout=90)
         if status != 200:
             return {'error': f'list status={status}'}
         matches = [r for r in body.get('results', [])
