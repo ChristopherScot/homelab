@@ -31,7 +31,11 @@ fail() {
 }
 
 registry=ghcr.io/christopherscot
-# dir  alias  app-file
+# Both images are private and share one pull secret; the Applications
+# name it and the RBAC grant below must land in the same namespace.
+pull_secret_ns=claude-pods
+pull_secret=ghcr-pull
+# dir  alias (also the image name under $registry)  app-file
 apps=(
   "claude-pods claude-pod app-of-apps/apps/claude-pods.yaml"
   "desloppify-pod desloppify-pod app-of-apps/apps/desloppify-pod.yaml"
@@ -60,22 +64,26 @@ for entry in "${apps[@]}"; do
   [ "$image_list" = "$alias=$image:latest" ] ||
     fail "$app image-list is '$image_list', expected $alias=$image:latest"
 
-  # 2. IfNotPresent at every ref, and the ref is exactly what git says:
-  #    the digest is substituted on the live Application, never in CI.
-  #    Sidecars from other registries keep whatever policy they have.
+  # 2. IfNotPresent at every ref, and every own-registry ref is the one
+  #    image this Application's image-list enrols, at the tag git says
+  #    (the digest is substituted on the live Application, never in CI).
+  #    A second own image here would be IfNotPresent with no digest
+  #    behind it and never update. Sidecars from other registries keep
+  #    whatever policy they have.
   refs=$(printf '%s\n' "$rendered" |
     yq -N '.. | select(type == "!!map" and has("image") and has("name")) | .image + " " + (.imagePullPolicy // "<unset>")' |
     grep -F "$registry/" | sort -u)
   [ -n "$refs" ] || fail "$dir renders no reference to $registry images"
   while read -r ref policy; do
-    [ "$ref" = "$image:latest" ] || fail "$dir renders $ref, expected $image:latest"
+    [ "$ref" = "$image:latest" ] ||
+      fail "$dir renders $ref, but only $image:latest is enrolled with the updater; an unenrolled own image on IfNotPresent never updates"
     [ "$policy" = IfNotPresent ] || fail "$dir: $ref has imagePullPolicy $policy, expected IfNotPresent"
   done <<<"$refs"
 
   # 3. Updater annotations on the Application.
   for kv in \
     "$alias.update-strategy=digest" \
-    "$alias.pull-secret=pullsecret:claude-pods/ghcr-pull" \
+    "$alias.pull-secret=pullsecret:$pull_secret_ns/$pull_secret" \
     "write-back-method=argocd"; do
     key="argocd-image-updater.argoproj.io/${kv%%=*}"
     want=${kv#*=}
@@ -84,15 +92,16 @@ for entry in "${apps[@]}"; do
   done
 done
 
-# 3b. The updater's own RBAC stops at the argocd namespace; the pull
-#     secret is in claude-pods. rbac.yaml is deployed (step 1 lists it).
+# 3b. The updater's own RBAC stops at the argocd namespace, so the grant
+#     must sit in the pull secret's namespace. rbac.yaml is deployed
+#     (step 1 lists it).
 rbac="$repo/claude-pods/rbac.yaml"
-yq -e 'select(.kind == "Role" and .metadata.name == "image-updater-pull-secret")
-  | .rules[] | select(.resourceNames[] == "ghcr-pull" and .verbs[] == "get")' "$rbac" >/dev/null 2>&1 ||
-  fail "$rbac: Role image-updater-pull-secret does not grant get on secret ghcr-pull"
-yq -e 'select(.kind == "RoleBinding" and .roleRef.name == "image-updater-pull-secret")
-  | .subjects[] | select(.kind == "ServiceAccount" and .name == "argocd-image-updater" and .namespace == "argocd")' "$rbac" >/dev/null 2>&1 ||
-  fail "$rbac: Role image-updater-pull-secret is not bound to argocd:argocd-image-updater"
+yq -e "select(.kind == \"Role\" and .metadata.name == \"image-updater-pull-secret\" and .metadata.namespace == \"$pull_secret_ns\")
+  | .rules[] | select(.resourceNames[] == \"$pull_secret\" and .verbs[] == \"get\")" "$rbac" >/dev/null 2>&1 ||
+  fail "$rbac: no Role image-updater-pull-secret in $pull_secret_ns granting get on secret $pull_secret"
+yq -e "select(.kind == \"RoleBinding\" and .roleRef.name == \"image-updater-pull-secret\" and .metadata.namespace == \"$pull_secret_ns\")
+  | .subjects[] | select(.kind == \"ServiceAccount\" and .name == \"argocd-image-updater\" and .namespace == \"argocd\")" "$rbac" >/dev/null 2>&1 ||
+  fail "$rbac: Role image-updater-pull-secret is not bound to argocd:argocd-image-updater in $pull_secret_ns"
 
 # 4. The root app leaves /spec/source/kustomize to the updater.
 root="$repo/app-of-apps/app-of-apps.yaml"

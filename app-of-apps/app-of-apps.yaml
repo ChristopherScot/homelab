@@ -20,10 +20,11 @@ spec:
   # The updater's write-back-method is argocd: the digest it resolves
   # for claude-pods and desloppify-pod lands in spec.source.kustomize
   # on the live child Application, not in git. With selfHeal on and
-  # this field reconciled, the root app reverted every digest within
-  # seconds, silently - the same failure apps/_homelabctl-services.yaml
-  # records for the ApplicationSet, and the same fix. Scoped to the one
-  # field the updater owns; everything else in a child still reconciles.
+  # this field reconciled, the root app would revert every digest within
+  # seconds, silently - the failure apps/_homelabctl-services.yaml
+  # records happening to the ApplicationSet, and the same fix. Scoped to
+  # the one field the updater owns; everything else in a child still
+  # reconciles.
   #
   # It applies to every child Application, not only the pinned ones. No
   # child sets spec.source.kustomize in git today; if one ever does,

@@ -13,7 +13,10 @@ metadata:
     # The updater resolves :latest to its digest and writes it to this
     # Application's spec.source.kustomize.images; the pod template
     # changes, the workloads roll, and the kubelet pulls because the
-    # ref is new. Every other start is a node-cache hit.
+    # ref is new. Every other start is a node-cache hit: the refs are
+    # IfNotPresent rather than Always because Always went to ghcr on
+    # every start, and one dispatcher wake hung 31 minutes on a stalled
+    # pull.
     argocd-image-updater.argoproj.io/image-list: claude-pod=ghcr.io/christopherscot/claude-pod:latest
     argocd-image-updater.argoproj.io/claude-pod.update-strategy: digest
     # The image is private. Without this the updater's registry poll
