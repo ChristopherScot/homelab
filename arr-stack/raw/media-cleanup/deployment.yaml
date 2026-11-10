@@ -35,7 +35,13 @@ data:
         ],
     }
     JELLYFIN = ('http://jellyfin.media.svc.cluster.local:8096', R('JELLYFIN_KEY'))
-    JELLYSEERR = ('http://jellyseerr.media.svc.cluster.local:5055', R('JELLYSEERR_KEY'))
+    # Via the KEDA interceptor's wake alias, not the Service directly:
+    # jellyseerr sleeps at 0 replicas when idle (see
+    # jellyseerr/scale-to-zero.yaml), and a direct call to a sleeping
+    # Service is ECONNREFUSED. Through the alias, a decline WAKES it —
+    # the request is held until the pod is ready, so expect the first
+    # cleanup after an idle stretch to take ~30s.
+    JELLYSEERR = ('http://jellyseerr-wake.media.svc.cluster.local:8080', R('JELLYSEERR_KEY'))
 
     HISTORY = []  # last 20 actions
     HISTORY_LOCK = threading.Lock()

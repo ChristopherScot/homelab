@@ -1,0 +1,123 @@
+# Scale-to-zero for jellyseerr via the KEDA HTTP add-on (mechanism:
+# _shared/keda-http-interceptor.yaml; cold-start page pattern:
+# raw/shelfmark/scale-to-zero.yaml). Sleeps after 15 idle minutes; a
+# cold visit gets an instant waking page that refreshes until ready.
+#
+# Jellyseerr's background jobs (availability sync, notification
+# processing) only run while awake — the accepted trade: request status
+# catches up when someone next opens it, and the things it CALLS
+# (sonarr, radarr, jellyfin) are always-on, so nothing inbound breaks.
+#
+# Two service-direct callers considered:
+#   - the Homepage widget polls jellyseerr.media.svc:5055 and shows an
+#     error while asleep. DELIBERATELY left direct: routed through the
+#     interceptor its polling would keep jellyseerr awake 24/7.
+#   - media-cleanup's decline call rides the jellyseerr-wake alias
+#     below, so a cleanup tap wakes jellyseerr rather than failing.
+apiVersion: v1
+kind: Service
+metadata:
+  # Dedicated alias (not the shared keda-http-interceptor one) because
+  # in-cluster callers can't set a Host header: the hostname they dial
+  # IS the Host the interceptor routes on, so each sleeping app that
+  # has in-cluster callers needs an alias of its own, listed in its
+  # route's hosts.
+  name: jellyseerr-wake
+  namespace: media
+spec:
+  type: ExternalName
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jellyseerr-waking-page
+  namespace: media
+  labels:
+    # Without this label the interceptor refuses to serve the ConfigMap
+    # as a response body.
+    http.keda.sh/response-body: "true"
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Jellyseerr</title>
+      <style>
+        :root { color-scheme: light dark; }
+        body {
+          margin: 0; min-height: 100vh; display: grid; place-items: center;
+          font-family: system-ui, sans-serif;
+          background: light-dark(#f4f2f8, #171522); color: light-dark(#3b3650, #d6d2e4);
+        }
+        .card { text-align: center; padding: 2rem; }
+        .jelly { font-size: 3rem; display: inline-block; animation: bob 1.6s ease-in-out infinite; }
+        @keyframes bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+        h1 { font-size: 1.3rem; font-weight: 600; margin: 1rem 0 0.4rem; }
+        p { margin: 0; opacity: 0.7; font-size: 0.95rem; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <span class="jelly">&#129446;</span>
+        <h1>Jellyseerr is waking up</h1>
+        <p>It was asleep to save power. Under half a minute &mdash; this page refreshes itself.</p>
+      </div>
+    </body>
+    </html>
+---
+# Hosts and paths are coupled to ingress.yaml (and to media-cleanup's
+# JELLYSEERR constant for the wake alias): an entry missing here never
+# wakes the app.
+apiVersion: http.keda.sh/v1beta1
+kind: InterceptorRoute
+metadata:
+  name: jellyseerr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  target:
+    service: jellyseerr
+    port: 5055
+  rules:
+    - hosts:
+        - seerr.home.chrisscotmartin.com
+        - jellyseerr-wake.media.svc.cluster.local
+      paths:
+        - value: /
+  scalingMetric:
+    requestRate:
+      targetValue: 100
+  coldStart:
+    placeholder:
+      response:
+        bodyFromConfigMap:
+          name: jellyseerr-waking-page
+          key: index.html
+        headers:
+          Refresh: "5"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: jellyseerr
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: jellyseerr
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  # Seconds without traffic before scaling back to zero.
+  cooldownPeriod: 900
+  triggers:
+    - type: external-push
+      metadata:
+        scalerAddress: keda-add-ons-http-external-scaler.keda:9090
+        interceptorRoute: jellyseerr
