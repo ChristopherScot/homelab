@@ -19,7 +19,6 @@ import argparse
 import asyncio
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -41,6 +40,7 @@ from claude_agent_sdk import (  # noqa: E402
 )
 
 import policy  # noqa: E402
+import report as report_mod  # noqa: E402
 
 PROJECT_PATH = "projects/webapp"
 
@@ -174,10 +174,10 @@ and a reviewable PR beats an exhaustive one.
 
 ## Shell calls
 
-One command per Bash call. The policy refuses command substitution,
-redirection, `&&`/`;` chaining and grouping outright — every chained call
-is a denied call and a wasted turn, and turns are the budget that runs
-out first. The 2026-11-10 run spent 34 turns on denied compounds and was
+{policy.SHELL_CONTRACT}
+
+Denied calls still consume turns, and turns are the budget that runs out
+first: the 2026-11-10 run spent 34 turns on refused compounds and was
 then killed by max_turns six seconds before finishing.
 
 ## Committing
@@ -235,31 +235,6 @@ Do not merge your own PR. The runner decides that after its own checks.
 
 Report your result as the structured output you have been given.
 """
-
-
-def pr_for_branch(repo: str, branch: str) -> int | None:
-    """The PR number GitHub has for a head branch, or None.
-
-    Asked of GitHub rather than trusted from the agent, because the two
-    can disagree: a run killed by max_turns mid-`gh pr create` dies
-    before it sees the create succeed, and its report then claims
-    BLOCKED/no-PR while the PR sits open (the 2026-11-10 run). The PR
-    outlives the agent; the agent's self-report does not.
-    """
-    try:
-        out = subprocess.run(
-            ["gh", "pr", "list", "--repo", repo, "--head", branch,
-             "--state", "all", "--json", "number"],
-            capture_output=True, text=True, timeout=30,
-        )
-        if out.returncode != 0:
-            return None
-        prs = json.loads(out.stdout or "[]")
-        return int(prs[0]["number"]) if prs else None
-    except Exception:
-        # Verification must never turn a finished run into a crash;
-        # an unverifiable PR just leaves the self-report standing.
-        return None
 
 
 async def run(args: argparse.Namespace) -> int:
@@ -361,16 +336,16 @@ async def run(args: argparse.Namespace) -> int:
     # out, or errored — ask GitHub before believing it. One listing call
     # separates "did no work" from "did the work and died before the
     # bookkeeping", which need opposite responses from whoever reads the
-    # morning report.
-    pr_verified = False
+    # morning report. The wiring lives in report.py where the tests
+    # reach it without the SDK.
+    found = None
     if not payload.get("pr_number"):
-        found = pr_for_branch(args.repo, args.branch)
-        if found is not None:
-            pr_verified = True
-            payload = {**payload, "outcome": "PROGRESS", "pr_number": found}
-            print(f"VERIFIED: PR #{found} exists on GitHub for "
-                  f"{args.branch}; overriding the self-reported outcome",
-                  file=sys.stderr)
+        found = report_mod.pr_for_branch(args.repo, args.branch)
+    payload, pr_verified = report_mod.apply_pr_verification(payload, found)
+    if pr_verified:
+        print(f"VERIFIED: PR #{found} is open on GitHub for "
+              f"{args.branch}; overriding the self-reported outcome",
+              file=sys.stderr)
 
     report = {
         "repo": args.repo,
