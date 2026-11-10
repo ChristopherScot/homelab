@@ -1,9 +1,14 @@
 # Scale-to-zero for shelfmark via the KEDA HTTP add-on. Both shelfmark
 # Ingresses (main and socket) route to the interceptor — the mechanism is
-# documented on _shared/keda-http-interceptor.yaml — and this object tells
-# it what to wake for this host. The first request after sleep waits out
-# the settings-merge initContainer and app boot inside the interceptor's
-# 300s response-header hold; after that it's a normal proxy.
+# documented on _shared/keda-http-interceptor.yaml — and these objects
+# tell it what to wake for this host.
+#
+# Two resources, not the deprecated HTTPScaledObject that first shipped
+# here: the add-on split routing (InterceptorRoute) from scaling
+# (a plain ScaledObject with an external-push trigger). The split is
+# what buys the cold-start placeholder below — a "waking up" page served
+# instantly with a Refresh header, instead of the browser spinning on a
+# held connection for the ~23s a measured wake takes.
 #
 # Shelfmark is a good candidate: it only matters while a human is using
 # it, and its background sync (supernote-shelf-sync) runs as its own
@@ -14,8 +19,51 @@
 # don't opt autocaliweb in while that affinity stands.
 #
 # The Deployment has no `replicas:` field; the comment there says why.
-apiVersion: http.keda.sh/v1alpha1
-kind: HTTPScaledObject
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: shelfmark-waking-page
+  namespace: media
+  labels:
+    # Without this label the interceptor refuses to serve the ConfigMap
+    # as a response body.
+    http.keda.sh/response-body: "true"
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Shelfmark</title>
+      <style>
+        :root { color-scheme: light dark; }
+        body {
+          margin: 0; min-height: 100vh; display: grid; place-items: center;
+          font-family: system-ui, sans-serif;
+          background: light-dark(#f6f3ee, #1c1b19); color: light-dark(#3a342c, #d8d2c6);
+        }
+        .card { text-align: center; padding: 2rem; }
+        .book { font-size: 3rem; animation: tilt 1.6s ease-in-out infinite; display: inline-block; }
+        @keyframes tilt { 0%,100% { transform: rotate(-8deg); } 50% { transform: rotate(8deg); } }
+        h1 { font-size: 1.3rem; font-weight: 600; margin: 1rem 0 0.4rem; }
+        p { margin: 0; opacity: 0.7; font-size: 0.95rem; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <span class="book">&#128214;</span>
+        <h1>Shelfmark is waking up</h1>
+        <p>It was asleep to save power. About 25 seconds &mdash; this page refreshes itself.</p>
+      </div>
+    </body>
+    </html>
+---
+# Routing + cold-start behavior. Host matching is how wake routing
+# works, so the hosts here must match the rule hosts in ingress.yaml: a
+# renamed host with a stale entry never wakes.
+apiVersion: http.keda.sh/v1beta1
+kind: InterceptorRoute
 metadata:
   name: shelfmark
   namespace: media
@@ -24,19 +72,62 @@ metadata:
     # bootstrap, before the keda app has installed its CRDs.
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  # Must match the rule hosts in ingress.yaml: the interceptor routes by
-  # Host header, so a renamed host with a stale entry here never wakes.
-  hosts:
-    - shelfmark.home.chrisscotmartin.com
-  scaleTargetRef:
-    name: shelfmark
-    kind: Deployment
-    apiVersion: apps/v1
+  target:
     service: shelfmark
     port: 8084
-  replicas:
-    min: 0
-    max: 1
-  # Seconds without traffic before scaling back to zero. Open Socket.IO
-  # connections count as traffic, so an active search keeps it awake.
-  scaledownPeriod: 900
+  rules:
+    - hosts:
+        - shelfmark.home.chrisscotmartin.com
+      paths:
+        - value: /
+  # requestRate 100 was HTTPScaledObject's implicit default; the new API
+  # makes it explicit. Mostly moot at min 0 / max 1 — active vs inactive
+  # is what drives the scaling.
+  scalingMetric:
+    requestRate:
+      targetValue: 100
+  coldStart:
+    # Served instantly (503) to every request while the pod starts; the
+    # Refresh header makes the browser retry every 5s until the app
+    # answers. API/socket.io calls only happen from a loaded page, so by
+    # the time they fire the app is awake.
+    placeholder:
+      response:
+        bodyFromConfigMap:
+          name: shelfmark-waking-page
+          key: index.html
+        headers:
+          Refresh: "5"
+---
+# The scaling half: a plain KEDA ScaledObject fed by the add-on's
+# external scaler, tied to the InterceptorRoute above by name.
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  # Not "shelfmark": the old HTTPScaledObject's auto-created ScaledObject
+  # held that name. Whatever the name, KEDA's admission webhook denies
+  # this resource while that old HPA still manages the Deployment, so
+  # the migration sync fails once, Argo prunes the HTTPScaledObject
+  # (cascading away the old ScaledObject and HPA), and selfHeal creates
+  # this on the retry. Routing keeps working throughout — the
+  # InterceptorRoute takes precedence by name the moment it exists.
+  name: shelfmark-http
+  namespace: media
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shelfmark
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  # Seconds without traffic before scaling back to zero (was
+  # scaledownPeriod on the old resource). Open Socket.IO connections
+  # count as traffic, so an active search keeps it awake.
+  cooldownPeriod: 900
+  triggers:
+    - type: external-push
+      metadata:
+        scalerAddress: keda-add-ons-http-external-scaler.keda:9090
+        interceptorRoute: shelfmark

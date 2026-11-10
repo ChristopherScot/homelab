@@ -4,8 +4,9 @@
 #
 # Scale-to-zero routing: an opted-in app's Ingress points here instead of
 # at the app's own Service. The interceptor matches the request's Host
-# header against HTTPScaledObject.spec.hosts, scales the workload 0 -> 1,
-# holds the request until a pod is ready, then forwards. See
+# header against the app's InterceptorRoute rules, scales the workload
+# 0 -> 1, and serves the route's cold-start placeholder (or holds the
+# request) until a pod is ready, then forwards. See
 # raw/shelfmark/scale-to-zero.yaml for the per-app half.
 #
 # The proxy listens on 8080 — a chart-internal fact, like the service
