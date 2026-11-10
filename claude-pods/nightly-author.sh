@@ -83,9 +83,28 @@ collect_tickets() {
   done
 }
 
-# SKIP lines go to stderr inside collect_tickets, so they reach the log
-# without being mistaken for tickets here.
-mapfile -t TICKETS < <(collect_tickets | head -n "$MAX_TICKETS")
+# "work this one" — the dispatcher names a card and its repo when a
+# webhook or the reconcile sweep fires; the named card is worked
+# REGARDLESS of column. That column-blindness is load-bearing: the
+# reconcile sweep hands back cards stranded in In Progress by a run
+# that died after moving them, and a scan of To Do here would make that
+# hand-back a silent no-op that re-wakes the pods every hour forever
+# (the 2026-11-10 strand). Siblings nightly-test/nightly-merge carry
+# the same ${1:-} contract; this script didn't until it bit.
+# A hand-run with no arguments still scans To Do, position-ordered.
+ONLY_TASK="${1:-}"
+ONLY_REPO="${2:-}"
+if [ -n "$ONLY_TASK" ]; then
+  if [ -z "$ONLY_REPO" ]; then
+    echo "FATAL: a named task needs its repo too (dispatcher passes both)" >&2
+    exit 1
+  fi
+  TICKETS=("$ONLY_TASK $ONLY_REPO")
+else
+  # SKIP lines go to stderr inside collect_tickets, so they reach the log
+  # without being mistaken for tickets here.
+  mapfile -t TICKETS < <(collect_tickets | head -n "$MAX_TICKETS")
+fi
 
 if [ "${#TICKETS[@]}" -eq 0 ]; then
   echo "no actionable open issues; nothing to do"

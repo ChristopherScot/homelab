@@ -210,7 +210,10 @@ async function runStage(repo, pod, script, task) {
       // card, and that card is the work. The first real run moved CLA-13
       // to in-review and the test stage went off and tested an unrelated
       // PR instead.
-      `setsid nohup ${script} ${task} >/dev/null 2>&1 < /dev/null &`,
+      // The repo rides along so a named task is workable from ANY
+      // column without the stage re-resolving labels - the author's
+      // ONLY_TASK contract requires both.
+      `setsid nohup ${script} ${task} ${repo} >/dev/null 2>&1 < /dev/null &`,
     ],
     { stdio: "ignore" },
   );
@@ -300,31 +303,6 @@ async function repoForTask(taskId) {
 // the work that column implies actually exists on GitHub.
 
 const STALE_MS = Number(process.env.RECONCILE_STALE_MS ?? 4 * 60 * 60 * 1000);
-
-// Move a card. Kaneo's PUT wants the FULL task body with null fields
-// stripped (same contract scripts/kaneo documents); a status change
-// through here fires the webhook like any other move, which is fine -
-// the columns reconcile moves cards INTO are inert or self-consistent.
-async function kaneoMove(taskId, status) {
-  const key = readFileSync(
-    process.env.DISPATCH_API_KEY_FILE ?? "/run/secrets/kaneo/api-key",
-    "utf8",
-  ).trim();
-  const task = await kaneo(`/task/${encodeURIComponent(taskId)}`);
-  for (const k of Object.keys(task)) if (task[k] === null) delete task[k];
-  task.status = status;
-  const res = await fetch(
-    `${API_URL}/api/task/${encodeURIComponent(taskId)}`,
-    {
-      method: "PUT",
-      headers: { Authorization: `Bearer ${key}`,
-                 "Content-Type": "application/json" },
-      body: JSON.stringify(task),
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-  if (!res.ok) throw new Error(`move ${taskId} -> ${status}: ${res.status}`);
-}
 
 async function kaneo(path) {
   const key = readFileSync(
@@ -419,7 +397,7 @@ async function reconcile(dryRun) {
   const board = await kaneo(`/task/tasks/${PROJECT}`);
   const columns = board?.data?.columns ?? [];
   const now = Date.now();
-  const out = { checked: 0, redispatched: [], advanced: [], skipped: [], errors: [] };
+  const out = { checked: 0, redispatched: [], skipped: [], errors: [] };
 
   for (const col of columns) {
     // in-progress is no ROUTES column - nothing dispatches FROM it - but
@@ -427,12 +405,14 @@ async function reconcile(dryRun) {
     // the work second (deliberately, so a death mid-ticket reads as
     // attempted), which means an author that dies in between leaves
     // In Progress holding a card no column-watcher retries. CLA-15 sat
-    // there for hours after a four-second crash. Same philosophy as the
-    // routed columns: compare the column against the world. A PR on
-    // GitHub means the work happened and only the bookkeeping died -
-    // advance the card the way the author would have. No PR means the
-    // run died mid-work - re-dispatch the author with the card left in
-    // place, exactly like a stale to-do.
+    // there for hours after a four-second crash. The remedy is a
+    // hand-back, not a decision: the author's own mode logic is the one
+    // authoritative copy of what a card in any state is owed (advance an
+    // unreviewed PR, rework a declined one, resume pushed-but-unPRed
+    // work, or start fresh), so reconcile re-dispatches the author for
+    // every stale stranded card and decides nothing itself. An earlier
+    // draft advanced PR-carrying cards from here and got the policy
+    // wrong for rework and closed-PR cards within one review.
     const stranded = col.slug === "in-progress";
     const route = stranded ? ROUTES["to-do"] : ROUTES[col.slug];
     if (!route) continue; // inert column: nothing was ever owed here
@@ -464,20 +444,10 @@ async function reconcile(dryRun) {
           out.skipped.push(`${label}: ${route[0]} does not work ${repo}`);
           continue;
         }
-        if (workExists(stranded ? "to-do" : col.slug, repo, id)) {
-          if (stranded) {
-            // The author's job (a PR) is done; only its card move died.
-            // Finish the bookkeeping the way the author would have.
-            const age = Math.round((now - since) / 3600_000);
-            if (dryRun) {
-              out.advanced.push(`${label} (in-progress ${age}h, PR exists) [dry-run]`);
-              continue;
-            }
-            log(`RECONCILE ${label} stranded in in-progress with its PR open; advancing to in-review`);
-            await kaneoMove(id, "in-review");
-            out.advanced.push(`${label} (in-progress ${age}h, PR exists)`);
-            continue;
-          }
+        // Stranded cards skip this check on purpose: existing work is
+        // exactly what the author's mode logic exists to judge, and it
+        // must see the card to judge it.
+        if (!stranded && workExists(col.slug, repo, id)) {
           // The work ran; the card is simply waiting on the next stage,
           // or on a human. Not ours to restart.
           out.skipped.push(`${label}: work already exists`);
@@ -555,10 +525,9 @@ createServer((req, res) => {
       reconcile(dryRun)
         .then((r) => {
           log(
-            `RECONCILE done checked=${r.checked} redispatched=${r.redispatched.length} advanced=${r.advanced.length} skipped=${r.skipped.length} errors=${r.errors.length}`,
+            `RECONCILE done checked=${r.checked} redispatched=${r.redispatched.length} skipped=${r.skipped.length} errors=${r.errors.length}`,
           );
           for (const line of r.redispatched) log(`  redispatch ${line}`);
-          for (const line of r.advanced) log(`  advance    ${line}`);
           for (const line of r.skipped) log(`  skip       ${line}`);
           for (const line of r.errors) log(`  ERROR      ${line}`);
         })
