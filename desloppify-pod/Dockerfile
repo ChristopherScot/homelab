@@ -56,7 +56,7 @@ RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
 
 COPY --chmod=755 desloppify-pod/nightly-desloppify.sh desloppify-pod/verify-token-scope.sh /usr/local/bin/
-COPY desloppify-pod/policy.py desloppify-pod/run.py /usr/local/share/desloppify-pod/
+COPY desloppify-pod/policy.py desloppify-pod/report.py desloppify-pod/run.py /usr/local/share/desloppify-pod/
 # Account selection is shared with the session pods. Only this file, not
 # the rest of claude-pods/lib - the kubectl and Kaneo helpers there have
 # no use here.
