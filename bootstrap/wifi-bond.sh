@@ -59,7 +59,7 @@ done
 command -v nmcli >/dev/null || die "NetworkManager (nmcli) not found"
 
 PHASE=detect
-trap 'rc=$?; [ $rc -ne 0 ] && printf "FAILED during phase: %s\nThe old profiles are untouched until the transition phase; before that, nothing changed.\nAfter it: the dead-man restores the old wired profile within 90s, or run: nmcli con up \"$WIRED_CON\"\n" "$PHASE" >&2' EXIT
+trap 'rc=$?; [ $rc -ne 0 ] && printf "FAILED during phase: %s\nBefore the transition phase nothing network-affecting changed.\nFrom the transition on: the dead-man restores the old wired profile at T+180s if the bond never proved healthy; manual recovery is: nmcli con up \"$WIRED_CON\"\n" "$PHASE" >&2' EXIT
 
 # --- detect (same discipline as wifi-backup.sh) ---------------------------
 if [ -z "$WIRED_DEV" ]; then
@@ -95,6 +95,13 @@ GW=$(nmcli -g IP4.GATEWAY dev show "$WIRED_DEV" | head -1)
 # nmcli -g joins multiple values with " | "; ipv4.dns wants commas.
 DNS=$(nmcli -g IP4.DNS dev show "$WIRED_DEV" | sed 's/ | /,/g' | paste -sd, -)
 [ -n "$ADDR" ] && [ -n "$GW" ] || die "could not read IPv4 address/gateway from $WIRED_DEV"
+# The transition's health probe pings the gateway; prove that works from
+# the known-good wired path NOW, or every run would tear down networking
+# only to revert against an ICMP-dropping gateway.
+ping -c1 -W2 "$GW" >/dev/null || die "gateway $GW does not answer ping from the working wired path - the bond health probe would always fail"
+# Revert must restore the wifi profile's ORIGINAL autoconnect, whatever
+# it was - a reverted run must put the old world back, not a new one.
+WIFI_AUTOCONNECT_WAS=$(nmcli -g connection.autoconnect con show "$WIFI_CON")
 
 # SSH-over-wifi guard (socket table; SSH_CONNECTION dies under sudo).
 PHASE=ssh-guard
@@ -108,7 +115,9 @@ fi
 
 say "bond0      : $ADDR gw $GW dns ${DNS:-'(none)'} mode=active-backup primary=$WIRED_DEV fail_over_mac=active"
 say "wired port : $WIRED_DEV (from '$WIRED_CON', kept as rollback, autoconnect off)"
-say "wifi port  : $WIFI_DEV ssid '$SSID' (from '$WIFI_CON', kept as rollback, autoconnect off)"
+say "wifi port  : $WIFI_DEV ssid '$SSID' (from '$WIFI_CON', kept as rollback, autoconnect $WIFI_AUTOCONNECT_WAS -> off)"
+say "ipv6       : disabled on bond0 (old profile's IPv6 config is NOT mirrored)"
+[ -e /etc/NetworkManager/dispatcher.d/90-wifi-backup ] && say "legacy     : wifi-backup dispatcher+timer present - will be removed before the transition"
 if [ "$DETECT_ONLY" = yes ]; then trap - EXIT; say "(detect-only: nothing changed)"; exit 0; fi
 [ "$YES" = yes ] || die "re-run with --yes to apply exactly the above"
 
@@ -121,14 +130,64 @@ nmcli con add type bond ifname bond0 con-name bond0 \
   ipv6.method disabled connection.autoconnect yes connection.autoconnect-slaves 1 >/dev/null
 nmcli con add type ethernet ifname "$WIRED_DEV" con-name bond0-port-eth \
   master bond0 connection.autoconnect yes >/dev/null
-nmcli con add type wifi ifname "$WIFI_DEV" con-name bond0-port-wifi \
-  master bond0 ssid "$SSID" wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$PSK" \
-  connection.autoconnect yes >/dev/null
+# The wifi port is written as a keyfile, not via nmcli: a PSK on nmcli's
+# argv is readable in /proc/*/cmdline by every local user (and hostPID
+# pods) for the call's duration. The file is root-0600 from birth.
+WIFI_UUID=$(cat /proc/sys/kernel/random/uuid)
+umask 077
+cat > /etc/NetworkManager/system-connections/bond0-port-wifi.nmconnection <<EOF
+[connection]
+id=bond0-port-wifi
+uuid=$WIFI_UUID
+type=wifi
+interface-name=$WIFI_DEV
+master=bond0
+slave-type=bond
+autoconnect=true
+
+[wifi]
+mode=infrastructure
+ssid=$SSID
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$PSK
+
+[ipv4]
+method=disabled
+
+[ipv6]
+method=disabled
+EOF
+umask 022
+nmcli con reload
+
+# --- disarm leftovers that would fight the transition ---------------------
+# The wifi-backup dispatcher (if that approach ran on this node) reacts
+# to the very wired-down event the switch emits by raising the OLD wifi
+# profile - which holds the node's own IP - mid-transition: duplicate
+# address plus a fight over the wifi device, inside the dead-man window.
+# It cannot coexist with a bond; the repo copy remains the fallback.
+PHASE=disarm-legacy
+rm -f /etc/NetworkManager/dispatcher.d/90-wifi-backup
+systemctl disable --now wifi-backup.timer >/dev/null 2>&1 || true
+rm -f /usr/local/sbin/wifi-backup-reconcile
+# A rerun after a failed attempt finds stale transient units (failed
+# units persist until reset; a wedged switch may still run and could
+# touch the healthy flag AFTER our rm). Stop and reset them first, and
+# let systemd-run speak when it can't start - a dead-man that silently
+# failed to arm is worse than an aborted run.
+systemctl stop wifi-bond-switch.service wifi-bond-deadman.timer wifi-bond-deadman.service >/dev/null 2>&1 || true
+systemctl reset-failed wifi-bond-switch.service wifi-bond-deadman.service >/dev/null 2>&1 || true
 
 # --- transition: detached + dead-man --------------------------------------
 # Tearing down the old wired profile drops the SSH session running this
 # script, so the switch runs as a transient systemd unit (survives us)
-# and a second unit reverts everything unless the bond proves healthy.
+# and a dead-man unit reverts everything unless the bond proves healthy.
+# Revert has ONE authority at a time: it runs under a lock, re-checks
+# the healthy flag inside it, exits if the wired profile is already
+# back, and the switch's failure path stops the dead-man before
+# reverting itself.
 PHASE=transition
 cat > /run/wifi-bond-switch.sh <<EOF
 #!/bin/bash
@@ -143,28 +202,39 @@ if ip -4 addr show bond0 | grep -qF "${ADDR%/*}" && ping -c2 -W2 "$GW" >/dev/nul
   touch /run/wifi-bond-healthy
   logger -t wifi-bond "bond0 healthy at $ADDR"
 else
-  logger -t wifi-bond "bond0 UNHEALTHY - reverting now"
+  logger -t wifi-bond "bond0 UNHEALTHY - stopping dead-man, reverting"
+  systemctl stop wifi-bond-deadman.timer wifi-bond-deadman.service 2>/dev/null
   /run/wifi-bond-revert.sh
 fi
 EOF
 cat > /run/wifi-bond-revert.sh <<EOF
 #!/bin/bash
+exec 9>/run/wifi-bond.lock
+flock 9
+# Re-check UNDER the lock: the switch may have certified health while a
+# second revert invocation waited here.
 [ -e /run/wifi-bond-healthy ] && exit 0
-logger -t wifi-bond "dead-man: restoring '$WIRED_CON'"
+# Idempotence: if the wired profile is already active, a revert already
+# converged - re-upping it would bounce the operator's restored SSH.
+if nmcli -t -f NAME con show --active | grep -qxF "$WIRED_CON"; then exit 0; fi
+logger -t wifi-bond "revert: restoring '$WIRED_CON'"
 nmcli con down bond0 2>/dev/null || true
-nmcli con mod bond0 connection.autoconnect no 2>/dev/null || true
+for c in bond0 bond0-port-eth bond0-port-wifi; do
+  nmcli con mod "\$c" connection.autoconnect no 2>/dev/null || true
+done
 nmcli con mod "$WIRED_CON" connection.autoconnect yes
+nmcli con mod "$WIFI_CON" connection.autoconnect $WIFI_AUTOCONNECT_WAS 2>/dev/null || true
 nmcli --wait 30 con up "$WIRED_CON"
 EOF
 chmod 755 /run/wifi-bond-switch.sh /run/wifi-bond-revert.sh
-rm -f /run/wifi-bond-healthy
-systemd-run --unit wifi-bond-deadman --on-active=90 /run/wifi-bond-revert.sh >/dev/null 2>&1
-systemd-run --unit wifi-bond-switch /run/wifi-bond-switch.sh >/dev/null 2>&1
+rm -f /run/wifi-bond-healthy /run/wifi-bond.lock
+systemd-run --collect --unit wifi-bond-deadman --on-active=180 /run/wifi-bond-revert.sh
+systemd-run --collect --unit wifi-bond-switch /run/wifi-bond-switch.sh
 
 say "transition launched (detached). Reconnect if your SSH drops - the"
 say "address stays ${ADDR%/*} either way (bond0, or reverted wired)."
 PHASE=watch
-for i in $(seq 1 24); do
+for i in $(seq 1 44); do
   sleep 5
   if [ -e /run/wifi-bond-healthy ]; then
     trap - EXIT
@@ -178,6 +248,7 @@ for i in $(seq 1 24); do
     exit 0
   fi
 done
-say "transition still unconfirmed after 120s - if connectivity is gone,"
-say "the dead-man restores '$WIRED_CON' on its own. Check: journalctl -t wifi-bond"
+say "transition unconfirmed after 220s. The dead-man fired at 180s, so"
+say "by now '$WIRED_CON' HAS ALREADY been restored (or the revert itself"
+say "failed). Check: journalctl -t wifi-bond ; journalctl -u wifi-bond-switch"
 exit 1
