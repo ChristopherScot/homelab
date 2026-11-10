@@ -1,0 +1,163 @@
+# The scale-to-zero fleet at a glance: which sleepers are awake right
+# now, and when they woke/slept. Exists because nothing else surfaces
+# it — the Kaneo board doesn't know the cluster, Homepage has no tiles
+# for the pods, and Argo reports a 0-replica workload as Healthy, so
+# "asleep" and "broken" look identical everywhere but here.
+#
+# Queries use the DESIRED replica count (kube_*_spec/status by intent):
+# desired flips the moment KEDA or the dispatcher decides, so a wake
+# shows here seconds before the pod is Ready — this board answers "what
+# did the autoscaling decide", not "is the pod up yet".
+#
+# resyncPeriod re-pushes the dashboard even without a CR change — reverts
+# UI edits that drift from git (same convention as the MAM dashboard).
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata:
+  name: scale-to-zero
+  namespace: monitoring
+spec:
+  resyncPeriod: 5m
+  instanceSelector:
+    matchExpressions:
+      - key: dashboards
+        operator: In
+        values: [cloud, local]
+  json: |-
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "liveNow": false,
+      "panels": [
+        {
+          "type": "stat", "title": "claude-session",
+          "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "targets": [{ "expr": "kube_statefulset_replicas{namespace=\"claude-pods\",statefulset=\"claude-session\"}", "instant": true, "refId": "A" }],
+          "fieldConfig": { "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
+              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+            "unit": "none"
+          }, "overrides": [] },
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "type": "stat", "title": "desloppify",
+          "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "targets": [{ "expr": "kube_statefulset_replicas{namespace=\"claude-pods\",statefulset=\"desloppify\"}", "instant": true, "refId": "A" }],
+          "fieldConfig": { "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
+              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+            "unit": "none"
+          }, "overrides": [] },
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "type": "stat", "title": "shelfmark",
+          "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"media\",deployment=\"shelfmark\"}", "instant": true, "refId": "A" }],
+          "fieldConfig": { "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
+              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+            "unit": "none"
+          }, "overrides": [] },
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "type": "stat", "title": "jellyseerr",
+          "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"media\",deployment=\"jellyseerr\"}", "instant": true, "refId": "A" }],
+          "fieldConfig": { "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
+              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+            "unit": "none"
+          }, "overrides": [] },
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "type": "stat", "title": "paperless",
+          "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"paperless\",deployment=\"paperless\"}", "instant": true, "refId": "A" }],
+          "fieldConfig": { "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
+              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+            "unit": "none"
+          }, "overrides": [] },
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "type": "stat", "title": "paperless-sync",
+          "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "targets": [{ "expr": "kube_deployment_spec_replicas{namespace=\"paperless\",deployment=\"paperless-sync-trigger\"}", "instant": true, "refId": "A" }],
+          "fieldConfig": { "defaults": {
+            "mappings": [
+              { "type": "value", "options": { "0": { "text": "ASLEEP", "color": "blue", "index": 0 } } },
+              { "type": "range", "options": { "from": 1, "to": 99, "result": { "text": "AWAKE", "color": "green", "index": 1 } } }
+            ],
+            "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] },
+            "unit": "none"
+          }, "overrides": [] },
+          "options": { "colorMode": "background", "graphMode": "none", "textMode": "value", "reduceOptions": { "calcs": ["lastNotNull"] } }
+        },
+        {
+          "type": "timeseries", "title": "Desired replicas (wake/sleep history)",
+          "gridPos": { "h": 9, "w": 24, "x": 0, "y": 4 },
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "targets": [
+            { "expr": "kube_statefulset_replicas{namespace=\"claude-pods\",statefulset=~\"claude-session|desloppify\"}", "legendFormat": "{{statefulset}}", "refId": "A" },
+            { "expr": "kube_deployment_spec_replicas{namespace=\"media\",deployment=~\"shelfmark|jellyseerr\"}", "legendFormat": "{{deployment}}", "refId": "B" },
+            { "expr": "kube_deployment_spec_replicas{namespace=\"paperless\",deployment=~\"paperless|paperless-sync-trigger\"}", "legendFormat": "{{deployment}}", "refId": "C" }
+          ],
+          "fieldConfig": { "defaults": {
+            "custom": {
+              "drawStyle": "line",
+              "lineInterpolation": "stepAfter",
+              "lineWidth": 2,
+              "fillOpacity": 8,
+              "pointSize": 5,
+              "showPoints": "never",
+              "axisSoftMin": 0
+            },
+            "min": 0,
+            "unit": "none",
+            "decimals": 0
+          }, "overrides": [] },
+          "options": {
+            "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+            "tooltip": { "mode": "multi", "sort": "desc" }
+          }
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 39,
+      "tags": ["scale-to-zero", "keda"],
+      "templating": { "list": [] },
+      "time": { "from": "now-24h", "to": "now" },
+      "timezone": "browser",
+      "title": "Scale-to-Zero Fleet",
+      "uid": "scale-to-zero-fleet"
+    }
