@@ -9,3 +9,31 @@ spec:
   resources:
     requests:
       storage: 500Gi
+---
+# Keeps the share that actually holds the extras media bound to a PVC.
+#
+# jellyfin reaches that share through a static PV in another namespace
+# (arr-stack/_shared/extras-static-pv.yaml -> media/extras-data), and a static
+# PV is mounted by the in-tree kubelet NFS plugin, which never calls the
+# Synology CSI driver. The driver is what writes a share's NFS export rules,
+# one per node IP, rebuilt whenever it stages the volume. So a share reached
+# only through a static PV has nobody to refresh its rules, and every mount of
+# it fails with "No such file or directory" -- NFSv4's answer for a client that
+# matches no export rule -- the next time the nodes' IPs change. That is what
+# the 2026-11-09 wifi-to-wired migration did.
+#
+# This claim exists so the driver stages the volume and keeps its rules current.
+# It is deliberately not mounted by anything. Deleting it returns the PV to
+# Released, and jellyfin loses the share on its next restart.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: extras-data-legacy
+  namespace: extras
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: synology-nfs
+  volumeName: pvc-1f8d7069-868a-4303-a2ef-924526cf3124
+  resources:
+    requests:
+      storage: 500Gi
