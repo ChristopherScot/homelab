@@ -16,7 +16,12 @@ data:
 
     BUCKET = os.environ["S3_BUCKET"]
     PREFIX = os.environ.get("S3_PREFIX", "inbound/")
-    PAPERLESS = "http://paperless-paperless-ngx:8000"
+    # Via the KEDA interceptor's wake alias, not the Service directly:
+    # paperless sleeps at 0 replicas when idle (scale-to-zero.yaml) and
+    # a direct call to a sleeping Service is ECONNREFUSED. Through the
+    # alias, the 08:00 run IS the wake — the first request is held
+    # until paperless is ready.
+    PAPERLESS = "http://paperless-wake.paperless.svc.cluster.local:8080"
     TOKEN = os.environ["PAPERLESS_API_TOKEN"]
     HDRS = {"Authorization": f"Token {TOKEN}"}
 

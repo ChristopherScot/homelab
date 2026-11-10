@@ -18,7 +18,11 @@ spec:
   failedJobsHistoryLimit: 3
   jobTemplate:
     spec:
-      activeDeadlineSeconds: 240      # kill a run that hangs
+      # Kill a run that hangs. 600 rather than the old 240: the first
+      # request now also wakes paperless (scale-to-zero.yaml), and a
+      # cold boot — migrations check, celery start — is held inside the
+      # request, so the old budget could kill a healthy run mid-wake.
+      activeDeadlineSeconds: 600
       backoffLimit: 1
       template:
         spec:
