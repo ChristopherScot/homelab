@@ -23,7 +23,11 @@ metadata:
   namespace: codex-pods
 spec:
   serviceName: codex-session
-  replicas: 1
+  # No replicas: field — KEDA scales this between 0 (asleep, the steady
+  # state) and 1 (the daily window); see codex-scaledobject.yaml. A value
+  # here would make Argo selfHeal fight that scaling on every sync.
+  # Initial creation defaults to 1; KEDA sleeps it once the ScaledObject
+  # syncs outside the window.
   selector:
     matchLabels:
       app: codex-session

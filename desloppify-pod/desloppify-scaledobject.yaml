@@ -3,6 +3,12 @@
 # for a workload that runs on a schedule — rather than kubectl scale
 # commands baked into the trigger CronJob.
 #
+# This file is the cron-window pattern's documentation home: the window
+# invariant below, the counts-from-creation gotcha, and the
+# paused-replicas recipe apply to every instance. Other instances
+# (codex-pods/codex-scaledobject.yaml) carry their own numbers and point
+# here.
+#
 # The window brackets the nightly-desloppify CronJob (desloppify-cronjob.yaml):
 #   02:55  wake, five minutes before the 03:00 trigger, so the image pull
 #          and sidecars are usually ready before the exec's own
