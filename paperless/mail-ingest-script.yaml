@@ -48,8 +48,11 @@ data:
     def user_id(username):
         if username in _uid_cache:
             return _uid_cache[username]
+        # timeout=180, not 30: the first call of a run pays the wake —
+        # the interceptor holds it while paperless scales from zero and
+        # boots (migrations check, celery). Later calls hit a warm app.
         r = requests.get(f"{PAPERLESS}/api/users/?username__iexact={username}",
-                         headers=HDRS, timeout=30)
+                         headers=HDRS, timeout=180)
         r.raise_for_status()
         results = r.json().get("results", [])
         uid = results[0]["id"] if results else None
@@ -85,7 +88,7 @@ data:
 
     def main():
         paginator = s3.get_paginator("list_objects_v2")
-        total_objs = total_docs = 0
+        total_objs = total_docs = failed = 0
         for page in paginator.paginate(Bucket=BUCKET, Prefix=PREFIX):
             for o in page.get("Contents", []):
                 key = o["Key"]
@@ -100,7 +103,15 @@ data:
                 except Exception as e:
                     # leave the object in place for the next run; log + continue
                     print(f"ERROR {key}: {e}", file=sys.stderr, flush=True)
-        print(f"done: {total_objs} email(s), {total_docs} document(s)", flush=True)
+                    failed += 1
+        print(f"done: {total_objs} email(s), {total_docs} document(s), {failed} failed", flush=True)
+        # A run where every key failed must fail the Job: exit 0 here
+        # would report green while ingesting nothing, day after day, and
+        # would never trip backoffLimit's retry — which is exactly the
+        # retry that succeeds when the first attempt's failure was a
+        # cold start.
+        if failed and not total_objs:
+            sys.exit(1)
 
     if __name__ == "__main__":
         main()
