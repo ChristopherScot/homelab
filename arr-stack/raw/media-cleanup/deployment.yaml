@@ -35,7 +35,13 @@ data:
         ],
     }
     JELLYFIN = ('http://jellyfin.media.svc.cluster.local:8096', R('JELLYFIN_KEY'))
-    JELLYSEERR = ('http://jellyseerr.media.svc.cluster.local:5055', R('JELLYSEERR_KEY'))
+    # Via the KEDA interceptor's wake alias, not the Service directly:
+    # jellyseerr sleeps at 0 replicas when idle (see
+    # jellyseerr/scale-to-zero.yaml), and a direct call to a sleeping
+    # Service is ECONNREFUSED. Through the alias, a decline WAKES it —
+    # the request is held until the pod is ready, so expect the first
+    # cleanup after an idle stretch to take ~30s.
+    JELLYSEERR = ('http://jellyseerr-wake.media.svc.cluster.local:8080', R('JELLYSEERR_KEY'))
 
     HISTORY = []  # last 20 actions
     HISTORY_LOCK = threading.Lock()
@@ -88,7 +94,10 @@ data:
             return {'skipped': 'no api key'}
         # Find requests for this tmdb. Jellyseerr's /request endpoint lists by
         # media; we filter client-side because the filter param is finicky.
-        status, body = http('GET', f'{base}/api/v1/request?take=200', {'X-Api-Key': key})
+        # timeout=90, not the default 10: this first call pays the wake
+        # (the interceptor holds it while jellyseerr scales from zero,
+        # ~30-60s with the volume attach). Later calls hit a warm app.
+        status, body = http('GET', f'{base}/api/v1/request?take=200', {'X-Api-Key': key}, timeout=90)
         if status != 200:
             return {'error': f'list status={status}'}
         matches = [r for r in body.get('results', [])
