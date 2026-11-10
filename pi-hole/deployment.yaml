@@ -6,6 +6,10 @@ metadata:
     app: pihole
 spec:
   replicas: 1
+  # The config volume is RWO, so a new pod cannot attach it while the old
+  # one still holds it. RollingUpdate would deadlock.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: pihole
@@ -33,42 +37,24 @@ spec:
       volumes:
       - name: pihole-storage
         persistentVolumeClaim:
-          claimName: pihole-pvc-nfs
+          claimName: pihole-config
 ---
-apiVersion: v1
-kind: PersistentVolume
-metadata:
-  name: pihole-nfs-pv
-spec:
-  mountOptions:
-  # vers=4.1, not 3. The NAS refuses v3 for this export -- a v3 mount gets
-  # "Connection refused" while 4.1 mounts the same path fine. Under `hard`
-  # a refused mount retries forever instead of erroring, so pihole-FTL ends
-  # up in uninterruptible sleep holding /etc/pihole, stops answering on :53,
-  # and the pod still reports 1/1 Running because the readiness probe only
-  # checks the web port. That is the 2026-11-09 DNS outage.
-  - vers=4.1
-  - hard
-  - intr
-  capacity:
-    storage: 1Gi
-  accessModes:
-  - ReadWriteMany
-  storageClassName: ""
-  nfs:
-    server: 192.168.50.220
-    path: /volume1/k8s-pv/pihole
-  persistentVolumeReclaimPolicy: Retain
----
+# /etc/pihole on Longhorn, not NFS. pihole-FTL keeps SQLite databases here
+# and SQLite needs real POSIX locks, which NFS does not provide -- FTL blocked
+# in uninterruptible sleep on gravity.db and stopped answering :53 while the
+# readiness probe kept reporting the pod healthy.
+#
+# Data was copied from 192.168.50.220:/volume1/k8s-pv/pihole, which is left
+# in place as a fallback.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: pihole-pvc-nfs
+  name: pihole-config
+  namespace: default
 spec:
   accessModes:
-  - ReadWriteMany
-  storageClassName: ""
+  - ReadWriteOnce
+  storageClassName: longhorn
   resources:
     requests:
-      storage: 1Gi
-  volumeName: pihole-nfs-pv
+      storage: 2Gi
