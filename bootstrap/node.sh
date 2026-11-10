@@ -47,9 +47,3 @@ echo "Setting permissions for kubeconfig file..."
 sudo chmod 644 /etc/rancher/k3s/k3s.yaml
 
 echo "Node has successfully joined the k3s cluster as a controller/master!"
-# Networking: wifi stays installed as a BACKUP for the wired link, never
-# a second active interface (dual-active on one subnet black-holes
-# long-lived flows; see bootstrap/wifi-backup.sh's header for the 2026-11-10
-# incident). After the node is on Ethernet with its intended address:
-#   sudo bash bootstrap/wifi-backup.sh
-echo "Reminder: arm the wifi-backup failover (sudo bash bootstrap/wifi-backup.sh)"
