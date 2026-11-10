@@ -41,7 +41,13 @@ metadata:
   name: pihole-nfs-pv
 spec:
   mountOptions:
-  - vers=3
+  # vers=4.1, not 3. The NAS refuses v3 for this export -- a v3 mount gets
+  # "Connection refused" while 4.1 mounts the same path fine. Under `hard`
+  # a refused mount retries forever instead of erroring, so pihole-FTL ends
+  # up in uninterruptible sleep holding /etc/pihole, stops answering on :53,
+  # and the pod still reports 1/1 Running because the readiness probe only
+  # checks the web port. That is the 2026-11-09 DNS outage.
+  - vers=4.1
   - hard
   - intr
   capacity:
