@@ -21,8 +21,10 @@ discovered by probing (2026-11-10) and this script is their one home:
 
 Column semantics (dispatch.mjs ROUTES): moving a card to `to-do`,
 `in-review` or `mergeable` DISPATCHES WORK to a session pod - waking the
-StatefulSet if asleep. `backlog`, `in-progress`, `needs-human-review`
-and `done` are inert. A dispatched card needs exactly one `repo:<name>`
+StatefulSet if asleep. `backlog`, `needs-human-review` and `done` are
+inert. `in-progress` is inert for moves, but the hourly reconcile
+re-dispatches the author for any card stale there (a stranded card is
+work owed, not a parking spot). A dispatched card needs exactly one `repo:<name>`
 label or the dispatcher skips it; `create --repo` handles that.
 
 Auth, first match wins: $KANEO_API_KEY; /run/secrets/kaneo/api-key (the

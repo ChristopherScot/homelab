@@ -281,6 +281,11 @@ kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
 #   to-do        -> author  -> in-progress -> {in-review, backlog*, needs-human-review}
 #   in-review    -> test    -> {mergeable, to-do(+), needs-human-review}
 #   mergeable    -> merge   -> {done, needs-human-review, to-do(+)}
+#   in-progress  no column dispatches FROM it, but the hourly reconcile
+#       re-dispatches the author for any card STALE there (the author
+#       moves the card first and works second, so a death in between
+#       strands it — CLA-15, 2026-11-10). The author's own mode logic
+#       then decides: advance an unreviewed PR, rework, resume, or redo.
 #   needs-human-review  inert — waiting on a person
 #   done                inert — terminal, except a revert reopens to to-do(+)
 #

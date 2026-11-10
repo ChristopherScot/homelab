@@ -210,7 +210,10 @@ async function runStage(repo, pod, script, task) {
       // card, and that card is the work. The first real run moved CLA-13
       // to in-review and the test stage went off and tested an unrelated
       // PR instead.
-      `setsid nohup ${script} ${task} >/dev/null 2>&1 < /dev/null &`,
+      // The repo rides along so a named task is workable from ANY
+      // column without the stage re-resolving labels - the author's
+      // ONLY_TASK contract requires both.
+      `setsid nohup ${script} ${task} ${repo} >/dev/null 2>&1 < /dev/null &`,
     ],
     { stdio: "ignore" },
   );
@@ -397,7 +400,21 @@ async function reconcile(dryRun) {
   const out = { checked: 0, redispatched: [], skipped: [], errors: [] };
 
   for (const col of columns) {
-    const route = ROUTES[col.slug];
+    // in-progress is no ROUTES column - nothing dispatches FROM it - but
+    // a card can STRAND there: the author moves the card first and does
+    // the work second (deliberately, so a death mid-ticket reads as
+    // attempted), which means an author that dies in between leaves
+    // In Progress holding a card no column-watcher retries. CLA-15 sat
+    // there for hours after a four-second crash. The remedy is a
+    // hand-back, not a decision: the author's own mode logic is the one
+    // authoritative copy of what a card in any state is owed (advance an
+    // unreviewed PR, rework a declined one, resume pushed-but-unPRed
+    // work, or start fresh), so reconcile re-dispatches the author for
+    // every stale stranded card and decides nothing itself. An earlier
+    // draft advanced PR-carrying cards from here and got the policy
+    // wrong for rework and closed-PR cards within one review.
+    const stranded = col.slug === "in-progress";
+    const route = stranded ? ROUTES["to-do"] : ROUTES[col.slug];
     if (!route) continue; // inert column: nothing was ever owed here
     for (const task of col.tasks ?? []) {
       // The raw task id drives branch lookups; ticketId is only ever for
@@ -427,7 +444,10 @@ async function reconcile(dryRun) {
           out.skipped.push(`${label}: ${route[0]} does not work ${repo}`);
           continue;
         }
-        if (workExists(col.slug, repo, id)) {
+        // Stranded cards skip this check on purpose: existing work is
+        // exactly what the author's mode logic exists to judge, and it
+        // must see the card to judge it.
+        if (!stranded && workExists(col.slug, repo, id)) {
           // The work ran; the card is simply waiting on the next stage,
           // or on a human. Not ours to restart.
           out.skipped.push(`${label}: work already exists`);

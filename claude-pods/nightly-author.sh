@@ -83,9 +83,28 @@ collect_tickets() {
   done
 }
 
-# SKIP lines go to stderr inside collect_tickets, so they reach the log
-# without being mistaken for tickets here.
-mapfile -t TICKETS < <(collect_tickets | head -n "$MAX_TICKETS")
+# "work this one" — the dispatcher names a card and its repo when a
+# webhook or the reconcile sweep fires; the named card is worked
+# REGARDLESS of column. That column-blindness is load-bearing: the
+# reconcile sweep hands back cards stranded in In Progress by a run
+# that died after moving them, and a scan of To Do here would make that
+# hand-back a silent no-op that re-wakes the pods every hour forever
+# (the 2026-11-10 strand). Siblings nightly-test/nightly-merge carry
+# the same ${1:-} contract; this script didn't until it bit.
+# A hand-run with no arguments still scans To Do, position-ordered.
+ONLY_TASK="${1:-}"
+ONLY_REPO="${2:-}"
+if [ -n "$ONLY_TASK" ]; then
+  if [ -z "$ONLY_REPO" ]; then
+    echo "FATAL: a named task needs its repo too (dispatcher passes both)" >&2
+    exit 1
+  fi
+  TICKETS=("$ONLY_TASK $ONLY_REPO")
+else
+  # SKIP lines go to stderr inside collect_tickets, so they reach the log
+  # without being mistaken for tickets here.
+  mapfile -t TICKETS < <(collect_tickets | head -n "$MAX_TICKETS")
+fi
 
 if [ "${#TICKETS[@]}" -eq 0 ]; then
   echo "no actionable open issues; nothing to do"
@@ -108,18 +127,6 @@ for t in "${TICKETS[@]}"; do
   # nothing was attempted.
   kaneo_move "$task" in-progress
   git -C "$dir" fetch --quiet origin 2>/dev/null
-  if [ "$mode" = resume ] || [ "$mode" = rework ]; then
-    # Check out the existing work instead of resetting to main. Resetting
-    # here is what would throw away a resumable branch — the clone is
-    # shared and the reset is how a fresh ticket gets a clean tree, but
-    # for these two modes the branch IS the starting point.
-    branch="$(kaneo_branch_for_task "$task")"
-    git -C "$dir" checkout --quiet -B "$branch" "origin/$branch" 2>/dev/null \
-      || { echo "   SKIP $t: cannot check out $branch"; continue; }
-  else
-    git -C "$dir" checkout --quiet "$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)" 2>/dev/null
-    git -C "$dir" reset --hard --quiet origin/HEAD 2>/dev/null
-  fi
 
   # Fresh ticket or revision? Both arrive in To Do; the card's links are
   # what tells them apart. A card carrying an open PR was sent back by the
@@ -131,6 +138,11 @@ for t in "${TICKETS[@]}"; do
   # Resume exists because a run that stops between its first commit and
   # `gh pr create` leaves real work on the remote while the card looks
   # untouched — and the checkout below would otherwise abandon it.
+  #
+  # Determined BEFORE the checkout that consumes it: the 2026-11-09
+  # version had this block after, and under `set -u` the first ticket
+  # died on the unbound $mode four seconds in — every author run since,
+  # with the card stranded in In Progress.
   pr_url="$(kaneo_task_pr "$task")" && mode=rework || mode=author
   if [ "$mode" = author ]; then
     if resume_ahead="$(kaneo_unfinished_branch "$repo" "$task")"; then
@@ -165,6 +177,19 @@ for t in "${TICKETS[@]}"; do
     fi
     echo "   rework round $((rounds_done + 1)) on PR #$pr"
     export pr
+  fi
+
+  if [ "$mode" = resume ] || [ "$mode" = rework ]; then
+    # Check out the existing work instead of resetting to main. Resetting
+    # here is what would throw away a resumable branch — the clone is
+    # shared and the reset is how a fresh ticket gets a clean tree, but
+    # for these two modes the branch IS the starting point.
+    branch="$(kaneo_branch_for_task "$task")"
+    git -C "$dir" checkout --quiet -B "$branch" "origin/$branch" 2>/dev/null \
+      || { echo "   SKIP $t: cannot check out $branch"; continue; }
+  else
+    git -C "$dir" checkout --quiet "$(git -C "$dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)" 2>/dev/null
+    git -C "$dir" reset --hard --quiet origin/HEAD 2>/dev/null
   fi
 
   # Prompt lives in prompts/<mode>.md so it can be edited without touching
