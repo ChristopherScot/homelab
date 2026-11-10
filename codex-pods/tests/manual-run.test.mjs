@@ -32,7 +32,15 @@ if (args[0] === 'get' && args[1] === 'cronjob') {
   console.log('Worker finished');
 } else if (args[0] === 'get' && args[1] === 'pods') {
   const lookups = fs.readFileSync(process.env.CODEX_TEST_CALLS, 'utf8').trim().split('\\n')
-    .map(JSON.parse).filter(c => c[0] === 'get' && c[1] === 'pods').length;
+    .map(JSON.parse).filter(c => c[0] === 'get' && c[1] === 'pods' && c.at(-1) === args.at(-1)).length;
+  if (args.at(-1) === 'json') {
+    const state = mode === 'startup-timeout' ? {waiting:{reason:'ContainerCreating'}}
+      : mode === 'slow-start' && lookups === 2 ? {waiting:{reason:'ContainerCreating'}}
+      : mode === 'already-finished' ? {terminated:{exitCode:0}} : {running:{}};
+    console.log(JSON.stringify({items: mode === 'slow-start' && lookups === 1 ? []
+      : [{status:{containerStatuses:[{name:'codex',state}]}}]}));
+    process.exit(0);
+  }
   console.log(mode === 'missing-status' || (mode === 'delayed-worker-failed' && lookups === 1)
     ? '' : ['worker-failed', 'delayed-worker-failed'].includes(mode) ? '7' : '0');
 } else { console.error('Unexpected kubectl operation'); process.exit(99); }
@@ -88,12 +96,30 @@ test('following a failed worker returns its exit code without deleting its Job',
 test('following waits for a delayed failure status after log EOF', t => {
   const result = invoke(t, 'delayed-worker-failed', ['--follow']);
   assert.equal(result.status, 7, result.stderr);
-  assert.equal(result.calls.filter(c => c[0] === 'get' && c[1] === 'pods').length, 2);
+  assert.equal(result.calls.filter(c => c[0] === 'get' && c[1] === 'pods' && c.at(-1) !== 'json').length, 2);
 });
 
 test('missing termination status cannot silently report success', t => {
   const result = invoke(t, 'missing-status', ['--follow']);
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Could not confirm/);
-  assert.equal(result.calls.filter(c => c[0] === 'get' && c[1] === 'pods').length, 30);
+  assert.equal(result.calls.filter(c => c[0] === 'get' && c[1] === 'pods' && c.at(-1) !== 'json').length, 30);
+});
+
+for (const mode of ['slow-start', 'already-finished']) {
+  test(`following handles ${mode} before requesting logs`, t => {
+    const result = invoke(t, mode, ['--follow']);
+    assert.equal(result.status, 0, result.stderr);
+    const logIndex = result.calls.findIndex(c => c[0] === 'logs');
+    const startupQueries = result.calls.slice(0, logIndex)
+      .filter(c => c[0] === 'get' && c[1] === 'pods' && c.at(-1) === 'json');
+    assert.equal(startupQueries.length, mode === 'slow-start' ? 3 : 1);
+  });
+}
+
+test('startup timeout fails without deleting the independently running Job', t => {
+  const result = invoke(t, 'startup-timeout', ['--follow']);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /did not start within 10 minutes/);
+  assert.equal(result.calls.some(c => ['logs', 'delete'].includes(c[0])), false);
 });
