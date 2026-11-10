@@ -1,0 +1,254 @@
+#!/usr/bin/env bash
+# Ethernet-primary / wifi-backup via a kernel active-backup BOND: one
+# logical interface (bond0) holds the node's one address forever; the
+# kernel fails over between the wired port and the wifi in milliseconds
+# on carrier loss, and fails back to wired when it returns. The wifi
+# stays associated the whole time - a warm standby, never a second IP.
+#
+# This is the native replacement for bootstrap/wifi-backup.sh (the
+# dispatcher+reconciler approach): same goal, one declarative construct
+# instead of generated scripts. wifi-backup.sh REMAINS the fallback for
+# a node whose wifi driver refuses bond enslavement - that refusal is
+# exactly what the pop-os test of this script determines. Context for
+# why single-active-one-IP at all: wifi-backup.sh's header (2026-11-10).
+#
+# Bond specifics that matter:
+#   - mode=active-backup, primary=<wired>: wired wins whenever it has
+#     carrier; wifi only carries traffic while wired is down.
+#   - fail_over_mac=active: the bond adopts the ACTIVE slave's MAC.
+#     Required for wifi - an AP drops frames from a source MAC that
+#     never associated, so the bond must wear the wifi's own MAC while
+#     failed over. Failback re-adopts the wired MAC (gratuitous ARP
+#     re-points the switch).
+#   - miimon=100: carrier checked every 100ms.
+#
+# THE TRANSITION IS THE RISKY MOMENT: enslaving the wired port tears
+# down the connection your SSH rides. The switchover therefore runs as
+# a detached systemd unit on the node (survives your session dropping)
+# with a dead-man revert - if bond0 isn't healthy after 90s, the old
+# wired profile comes back automatically. The old profiles are kept
+# (autoconnect off) as the manual rollback:
+#   nmcli con down bond0; nmcli con up "<old wired con>"
+#
+# Run AS ROOT on the node, over the wired connection:
+#   sudo bash bootstrap/wifi-bond.sh --detect-only   # preview
+#   sudo bash bootstrap/wifi-bond.sh --yes           # apply
+# Overrides: --wired-dev DEV --wifi-con NAME.
+#
+# After it reports healthy: test for real. Pull the cable - the bond
+# fails to wifi in under a second (watch: cat /proc/net/bonding/bond0).
+# Plug back - it fails back to wired. Your SSH should survive both.
+set -euo pipefail
+
+say() { printf '%s\n' "$*"; }
+die() { printf 'ABORT: %s\n' "$*" >&2; exit 1; }
+
+YES=no; DETECT_ONLY=no; WIRED_DEV=""; WIFI_CON=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --yes) YES=yes ;;
+    --detect-only) DETECT_ONLY=yes ;;
+    --wired-dev) WIRED_DEV="$2"; shift ;;
+    --wifi-con) WIFI_CON="$2"; shift ;;
+    *) die "unknown argument: $1" ;;
+  esac
+  shift
+done
+
+[ "$(id -u)" = 0 ] || die "run as root (sudo)"
+command -v nmcli >/dev/null || die "NetworkManager (nmcli) not found"
+
+PHASE=detect
+trap 'rc=$?; [ $rc -ne 0 ] && printf "FAILED during phase: %s\nBefore the transition phase nothing network-affecting changed.\nFrom the transition on: the dead-man restores the old wired profile at T+180s if the bond never proved healthy; manual recovery is: nmcli con up \"$WIRED_CON\"\n" "$PHASE" >&2' EXIT
+
+# --- detect (same discipline as wifi-backup.sh) ---------------------------
+if [ -z "$WIRED_DEV" ]; then
+  ETH_COUNT=$(nmcli -t -f DEVICE,TYPE,STATE dev status | awk -F: '$2=="ethernet" && $3=="connected"' | wc -l)
+  [ "$ETH_COUNT" -le 1 ] || die "multiple connected ethernet devices - pass --wired-dev"
+  WIRED_DEV=$(nmcli -t -f DEVICE,TYPE,STATE dev status | awk -F: '$2=="ethernet" && $3=="connected" {print $1; exit}')
+fi
+[ -n "$WIRED_DEV" ] || die "no connected ethernet device"
+WIRED_CON=$(nmcli -t -f NAME,DEVICE con show --active | awk -F: -v d="$WIRED_DEV" '$2==d {print $1; exit}')
+[ -n "${WIRED_CON:-}" ] || die "no active connection on $WIRED_DEV"
+
+WIFI_DEV=$(nmcli -t -f DEVICE,TYPE dev status | awk -F: '$2=="wifi" {print $1; exit}')
+[ -n "${WIFI_DEV:-}" ] || die "no wifi device"
+if [ -z "$WIFI_CON" ]; then
+  WIFI_CON=$(nmcli -t -f NAME,DEVICE con show --active | awk -F: -v d="$WIFI_DEV" '$2==d {print $1; exit}')
+  [ -n "$WIFI_CON" ] || WIFI_CON=$(nmcli -t -f NAME,TYPE,TIMESTAMP con show | awk -F: '$2=="802-11-wireless" {print $3 ":" $1}' | sort -rn | head -1 | cut -d: -f2-)
+fi
+[ -n "$WIFI_CON" ] || die "no saved wifi profile - connect to the SSID once first"
+
+case "$WIRED_DEV$WIFI_DEV$WIFI_CON$WIRED_CON" in
+  *[\"\'\$\`\\]*) die "names contain shell metacharacters - rename or override" ;;
+esac
+
+SSID=$(nmcli -g 802-11-wireless.ssid con show "$WIFI_CON")
+PSK=$(nmcli -s -g 802-11-wireless-security.psk con show "$WIFI_CON" || true)
+[ -n "$SSID" ] || die "could not read SSID from '$WIFI_CON'"
+[ -n "$PSK" ] || die "could not read PSK from '$WIFI_CON' (open networks unsupported here on purpose)"
+
+ADDR_COUNT=$(nmcli -g IP4.ADDRESS dev show "$WIRED_DEV" | grep -c . || true)
+[ "$ADDR_COUNT" = 1 ] || die "$WIRED_DEV has $ADDR_COUNT IPv4 addresses; expected exactly one"
+ADDR=$(nmcli -g IP4.ADDRESS dev show "$WIRED_DEV" | head -1)
+GW=$(nmcli -g IP4.GATEWAY dev show "$WIRED_DEV" | head -1)
+# nmcli -g joins multiple values with " | "; ipv4.dns wants commas.
+DNS=$(nmcli -g IP4.DNS dev show "$WIRED_DEV" | sed 's/ | /,/g' | paste -sd, -)
+[ -n "$ADDR" ] && [ -n "$GW" ] || die "could not read IPv4 address/gateway from $WIRED_DEV"
+# The transition's health probe pings the gateway; prove that works from
+# the known-good wired path NOW, or every run would tear down networking
+# only to revert against an ICMP-dropping gateway.
+ping -c1 -W2 "$GW" >/dev/null || die "gateway $GW does not answer ping from the working wired path - the bond health probe would always fail"
+# Revert must restore the wifi profile's ORIGINAL autoconnect, whatever
+# it was - a reverted run must put the old world back, not a new one.
+WIFI_AUTOCONNECT_WAS=$(nmcli -g connection.autoconnect con show "$WIFI_CON")
+
+# SSH-over-wifi guard (socket table; SSH_CONNECTION dies under sudo).
+PHASE=ssh-guard
+WIFI_ADDRS=$( { nmcli -g IP4.ADDRESS dev show "$WIFI_DEV" 2>/dev/null | cut -d/ -f1; nmcli -g IP6.ADDRESS dev show "$WIFI_DEV" 2>/dev/null | cut -d/ -f1; } | grep . || true)
+if [ -n "$WIFI_ADDRS" ]; then
+  command -v ss >/dev/null || die "wifi holds addresses but ss(8) missing - cannot prove session safety"
+  for a in $WIFI_ADDRS; do
+    ss -Htn state established '( sport = :22 )' | grep -qF "$a" && die "an SSH session terminates on wifi address $a - reconnect via ${ADDR%/*}"
+  done
+fi
+
+say "bond0      : $ADDR gw $GW dns ${DNS:-'(none)'} mode=active-backup primary=$WIRED_DEV fail_over_mac=active"
+say "wired port : $WIRED_DEV (from '$WIRED_CON', kept as rollback, autoconnect off)"
+say "wifi port  : $WIFI_DEV ssid '$SSID' (from '$WIFI_CON', kept as rollback, autoconnect $WIFI_AUTOCONNECT_WAS -> off)"
+say "ipv6       : disabled on bond0 (old profile's IPv6 config is NOT mirrored)"
+[ -e /etc/NetworkManager/dispatcher.d/90-wifi-backup ] && say "legacy     : wifi-backup dispatcher+timer present - will be removed before the transition"
+if [ "$DETECT_ONLY" = yes ]; then trap - EXIT; say "(detect-only: nothing changed)"; exit 0; fi
+[ "$YES" = yes ] || die "re-run with --yes to apply exactly the above"
+
+# --- create the bond profiles (inert until the transition) ----------------
+PHASE=create-profiles
+for c in bond0 bond0-port-eth bond0-port-wifi; do nmcli con delete "$c" >/dev/null 2>&1 || true; done
+nmcli con add type bond ifname bond0 con-name bond0 \
+  bond.options "mode=active-backup,primary=$WIRED_DEV,miimon=100,fail_over_mac=active" \
+  ipv4.method manual ipv4.addresses "$ADDR" ipv4.gateway "$GW" ${DNS:+ipv4.dns "$DNS"} \
+  ipv6.method disabled connection.autoconnect yes connection.autoconnect-slaves 1 >/dev/null
+nmcli con add type ethernet ifname "$WIRED_DEV" con-name bond0-port-eth \
+  master bond0 connection.autoconnect yes >/dev/null
+# The wifi port is written as a keyfile, not via nmcli: a PSK on nmcli's
+# argv is readable in /proc/*/cmdline by every local user (and hostPID
+# pods) for the call's duration. The file is root-0600 from birth.
+WIFI_UUID=$(cat /proc/sys/kernel/random/uuid)
+umask 077
+cat > /etc/NetworkManager/system-connections/bond0-port-wifi.nmconnection <<EOF
+[connection]
+id=bond0-port-wifi
+uuid=$WIFI_UUID
+type=wifi
+interface-name=$WIFI_DEV
+master=bond0
+slave-type=bond
+autoconnect=true
+
+[wifi]
+mode=infrastructure
+ssid=$SSID
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$PSK
+
+[ipv4]
+method=disabled
+
+[ipv6]
+method=disabled
+EOF
+umask 022
+nmcli con reload
+
+# --- disarm leftovers that would fight the transition ---------------------
+# The wifi-backup dispatcher (if that approach ran on this node) reacts
+# to the very wired-down event the switch emits by raising the OLD wifi
+# profile - which holds the node's own IP - mid-transition: duplicate
+# address plus a fight over the wifi device, inside the dead-man window.
+# It cannot coexist with a bond; the repo copy remains the fallback.
+PHASE=disarm-legacy
+rm -f /etc/NetworkManager/dispatcher.d/90-wifi-backup
+systemctl disable --now wifi-backup.timer >/dev/null 2>&1 || true
+rm -f /usr/local/sbin/wifi-backup-reconcile
+# A rerun after a failed attempt finds stale transient units (failed
+# units persist until reset; a wedged switch may still run and could
+# touch the healthy flag AFTER our rm). Stop and reset them first, and
+# let systemd-run speak when it can't start - a dead-man that silently
+# failed to arm is worse than an aborted run.
+systemctl stop wifi-bond-switch.service wifi-bond-deadman.timer wifi-bond-deadman.service >/dev/null 2>&1 || true
+systemctl reset-failed wifi-bond-switch.service wifi-bond-deadman.service >/dev/null 2>&1 || true
+
+# --- transition: detached + dead-man --------------------------------------
+# Tearing down the old wired profile drops the SSH session running this
+# script, so the switch runs as a transient systemd unit (survives us)
+# and a dead-man unit reverts everything unless the bond proves healthy.
+# Revert has ONE authority at a time: it runs under a lock, re-checks
+# the healthy flag inside it, exits if the wired profile is already
+# back, and the switch's failure path stops the dead-man before
+# reverting itself.
+PHASE=transition
+cat > /run/wifi-bond-switch.sh <<EOF
+#!/bin/bash
+set -x
+nmcli con mod "$WIRED_CON" connection.autoconnect no
+nmcli con mod "$WIFI_CON" connection.autoconnect no
+nmcli con down "$WIFI_CON" 2>/dev/null || true
+nmcli con down "$WIRED_CON" 2>/dev/null || true
+nmcli --wait 30 con up bond0
+sleep 3
+if ip -4 addr show bond0 | grep -qF "${ADDR%/*}" && ping -c2 -W2 "$GW" >/dev/null; then
+  touch /run/wifi-bond-healthy
+  logger -t wifi-bond "bond0 healthy at $ADDR"
+else
+  logger -t wifi-bond "bond0 UNHEALTHY - stopping dead-man, reverting"
+  systemctl stop wifi-bond-deadman.timer wifi-bond-deadman.service 2>/dev/null
+  /run/wifi-bond-revert.sh
+fi
+EOF
+cat > /run/wifi-bond-revert.sh <<EOF
+#!/bin/bash
+exec 9>/run/wifi-bond.lock
+flock 9
+# Re-check UNDER the lock: the switch may have certified health while a
+# second revert invocation waited here.
+[ -e /run/wifi-bond-healthy ] && exit 0
+# Idempotence: if the wired profile is already active, a revert already
+# converged - re-upping it would bounce the operator's restored SSH.
+if nmcli -t -f NAME con show --active | grep -qxF "$WIRED_CON"; then exit 0; fi
+logger -t wifi-bond "revert: restoring '$WIRED_CON'"
+nmcli con down bond0 2>/dev/null || true
+for c in bond0 bond0-port-eth bond0-port-wifi; do
+  nmcli con mod "\$c" connection.autoconnect no 2>/dev/null || true
+done
+nmcli con mod "$WIRED_CON" connection.autoconnect yes
+nmcli con mod "$WIFI_CON" connection.autoconnect $WIFI_AUTOCONNECT_WAS 2>/dev/null || true
+nmcli --wait 30 con up "$WIRED_CON"
+EOF
+chmod 755 /run/wifi-bond-switch.sh /run/wifi-bond-revert.sh
+rm -f /run/wifi-bond-healthy /run/wifi-bond.lock
+systemd-run --collect --unit wifi-bond-deadman --on-active=180 /run/wifi-bond-revert.sh
+systemd-run --collect --unit wifi-bond-switch /run/wifi-bond-switch.sh
+
+say "transition launched (detached). Reconnect if your SSH drops - the"
+say "address stays ${ADDR%/*} either way (bond0, or reverted wired)."
+PHASE=watch
+for i in $(seq 1 44); do
+  sleep 5
+  if [ -e /run/wifi-bond-healthy ]; then
+    trap - EXIT
+    say "--- bond0:"
+    grep -E "Bonding Mode|Currently Active Slave|MII Status" /proc/net/bonding/bond0 | head -6
+    ip route show default
+    say "OK: bond0 active at $ADDR, wired primary, wifi warm standby."
+    say "Old profiles kept for rollback: nmcli con down bond0; nmcli con up \"$WIRED_CON\""
+    say "NOTE: reserve/exclude ${ADDR%/*} on the DHCP server."
+    say "Now pull the cable: active slave should flip to $WIFI_DEV in <1s."
+    exit 0
+  fi
+done
+say "transition unconfirmed after 220s. The dead-man fired at 180s, so"
+say "by now '$WIRED_CON' HAS ALREADY been restored (or the revert itself"
+say "failed). Check: journalctl -t wifi-bond ; journalctl -u wifi-bond-switch"
+exit 1
