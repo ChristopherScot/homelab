@@ -63,6 +63,11 @@ spec:
         spec:
           serviceAccountName: nightly-runner
           restartPolicy: Never
+          # Private ghcr image — without this the pull is anonymous and
+          # fails 401. kaneo-reconcile carries the same block for the
+          # same reason; its comment records the incident.
+          imagePullSecrets:
+            - name: ghcr-pull
           containers:
             - name: sleep
               image: ghcr.io/christopherscot/claude-pod:latest
