@@ -37,6 +37,26 @@ kubectl create job "$job" --from=cronjob/codex-dependabot -n "$namespace"
 printf '\nStarted %s. The pod exits when the task finishes; deadline: 6h30m.\n' "$job"
 printf 'Logs: kubectl logs -f job/%s -n %s -c codex --pod-running-timeout=600s\n' "$job" "$namespace"
 if "$follow"; then
+  # logs --pod-running-timeout does not wait through ContainerCreating.
+  # Accept a terminated container too: short jobs may finish before we observe it.
+  startup_deadline=$((SECONDS + 600))
+  started=false
+  for _ in {1..120}; do
+    if (( SECONDS >= startup_deadline )); then break; fi
+    if kubectl get pods -n "$namespace" -l "job-name=$job" \
+      --request-timeout=5s -o json | jq -e '
+        any(.items[]?.status.containerStatuses[]?;
+          .name == "codex" and (.state.running != null or .state.terminated != null))
+      ' >/dev/null; then
+      started=true
+      break
+    fi
+    sleep 5
+  done
+  if ! "$started"; then
+    printf 'Worker did not start within 10 minutes. Job %s continues independently.\n' "$job" >&2
+    exit 1
+  fi
   # Closing this log stream does not terminate the server-managed Job.
   kubectl logs -f "job/$job" -n "$namespace" -c codex --pod-running-timeout=600s
   # Kubelet log EOF can arrive before termination status reaches apiserver.
