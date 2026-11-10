@@ -14,7 +14,33 @@ spec:
   destination:
     server: 'https://kubernetes.default.svc'
     namespace: default
+  # Hands /spec/source/kustomize on every child Application to
+  # argocd-image-updater and stops reconciling it.
+  #
+  # The updater's write-back-method is argocd: the digest it resolves
+  # for claude-pods and desloppify-pod lands in spec.source.kustomize
+  # on the live child Application, not in git. With selfHeal on and
+  # this field reconciled, the root app reverted every digest within
+  # seconds, silently - the same failure apps/_homelabctl-services.yaml
+  # records for the ApplicationSet, and the same fix. Scoped to the one
+  # field the updater owns; everything else in a child still reconciles.
+  #
+  # RespectIgnoreDifferences below is what makes the ignore apply at
+  # sync time as well as at diff time. Without it the field still shows
+  # as in sync but the next sync overwrites it anyway.
+  #
+  # NOTHING SYNCS THIS FILE. It was applied once at bootstrap, so a
+  # change here is live only after:
+  #
+  #   kubectl apply -f app-of-apps/app-of-apps.yaml
+  ignoreDifferences:
+    - group: argoproj.io
+      kind: Application
+      jsonPointers:
+        - /spec/source/kustomize
   syncPolicy:
+    syncOptions:
+      - RespectIgnoreDifferences=true
     automated:
       # selfHeal but NOT prune — auto-applies new/changed Application CRs
       # so leaf apps get their spec updates without manual triggers, but a

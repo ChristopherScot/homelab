@@ -1,0 +1,31 @@
+# The presence of this file switches the claude-pods Argo Application
+# from directory mode to kustomize mode. That is the point: kustomize
+# mode is what lets argocd-image-updater pin the image by digest on the
+# live Application (spec.source.kustomize.images, write-back-method
+# argocd), so a build landing on :latest rolls every workload below and
+# every other pod start is a node-cache hit on an immutable ref.
+#
+# It also changes what "deploy" means. Directory mode applied every
+# top-level *.yaml here; kustomize applies only what is listed under
+# resources. A new manifest that is not added here is silently not
+# deployed - claude-pods/tests/image-pinning.sh fails on exactly that.
+# Subdirectories (dispatcher/, lib/, prompts/, skills/, tests/) hold
+# source, not manifests, and were never applied.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - kaneo-dispatcher.yaml
+  - kaneo-reconcile-cron.yaml
+  - kaneo-secrets.yaml
+  - nightly-cronjobs.yaml
+  - rbac.yaml
+  - secrets.yaml
+  - session-sleep-cron.yaml
+  - statefulset.yaml
+  - storageclass.yaml
+# The floor the image updater overrides. It rewrites every reference to
+# this image across the resources above - the session StatefulSet, the
+# dispatcher Deployment and the CronJobs move to the new digest together.
+images:
+  - name: ghcr.io/christopherscot/claude-pod
+    newTag: latest

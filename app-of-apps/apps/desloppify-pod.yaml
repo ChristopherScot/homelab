@@ -11,6 +11,15 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # Digest-pinned the same way as claude-pods; see that Application
+    # for the reasoning. The image is private, so the pull secret is
+    # named here too - it lives in claude-pods, the namespace this
+    # Application deploys into.
+    argocd-image-updater.argoproj.io/image-list: desloppify-pod=ghcr.io/christopherscot/desloppify-pod:latest
+    argocd-image-updater.argoproj.io/desloppify-pod.update-strategy: digest
+    argocd-image-updater.argoproj.io/desloppify-pod.pull-secret: pullsecret:claude-pods/ghcr-pull
+    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
   project: default
   source:

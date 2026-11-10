@@ -175,7 +175,8 @@ spec:
       containers:
         - name: desloppify
           image: ghcr.io/christopherscot/desloppify-pod:latest
-          imagePullPolicy: Always
+          # Digest-pinned via kustomization.yaml; pull-on-change, cache otherwise.
+          imagePullPolicy: IfNotPresent
           command: ["sleep", "infinity"]
           env:
             # The SDK spawns the claude binary, which reads this. Either

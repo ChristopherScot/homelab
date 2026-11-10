@@ -63,6 +63,8 @@ spec:
           containers:
             - name: trigger
               image: ghcr.io/christopherscot/claude-pod:latest
+              # Digest-pinned via kustomization.yaml; pull-on-change, cache otherwise.
+              imagePullPolicy: IfNotPresent
               volumeMounts:
                 - name: kaneo-webhook
                   mountPath: /run/secrets/kaneo

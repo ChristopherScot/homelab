@@ -42,10 +42,8 @@ spec:
       containers:
         - name: claude
           image: ghcr.io/christopherscot/claude-pod:latest
-          # Mutable :latest, re-pulled every rollout. Single maintainer who
-          # controls all image builds — the immutable-tag ceremony isn't worth
-          # it here; rebuild + rollout restart to update.
-          imagePullPolicy: Always
+          # Digest-pinned via kustomization.yaml; pull-on-change, cache otherwise.
+          imagePullPolicy: IfNotPresent
           # Wire git HTTPS push creds, pre-clone any repos listed in
           # CLONE_REPOS, then idle. You exec in, start `claude`, then
           # /remote-control.
