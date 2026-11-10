@@ -52,6 +52,22 @@ if ! mkdir -p "$STATE_DIR"; then
   exit 1
 fi
 
+# Probe that the log path actually holds writes before redirecting into
+# it. On a freshly woken pod the volume's first writes can flicker: the
+# 2026-11-10 03:00 run got ENOENT opening this exact path sixteen lines
+# after its mkdir succeeded, and died with the redirection as its only
+# witness. Retrying beats dying - the flicker was gone minutes later.
+_tries=0
+until touch "$LOG" 2>/dev/null; do
+  _tries=$((_tries + 1))
+  if [ "$_tries" -ge 5 ]; then
+    echo "FATAL: cannot write $LOG after $_tries attempts" >&2
+    exit 1
+  fi
+  sleep 3
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+done
+
 # Write to the file, then copy it to pid 1 on the way out, rather than
 # teeing through a process substitution. `exec > >(tee ...)` leaves the
 # substitution's stdin open with nothing to close it under `kubectl

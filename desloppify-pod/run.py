@@ -40,6 +40,7 @@ from claude_agent_sdk import (  # noqa: E402
 )
 
 import policy  # noqa: E402
+import report as report_mod  # noqa: E402
 
 PROJECT_PATH = "projects/webapp"
 
@@ -170,6 +171,14 @@ analysis for the queue, and don't rescan mid-queue.
 Do large refactors and small fixes with equal energy. Fix things properly,
 not minimally. But stop when you have a coherent batch — you have a budget,
 and a reviewable PR beats an exhaustive one.
+
+## Shell calls
+
+{policy.SHELL_CONTRACT}
+
+Denied calls still consume turns, and turns are the budget that runs out
+first: the 2026-11-10 run spent 34 turns on refused compounds and was
+then killed by max_turns six seconds before finishing.
 
 ## Committing
 
@@ -323,6 +332,21 @@ async def run(args: argparse.Namespace) -> int:
                    "summary": f"timed out after {args.timeout}s{where}"}
         print(f"TIMEOUT{where}", file=sys.stderr)
 
+    # When the run ends without a PR in its own report — killed, timed
+    # out, or errored — ask GitHub before believing it. One listing call
+    # separates "did no work" from "did the work and died before the
+    # bookkeeping", which need opposite responses from whoever reads the
+    # morning report. The wiring lives in report.py where the tests
+    # reach it without the SDK.
+    found = None
+    if not payload.get("pr_number"):
+        found = report_mod.pr_for_branch(args.repo, args.branch)
+    payload, pr_verified = report_mod.apply_pr_verification(payload, found)
+    if pr_verified:
+        print(f"VERIFIED: PR #{found} is open on GitHub for "
+              f"{args.branch}; overriding the self-reported outcome",
+              file=sys.stderr)
+
     report = {
         "repo": args.repo,
         "timed_out": timed_out,
@@ -349,11 +373,14 @@ async def run(args: argparse.Namespace) -> int:
         "tools_denied": len(audit.denied),
         "denials": [{"tool": t, "detail": d[:200], "reason": r}
                     for t, d, r in audit.denied],
+        "pr_verified": pr_verified,
         "rate_limit": rate_limit,
         "output": payload,
     }
     print(json.dumps(report, indent=2))
-    return 0 if (result and not result.is_error) else 1
+    # A verified PR is a successful run whatever killed the agent after
+    # the create: the work the pipeline exists for is on GitHub.
+    return 0 if (result and not result.is_error) or pr_verified else 1
 
 
 def main() -> int:

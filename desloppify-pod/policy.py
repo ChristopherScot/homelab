@@ -184,6 +184,22 @@ def _repo_args_ok(argv: list[str]) -> Decision | None:
     return None
 
 
+# The shell contract, stated once, next to the code that enforces it.
+# The agent prompt interpolates this rather than paraphrasing it: PR #129's
+# first draft paraphrased, claimed chaining was refused outright (it is
+# not - see check_bash's pipeline branch), and the two representations
+# disagreed at birth.
+SHELL_CONTRACT = (
+    "Command substitution, redirection and grouping are refused outright. "
+    "A pipeline or `&&`/`;` chain passes only if every clause passes on "
+    "its own - a simple pipe of allowed commands (`rg pattern | head`) is "
+    "fine. But the splitter is quote-blind: a quoted argument containing "
+    "`;`, `|`, `&` or `$` makes the whole call fail as unparseable, which "
+    "looks like chaining being refused. One command per Bash call is the "
+    "reliable habit."
+)
+
+
 def _split_commands(command: str) -> list[str]:
     return [c.strip() for c in re.split(r"\|\||&&|\||;", command) if c.strip()]
 

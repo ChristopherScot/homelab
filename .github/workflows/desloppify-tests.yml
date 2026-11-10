@@ -36,6 +36,10 @@ jobs:
         working-directory: desloppify-pod
         run: python3 test_timeout.py
 
+      - name: PR verification epilogue
+        working-directory: desloppify-pod
+        run: python3 test_report.py
+
       - name: Workspace mount check
         run: desloppify-pod/test-mount-check.sh
 
