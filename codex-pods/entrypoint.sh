@@ -6,6 +6,28 @@ umask 077
 unset OPENAI_API_KEY CODEX_API_KEY OPENAI_BASE_URL
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
 mkdir -p "$CODEX_HOME"
+if [ "$#" -eq 0 ]; then
+  echo 'FATAL: a worker command is required' >&2
+  exit 64
+fi
+# Shared across scheduled/manual pods. Hold through startup, OAuth refresh,
+# repairs and reviews, not just the task, so concurrent Jobs cannot corrupt
+# the writable login cache or shared checkout.
+exec 8>"$CODEX_HOME/worker.lock"
+if ! flock -n 8; then
+  echo 'Another Codex worker owns the shared workspace; refusing this run.' >&2
+  exit 75
+fi
+
+# Cache the pinned CLI on the existing home PVC. Subsequent runs need no npm
+# download to start, unlike the former emptyDir init container.
+CODEX_VERSION="${CODEX_VERSION:-0.167.0}"
+export PATH="$CODEX_HOME/tools/node_modules/.bin:$PATH"
+if ! { [ -x "$CODEX_HOME/tools/node_modules/.bin/codex" ] \
+  && "$CODEX_HOME/tools/node_modules/.bin/codex" --version 2>/dev/null | grep -qx "codex-cli $CODEX_VERSION"; }; then
+  npm install --prefix "$CODEX_HOME/tools" --cache "$CODEX_HOME/npm-cache" \
+    --prefer-offline --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
+fi
 cp /etc/codex-pod/config.toml "$CODEX_HOME/config.toml"
 
 # Seed once. Codex refreshes this writable copy on the home PVC; recopying the
@@ -41,5 +63,5 @@ timeout --kill-after=15s 180s codex exec --cd /tmp --skip-git-repo-check \
 jq -se -f /etc/codex-pod/startup-check.jq "$CODEX_HOME/startup-check.jsonl" >/dev/null
 grep -qx 'CODEX_POD_OK' "$CODEX_HOME/startup-check.txt"
 touch /tmp/codex-ready
-echo 'Codex ready: ChatGPT login verified; repository cloned; waiting for instructions.'
-exec sleep infinity
+echo 'Codex worker ready: ChatGPT login and shell execution verified; starting task.'
+exec "$@"
