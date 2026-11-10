@@ -21,12 +21,23 @@ printf 'testkey'    > "$tmp/api-key"
 # and podWorksRepo. Without it the fetch fails first and everything after
 # is never executed, which is how a missing import shipped: the test
 # passed because it never got that far.
-# A kubectl that fails instantly. The real one is present on CI runners
+# A kubectl that answers instantly. The real one is present on CI runners
 # and spends its 20s timeout trying to reach a cluster that is not there,
 # which is longer than any sane wait in a test. What is under test is the
 # dispatcher's own code path, not kubectl.
+#
+# scale and rollout succeed so ensureAwake() completes and the dispatch
+# walks on to the busy check; everything else (exec) fails, which the
+# dispatcher must read as "busy". A stub that failed scale too would end
+# every dispatch at the wake and leave the code after it untested.
 mkdir -p "$tmp/bin"
-printf '#!/bin/sh\nexit 1\n' > "$tmp/bin/kubectl"
+cat > "$tmp/bin/kubectl" <<'EOF'
+#!/bin/sh
+case "$1" in
+  scale|rollout) exit 0 ;;
+esac
+exit 1
+EOF
 chmod +x "$tmp/bin/kubectl"
 
 node -e '

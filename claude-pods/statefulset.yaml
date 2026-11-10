@@ -4,6 +4,16 @@
 #
 # Usage: kubectl exec -it -n claude-pods claude-session-0 -- bash
 #        then `claude`, then `/remote-control` to drive from phone/web.
+#
+# Asleep (0 replicas) when idle — see session-sleep-cron.yaml. The
+# dispatcher wakes the set before an exec; to attach interactively, wake
+# it yourself first:
+#   kubectl scale sts claude-session -n claude-pods --replicas=3
+# It stays awake while any pod holds the run lock, has a non-rc tmux
+# session, or saw phone remote-control activity in the last 30 minutes.
+# Interactive work must live in tmux (rclaude's layout does): a bare
+# `kubectl exec -it ... bash` emits none of those signals and the sleep
+# cron will scale the set away under it.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -11,7 +21,10 @@ metadata:
   namespace: claude-pods
 spec:
   serviceName: claude-session
-  replicas: 3
+  # No replicas: field — the dispatcher scales this to 3 before an exec
+  # and the session-sleep cron scales it to 0 when idle; a value here
+  # would make Argo selfHeal fight both. Initial creation defaults to 1;
+  # the first dispatch or sleep cycle settles it.
   selector:
     matchLabels:
       app: claude-session
