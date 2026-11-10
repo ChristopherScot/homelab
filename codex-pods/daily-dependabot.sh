@@ -8,10 +8,7 @@ if ! flock -n 9; then
   echo 'Codex is busy; daily Dependabot repair skipped.'
   exit 0
 fi
-# Exec output otherwise bypasses container logs and Loki. Keep both streams
-# visible to the trigger and to the pod's normal log collector.
-if [ -w /proc/1/fd/1 ]; then
-  exec > >(tee /proc/1/fd/1) 2>&1
-fi
+# This is the Job's main process, so stdout/stderr already reach container
+# logs and Loki. Do not tee back into PID 1's own output pipe.
 unset OPENAI_API_KEY CODEX_API_KEY OPENAI_BASE_URL
 exec timeout --kill-after=30s 21600s node /etc/codex-pod/dependabot.mjs "$@"

@@ -1,48 +1,4 @@
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: codex-daily-runner
-  namespace: codex-pods
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: codex-daily-runner
-  namespace: codex-pods
-rules:
-  - apiGroups: [""]
-    resources: [pods]
-    resourceNames: [codex-session-0]
-    verbs: [get]
-  - apiGroups: [""]
-    resources: [pods/exec]
-    resourceNames: [codex-session-0]
-    verbs: [create]
-  # `kubectl rollout status` GETs the StatefulSet (name-scoped below) and
-  # then WATCHes it. RBAC cannot scope list/watch by resourceName, so
-  # those two are namespace-wide; scaling stays KEDA's, so there is no
-  # scale write here.
-  - apiGroups: [apps]
-    resources: [statefulsets]
-    resourceNames: [codex-session]
-    verbs: [get]
-  - apiGroups: [apps]
-    resources: [statefulsets]
-    verbs: [list, watch]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: codex-daily-runner
-  namespace: codex-pods
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: codex-daily-runner
-subjects:
-  - kind: ServiceAccount
-    name: codex-daily-runner
-    namespace: codex-pods
+# Scheduled and manual runs use this same finite worker Job template.
 ---
 apiVersion: batch/v1
 kind: CronJob
@@ -50,64 +6,103 @@ metadata:
   name: codex-dependabot
   namespace: codex-pods
 spec:
-  schedule: "0 6 * * *"
+  schedule: 0 6 * * *
   timeZone: America/New_York
   concurrencyPolicy: Forbid
-  # 15 minutes, not an hour: the ScaledObject's window end must satisfy
-  #   end >= schedule + startingDeadlineSeconds + activeDeadlineSeconds
-  # (06:00 + 900 + 22320 = 12:27 <= 12:45), because the active deadline
-  # counts from job creation — a later-admitted run would still be going
-  # when KEDA closes the window and be killed half-done. A morning that
-  # can't start by 06:15 is skipped instead. The invariant's rationale
-  # lives on desloppify-pod/desloppify-scaledobject.yaml.
   startingDeadlineSeconds: 900
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
   jobTemplate:
+    metadata:
+      labels:
+        app: codex-runner
     spec:
       backoffLimit: 0
-      # The run's 6h02m budget (21720, unchanged) plus 10 minutes — the
-      # same fact wait-ready's --timeout states in seconds — for when the
-      # 05:55 wake is still npm-installing the CLI. The ScaledObject's
-      # window end is derived from this; see startingDeadlineSeconds
-      # above.
-      activeDeadlineSeconds: 22320
+      activeDeadlineSeconds: 23400
+      ttlSecondsAfterFinished: 86400
       template:
+        metadata:
+          labels:
+            app: codex-runner
         spec:
-          serviceAccountName: codex-daily-runner
-          restartPolicy: Never
-          initContainers:
-            # Wait for the pod KEDA woke at 05:55 (codex-scaledobject.yaml)
-            # to be ready before the exec. rollout status watches the
-            # StatefulSet itself, so it doesn't race the controller
-            # creating the pod object. If KEDA never woke it, this times
-            # out and the job fails visibly instead of exec'ing into
-            # nothing.
-            - name: wait-ready
-              image: registry.k8s.io/kubectl:v1.30.14
-              args:
-                - rollout
-                - status
-                - statefulset/codex-session
-                - -n
-                - codex-pods
-                - --timeout=600s
+          serviceAccountName: codex-worker
+          automountServiceAccountToken: false
+          imagePullSecrets:
+          - name: codex-ghcr-pull
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            fsGroup: 1000
           containers:
-            - name: trigger
-              image: registry.k8s.io/kubectl:v1.30.14
-              args:
-                - exec
-                - -n
-                - codex-pods
-                - codex-session-0
-                - -c
-                - codex
-                - --
-                - bash
-                - /etc/codex-pod/daily-dependabot.sh
-              resources:
-                requests:
-                  cpu: 10m
-                  memory: 32Mi
-                limits:
-                  memory: 128Mi
+          - name: codex
+            image: ghcr.io/christopherscot/claude-pod:latest
+            imagePullPolicy: Always
+            command:
+            - bash
+            - "/etc/codex-pod/entrypoint.sh"
+            workingDir: "/workspace"
+            env:
+            - name: HOME
+              value: "/home/node"
+            - name: CODEX_HOME
+              value: "/home/node/.codex"
+            - name: PATH
+              value: "/home/node/.codex/tools/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/node/go/bin"
+            - name: GIT_AUTHOR_NAME
+              value: Chris (codex-pod)
+            - name: GIT_COMMITTER_NAME
+              value: Chris (codex-pod)
+            - name: GIT_AUTHOR_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: codex-git
+                  key: email
+            - name: GIT_COMMITTER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: codex-git
+                  key: email
+            - name: CODEX_VERSION
+              value: 0.167.0
+            resources:
+              requests:
+                cpu: 100m
+                memory: 512Mi
+              limits:
+                memory: 4Gi
+            volumeMounts:
+            - name: home
+              mountPath: "/home/node"
+            - name: workspace
+              mountPath: "/workspace"
+            - name: config
+              mountPath: "/etc/codex-pod"
+              readOnly: true
+            - name: auth-seed
+              mountPath: "/run/secrets/codex"
+              readOnly: true
+            - name: git-creds
+              mountPath: "/run/secrets/git"
+              readOnly: true
+            args:
+            - bash
+            - "/etc/codex-pod/daily-dependabot.sh"
+          volumes:
+          - name: config
+            configMap:
+              name: codex-pod-config
+          - name: auth-seed
+            secret:
+              secretName: codex-auth-seed
+          - name: git-creds
+            secret:
+              secretName: codex-git
+          - name: home
+            persistentVolumeClaim:
+              claimName: home-codex-session-0
+          - name: workspace
+            persistentVolumeClaim:
+              claimName: workspace-codex-session-0
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 30

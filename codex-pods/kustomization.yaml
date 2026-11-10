@@ -3,9 +3,9 @@ kind: Kustomization
 namespace: codex-pods
 resources:
   - secrets.yaml
-  - statefulset.yaml
+  - worker.yaml
+  - storage.yaml
   - daily-cronjob.yaml
-  - codex-scaledobject.yaml
 configMapGenerator:
   - name: codex-pod-config
     files:
