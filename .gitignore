@@ -1,11 +1,14 @@
 .DS_Store
 
-# Agent / tooling state (settings.local.json, worktrees/, session state).
-# `/*` not `/`: git cannot re-include a child of an excluded DIRECTORY,
-# and .claude/skills/ below is project tooling that must ship with the
-# repo - it reaches the session pods through their clones.
-.claude/*
-!.claude/skills/
+# Agent / tooling state. ALL of it, skills included: the session pods
+# clone this repo, and anything in .claude/ that git carries becomes
+# instructions in THEIR sessions. The pods interact with kaneo (and
+# everything else) only through their explicit pipeline scripts - the
+# dispatcher's ROUTES table is the safety property, and a board-driving
+# skill in a pod's clone would hand the agents the steering wheel.
+# Workstation-only skills live in the main checkout's .claude/, local
+# and untracked.
+.claude/
 
 # One-off GitHub branch-protection helper; run by hand, not part of the deploy.
 scripts/protect-branches.sh
