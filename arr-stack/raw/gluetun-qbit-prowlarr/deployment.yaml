@@ -16,7 +16,12 @@ metadata:
   labels:
     app: gluetun-qbit-prowlarr
 spec:
-  replicas: 1
+  # TEMPORARY 2026-11-10: held at 0 so qbittorrent's config volume detaches
+  # for a btrfs check. The filesystem remounts read-only on every fresh iSCSI
+  # session with "parent transid verify failed ... wanted 23824 found 23697"
+  # on both mirrors, so qbittorrent cannot write its config and crash-loops.
+  # Restore to 1 once the volume is repaired or recreated.
+  replicas: 0
   strategy:
     type: Recreate
   selector:
