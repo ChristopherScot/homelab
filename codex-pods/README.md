@@ -38,7 +38,14 @@ still in progress. It works oldest PR first in a checkout reserved for this job,
 preserving ignored dependency caches between PRs. It asks Codex to read the CI
 logs, make a focused repair that preserves the dependency upgrade, and run the
 relevant checks. Missing services, memory, or credentials result in a failed
-attempt rather than a claimed pass. The existing **2 GiB** memory limit stays.
+attempt rather than a claimed pass. The container memory limit is **4 GiB**;
+its scheduling request remains 512 MiB. The original 2 GiB limit was exceeded
+during dependency installation in a real run.
+Yarn's heavy-task pool is limited to two workers and network concurrency to eight;
+Node subprocesses default to a 1024 MiB old-space heap cap. These settings avoid
+sizing Yarn's pool from all eight visible node CPUs. The prompt keeps the agent
+from raising them to larger CI settings. The heap cap is per Node process, not
+a limit on total container memory. See [Yarn's container sizing guidance](https://yarnpkg.com/configuration/yarnrc#taskPoolConcurrency).
 
 A separate Codex process reviews the exact staged patch and the repair's test
 log. The runner publishes only after passing validation and approval with no
