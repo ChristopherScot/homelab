@@ -301,6 +301,31 @@ async function repoForTask(taskId) {
 
 const STALE_MS = Number(process.env.RECONCILE_STALE_MS ?? 4 * 60 * 60 * 1000);
 
+// Move a card. Kaneo's PUT wants the FULL task body with null fields
+// stripped (same contract scripts/kaneo documents); a status change
+// through here fires the webhook like any other move, which is fine -
+// the columns reconcile moves cards INTO are inert or self-consistent.
+async function kaneoMove(taskId, status) {
+  const key = readFileSync(
+    process.env.DISPATCH_API_KEY_FILE ?? "/run/secrets/kaneo/api-key",
+    "utf8",
+  ).trim();
+  const task = await kaneo(`/task/${encodeURIComponent(taskId)}`);
+  for (const k of Object.keys(task)) if (task[k] === null) delete task[k];
+  task.status = status;
+  const res = await fetch(
+    `${API_URL}/api/task/${encodeURIComponent(taskId)}`,
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${key}`,
+                 "Content-Type": "application/json" },
+      body: JSON.stringify(task),
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  if (!res.ok) throw new Error(`move ${taskId} -> ${status}: ${res.status}`);
+}
+
 async function kaneo(path) {
   const key = readFileSync(
     process.env.DISPATCH_API_KEY_FILE ?? "/run/secrets/kaneo/api-key",
@@ -394,10 +419,22 @@ async function reconcile(dryRun) {
   const board = await kaneo(`/task/tasks/${PROJECT}`);
   const columns = board?.data?.columns ?? [];
   const now = Date.now();
-  const out = { checked: 0, redispatched: [], skipped: [], errors: [] };
+  const out = { checked: 0, redispatched: [], advanced: [], skipped: [], errors: [] };
 
   for (const col of columns) {
-    const route = ROUTES[col.slug];
+    // in-progress is no ROUTES column - nothing dispatches FROM it - but
+    // a card can STRAND there: the author moves the card first and does
+    // the work second (deliberately, so a death mid-ticket reads as
+    // attempted), which means an author that dies in between leaves
+    // In Progress holding a card no column-watcher retries. CLA-15 sat
+    // there for hours after a four-second crash. Same philosophy as the
+    // routed columns: compare the column against the world. A PR on
+    // GitHub means the work happened and only the bookkeeping died -
+    // advance the card the way the author would have. No PR means the
+    // run died mid-work - re-dispatch the author with the card left in
+    // place, exactly like a stale to-do.
+    const stranded = col.slug === "in-progress";
+    const route = stranded ? ROUTES["to-do"] : ROUTES[col.slug];
     if (!route) continue; // inert column: nothing was ever owed here
     for (const task of col.tasks ?? []) {
       // The raw task id drives branch lookups; ticketId is only ever for
@@ -427,7 +464,20 @@ async function reconcile(dryRun) {
           out.skipped.push(`${label}: ${route[0]} does not work ${repo}`);
           continue;
         }
-        if (workExists(col.slug, repo, id)) {
+        if (workExists(stranded ? "to-do" : col.slug, repo, id)) {
+          if (stranded) {
+            // The author's job (a PR) is done; only its card move died.
+            // Finish the bookkeeping the way the author would have.
+            const age = Math.round((now - since) / 3600_000);
+            if (dryRun) {
+              out.advanced.push(`${label} (in-progress ${age}h, PR exists) [dry-run]`);
+              continue;
+            }
+            log(`RECONCILE ${label} stranded in in-progress with its PR open; advancing to in-review`);
+            await kaneoMove(id, "in-review");
+            out.advanced.push(`${label} (in-progress ${age}h, PR exists)`);
+            continue;
+          }
           // The work ran; the card is simply waiting on the next stage,
           // or on a human. Not ours to restart.
           out.skipped.push(`${label}: work already exists`);
@@ -505,9 +555,10 @@ createServer((req, res) => {
       reconcile(dryRun)
         .then((r) => {
           log(
-            `RECONCILE done checked=${r.checked} redispatched=${r.redispatched.length} skipped=${r.skipped.length} errors=${r.errors.length}`,
+            `RECONCILE done checked=${r.checked} redispatched=${r.redispatched.length} advanced=${r.advanced.length} skipped=${r.skipped.length} errors=${r.errors.length}`,
           );
           for (const line of r.redispatched) log(`  redispatch ${line}`);
+          for (const line of r.advanced) log(`  advance    ${line}`);
           for (const line of r.skipped) log(`  skip       ${line}`);
           for (const line of r.errors) log(`  ERROR      ${line}`);
         })
