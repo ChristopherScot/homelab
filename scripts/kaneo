@@ -1,0 +1,268 @@
+#!/usr/bin/env python3
+"""kaneo - CLI for the kaneo board. stdlib only; runs on the workstation
+and inside the pods.
+
+Kaneo has no MCP and its HTTP API is undocumented; these routes were
+discovered by probing (2026-11-10) and this script is their one home:
+
+  GET  /api/task/tasks/{projectId}   the board (columns with tasks)
+  GET  /api/task/{taskId}            one task
+  POST /api/task/{projectId}         create  (NOT /api/task/create)
+  PUT  /api/task/{taskId}            update - wants the FULL task body
+                                     with null fields STRIPPED, and a
+                                     status change fires the dispatcher
+                                     webhook exactly like a UI drag.
+                                     GET-modify-PUT is a lost-update
+                                     window: a concurrent UI edit
+                                     between the two is overwritten
+                                     (the API offers nothing better)
+  POST /api/label                    attach a label; workspaceId required
+  GET  /api/label/task/{taskId}      a task's labels
+
+Column semantics (dispatch.mjs ROUTES): moving a card to `to-do`,
+`in-review` or `mergeable` DISPATCHES WORK to a session pod - waking the
+StatefulSet if asleep. `backlog`, `in-progress`, `needs-human-review`
+and `done` are inert. A dispatched card needs exactly one `repo:<name>`
+label or the dispatcher skips it; `create --repo` handles that.
+
+Auth, first match wins: $KANEO_API_KEY; /run/secrets/kaneo/api-key (the
+pods' mount); `kubectl get secret kaneo-api -n claude-pods` (the
+workstation path - key stays in process memory, never on disk).
+
+URL, first match wins: $KANEO_URL; the in-cluster Service when running
+in a pod; the LAN ingress hostname, falling back to the ingress IP with
+TLS verification off when LAN DNS is down (the cert is still the LAN
+one; the pin only bypasses name resolution).
+"""
+
+from __future__ import annotations
+
+import argparse
+import base64
+import json
+import os
+import socket
+import ssl
+import subprocess
+import sys
+import urllib.error
+import urllib.request
+
+PROJECT = os.environ.get("KANEO_PROJECT", "pwz0urubiajnchag39tcbjkl")
+WORKSPACE = os.environ.get("KANEO_WORKSPACE", "T35NW0wCz2RoFE7UvKLqqMAdNyjRtjRY")
+LAN_HOST = "kaneo.home.chrisscotmartin.com"
+INGRESS_IP = "192.168.50.225"
+DISPATCHING = {"to-do", "in-review", "mergeable"}
+COLUMNS = ["backlog", "to-do", "in-progress", "in-review",
+           "needs-human-review", "mergeable", "done"]
+
+_KEY: str | None = None
+_BASE: str | None = None
+_PINNED = False
+
+
+def api_key() -> str:
+    # Cached: a move makes three requests, and acquiring the key fresh
+    # each time means it could FAIL between them - a half-executed
+    # command path that needn't exist.
+    global _KEY
+    if _KEY:
+        return _KEY
+    _KEY = _acquire_key()
+    return _KEY
+
+
+def _acquire_key() -> str:
+    if os.environ.get("KANEO_API_KEY"):
+        return os.environ["KANEO_API_KEY"]
+    pod_mount = "/run/secrets/kaneo/api-key"
+    if os.path.exists(pod_mount):
+        return open(pod_mount).read().strip()
+    out = subprocess.run(
+        ["kubectl", "get", "secret", "kaneo-api", "-n", "claude-pods",
+         "-o", "jsonpath={.data.api-key}", "--request-timeout=10s"],
+        capture_output=True, text=True)
+    if out.returncode != 0:
+        sys.exit(f"kaneo: no API key: set $KANEO_API_KEY or fix kubectl "
+                 f"({(out.stderr or '').strip()[:120]})")
+    return base64.b64decode(out.stdout.strip()).decode().strip()
+
+
+def base_url() -> str:
+    global _BASE
+    if _BASE:
+        return _BASE
+    if os.environ.get("KANEO_URL"):
+        _BASE = os.environ["KANEO_URL"].rstrip("/")
+    elif os.path.exists("/var/run/secrets/kubernetes.io"):
+        _BASE = "http://kaneo.kaneo.svc.cluster.local:5173"
+    else:
+        try:
+            socket.getaddrinfo(LAN_HOST, 443)
+        except socket.gaierror:
+            _pin_ingress()
+        _BASE = f"https://{LAN_HOST}"
+    return _BASE
+
+
+def _pin_ingress() -> None:
+    # LAN DNS down: pin the ingress IP at the socket layer. The pin
+    # replaces RESOLUTION only - urllib still wraps the socket with
+    # server_hostname = LAN_HOST, so default certificate verification
+    # stays on and verifies the same LAN cert the DNS-working path
+    # would. Patched once, behind the flag: re-patching would capture
+    # the wrapper as the "real" function and stack one layer per call.
+    global _PINNED
+    if _PINNED:
+        return
+    _PINNED = True
+    real = socket.create_connection
+
+    def pinned(address, *a, **kw):
+        host, port = address
+        if host == LAN_HOST:
+            address = (INGRESS_IP, port)
+        return real(address, *a, **kw)
+
+    socket.create_connection = pinned
+
+
+def req(method: str, path: str, body=None):
+    r = urllib.request.Request(
+        base_url() + path, method=method,
+        headers={"Authorization": f"Bearer {api_key()}",
+                 "Content-Type": "application/json"})
+    if body is not None:
+        r.data = json.dumps(body).encode()
+    try:
+        with urllib.request.urlopen(r, timeout=20) as resp:
+            raw = resp.read()
+            return json.loads(raw) if raw else None
+    except urllib.error.HTTPError as e:
+        sys.exit(f"kaneo: {method} {path} -> {e.code}: "
+                 f"{(e.read() or b'')[:300].decode(errors='replace')}")
+    except urllib.error.URLError as e:
+        sys.exit(f"kaneo: {method} {path} -> unreachable: {e.reason}")
+
+
+def cmd_board(args):
+    data = req("GET", f"/api/task/tasks/{args.project}")
+    for col in (data or {}).get("data", {}).get("columns", []):
+        tasks = col.get("tasks") or []
+        print(f"{col.get('slug') or col.get('name')} ({len(tasks)})")
+        for t in tasks:
+            print(f"  #{t.get('number')}  {t.get('title')}  [{t['id']}]")
+
+
+def cmd_show(args):
+    print(json.dumps(req("GET", f"/api/task/{args.task_id}"), indent=2))
+    labels = req("GET", f"/api/label/task/{args.task_id}")
+    print("labels:", [l.get("name") for l in (labels or [])])
+
+
+def cmd_create(args):
+    # Mirror move's guard: creating straight into a dispatching column
+    # without the label the dispatcher requires is the same silent-skip,
+    # one step earlier. Create in backlog, then `move` - or --force.
+    # (Creating WITH --repo is still racy against the webhook if the
+    # create itself dispatches, since the label lands a request later;
+    # backlog-then-move is the safe path either way.)
+    if args.status in DISPATCHING and not args.repo and not args.force:
+        sys.exit(f"kaneo: refusing create into {args.status} without "
+                 f"--repo: the dispatcher skips unlabeled cards "
+                 f"(--force to create anyway)")
+    desc = (open(args.description_file).read()
+            if args.description_file else (args.description or ""))
+    task = req("POST", f"/api/task/{args.project}", {
+        "projectId": args.project,
+        "title": args.title,
+        "description": desc,
+        "status": args.status,
+        "priority": args.priority,
+    })
+    print(f"created #{task.get('number')} [{task['id']}] in {args.status}")
+    if args.repo:
+        req("POST", "/api/label", {
+            "name": f"repo:{args.repo}", "color": "blue",
+            "taskId": task["id"], "workspaceId": WORKSPACE})
+        print(f"labeled repo:{args.repo}")
+
+
+def cmd_move(args):
+    task = req("GET", f"/api/task/{args.task_id}")
+    # The API varies its envelope per endpoint (the board wraps in
+    # data.columns, create returns bare); unwrap defensively so a
+    # wrapped shape can't make the PUT body garbage.
+    if isinstance(task, dict) and "id" not in task and "data" in task:
+        task = task["data"]
+    if not isinstance(task, dict) or "id" not in task:
+        sys.exit(f"kaneo: unexpected task shape for {args.task_id}: "
+                 f"{str(task)[:200]}")
+    if args.column in DISPATCHING:
+        labels = [l.get("name", "") for l in
+                  (req("GET", f"/api/label/task/{args.task_id}") or [])]
+        if sum(1 for l in labels if l.startswith("repo:")) != 1:
+            msg = (f"card has labels {labels}; a dispatching column needs "
+                   f"exactly one repo:<name> label")
+            if not args.force:
+                sys.exit(f"kaneo: refusing move to {args.column}: {msg} "
+                         f"(--force to move anyway)")
+            print(f"WARNING: {msg}", file=sys.stderr)
+    task["status"] = args.column
+    task = {k: v for k, v in task.items() if v is not None}
+    out = req("PUT", f"/api/task/{args.task_id}", task)
+    # An empty PUT response must not crash AFTER the move succeeded -
+    # that would report failure for a dispatch that fired.
+    shown = out if isinstance(out, dict) else task
+    print(f"#{shown.get('number')} -> {shown.get('status', args.column)}"
+          + ("  (dispatches work; wakes the session pods if asleep)"
+             if args.column in DISPATCHING else ""))
+
+
+def cmd_label(args):
+    req("POST", "/api/label", {"name": args.name, "color": args.color,
+                               "taskId": args.task_id,
+                               "workspaceId": WORKSPACE})
+    print(f"labeled {args.name}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="kaneo", description=__doc__)
+    p.add_argument("--project", default=PROJECT)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("board", help="columns and their cards")
+
+    s = sub.add_parser("show", help="one card, with labels")
+    s.add_argument("task_id")
+
+    s = sub.add_parser("create", help="new card (backlog by default)")
+    s.add_argument("--title", required=True)
+    s.add_argument("--description")
+    s.add_argument("--description-file")
+    s.add_argument("--repo", help="adds the repo:<name> label the "
+                                  "dispatcher requires")
+    s.add_argument("--status", default="backlog", choices=COLUMNS)
+    s.add_argument("--priority", default="medium")
+    s.add_argument("--force", action="store_true")
+
+    s = sub.add_parser("move", help="move a card to a column; to-do/"
+                                    "in-review/mergeable dispatch work")
+    s.add_argument("task_id")
+    # choices, not a free string: a typo'd column would skip the
+    # dispatch guard and set an arbitrary status on an undocumented API.
+    s.add_argument("column", choices=COLUMNS)
+    s.add_argument("--force", action="store_true")
+
+    s = sub.add_parser("label", help="attach a label")
+    s.add_argument("task_id")
+    s.add_argument("name")
+    s.add_argument("--color", default="blue")
+
+    args = p.parse_args()
+    {"board": cmd_board, "show": cmd_show, "create": cmd_create,
+     "move": cmd_move, "label": cmd_label}[args.cmd](args)
+
+
+if __name__ == "__main__":
+    main()

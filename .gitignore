@@ -1,7 +1,11 @@
 .DS_Store
 
-# Agent / tooling state
-.claude/
+# Agent / tooling state (settings.local.json, worktrees/, session state).
+# `/*` not `/`: git cannot re-include a child of an excluded DIRECTORY,
+# and .claude/skills/ below is project tooling that must ship with the
+# repo - it reaches the session pods through their clones.
+.claude/*
+!.claude/skills/
 
 # One-off GitHub branch-protection helper; run by hand, not part of the deploy.
 scripts/protect-branches.sh
