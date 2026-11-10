@@ -1,7 +1,7 @@
 # Reverse-proxy entry for Home Assistant running on the k3s node directly via
 # Docker (port 8123 published on host). HA isn't in-cluster, so a Service with
 # no selector + EndpointSlice pointing at the node's LAN IP. ingress-nginx
-# proxies https://hass.home.chrisscotmartin.com -> http://192.168.50.179:8123.
+# proxies https://hass.home.chrisscotmartin.com -> http://192.168.50.164:8123.
 #
 # NB: HA strictly validates the Host header. Without `trusted_proxies` set in
 # its configuration.yaml, requests through this ingress get rejected with a
@@ -33,7 +33,7 @@ ports:
     protocol: TCP
 endpoints:
   - addresses:
-      - 192.168.50.179
+      - 192.168.50.164
     # See frontdoor/nas.yaml — declaring conditions explicitly keeps ArgoCD
     # from reporting the EndpointSlice as OutOfSync forever.
     conditions: {}
