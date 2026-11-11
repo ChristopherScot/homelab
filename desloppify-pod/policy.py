@@ -98,15 +98,26 @@ ALLOWED: dict[str, set[str]] = {
 ALLOWED_SUB: dict[str, set[str]] = {
     "gh stack": {"init", "add", "submit", "sync", "checkout", "view"},
     # Same argument for `gh pr`: 18 verbs are exposed and the runner's
-    # prompt instructs six. Refusing the dangerous ones by name left
-    # `gh pr new` -- gh's own documented alias for create, so _base_ok
-    # found no spec and skipped the base check entirely -- and `gh pr
-    # ready`, which marks a draft reviewable and is the same capability
-    # the `submit --open` rule refuses. Both allowed while the suite
-    # reported 166 green. Closing the namespace ends the class instead
-    # of adding two more names to it.
+    # prompt instructs a handful. Refusing the dangerous ones by name
+    # left `gh pr new` allowed -- gh's own documented alias for create,
+    # so _base_ok found no spec and skipped the base check entirely --
+    # while the suite reported green. Closing the namespace ends that
+    # class instead of adding one more name to it.
+    #
+    # ready and review are in: opening as drafts is a default the prompt
+    # states, not a boundary. Nothing merges from a draft either way,
+    # and barring the agent from ever marking one reviewable would stop
+    # a normal operation to enforce a preference. Only `submit --open`
+    # is refused, so the default holds without the capability being
+    # taken away.
+    #
+    # The verbs left out divide into two kinds, and only the first is a
+    # boundary: merge, close, reopen and revert change what is merged or
+    # orphan the PRs above them in a stack. checkout, lock, unlock and
+    # update-branch are simply unused -- add them if a run turns out to
+    # need one, rather than reading their absence as a prohibition.
     "gh pr": {"create", "view", "list", "comment", "edit", "checks",
-              "diff", "status"},
+              "diff", "status", "ready", "review"},
 }
 
 # gh's own command aliases, resolved to the canonical verb before any
@@ -192,11 +203,6 @@ SUB_REASONS: dict[tuple[str, str], str] = {
     ("gh stack", "modify"):
         "restructuring drops, folds and reorders branches -- unstack's "
         "authority through a TUI",
-    ("gh pr", "ready"):
-        "marking a draft ready is the reviewer's; overnight PRs stay "
-        "drafts, which is what `gh stack submit --open` is refused for",
-    ("gh pr", "review"):
-        "the agent does not review its own PRs",
     ("gh pr", "merge"):
         "merging is done by the runner after its checks, not by the agent",
     ("gh pr", "revert"):

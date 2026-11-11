@@ -40,6 +40,11 @@ ALLOW = [
     "gh pr new --base chris-agentic-looping --title t --body b",
     "gh pr edit 12 --title x",
     "gh pr checks 12",
+    # Drafts are the prompt's default, not a gate: the agent may mark
+    # one reviewable. Only `gh stack submit --open` is refused, which
+    # keeps the default without removing the capability.
+    "gh pr ready 7",
+    "gh pr review 7 --comment --body ok",
     "gh pr list --repo schoolhouse-world/app --state open",
     "gh pr comment 12 --repo schoolhouse-world/app --body hi",
     "gh api repos/schoolhouse-world/app/pulls/12",
@@ -155,9 +160,6 @@ DENY = [
     ("gh pr new --base main --title t --body b",
      "the create alias, against main"),
     ("gh pr new -B main --title t", "the same, short flag"),
-    # Same capability as `gh stack submit --open`, which is refused.
-    ("gh pr ready 7", "marks a draft reviewable"),
-    ("gh pr review 7 --approve", "approves its own PR"),
     ("gh pr close 7", "orphans the PRs above it in the stack"),
     # A repeated base flag: gh takes the last to appear, so a good value
     # followed by a bad one creates against the bad one. The walker used
@@ -285,7 +287,6 @@ REASON = [
     ("gh pr --repo schoolhouse-world/app edit 5 --base main",
      "retargeting a PR's base"),
     ("gh pr new --base main --title t", "only permitted PR base"),
-    ("gh pr ready 7", "marking a draft ready"),
 ]
 
 
@@ -294,7 +295,7 @@ REASON = [
 # denylist gone, this assertion is what fails.
 EXPECTED_STACK_SUBS = {"init", "add", "submit", "sync", "checkout", "view"}
 EXPECTED_PR_SUBS = {"create", "view", "list", "comment", "edit", "checks",
-                    "diff", "status"}
+                    "diff", "status", "ready", "review"}
 
 
 def main() -> int:
@@ -326,9 +327,8 @@ def main() -> int:
         missing = ", ".join(sorted(EXPECTED_PR_SUBS - got_pr)) or "none"
         failures.append(
             f"ALLOWED_SUB['gh pr'] changed: added [{extra}], removed "
-            f"[{missing}]. Adding a verb grants it outright -- `ready` "
-            f"and `review` defeat the drafts guarantee, `merge` and "
-            f"`create` the main guarantee")
+            f"[{missing}]. Adding a verb grants it outright -- `merge` "
+            f"and `create` reach the main guarantee")
 
     got = policy.ALLOWED_SUB.get("gh stack", set())
     if got != EXPECTED_STACK_SUBS:
