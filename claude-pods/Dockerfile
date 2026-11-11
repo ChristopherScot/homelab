@@ -324,7 +324,8 @@ COPY kbrowser.sh /usr/local/bin/kbrowser
 # of these three in the pod that owns that stage. pod 0 authors, pod 2
 # hunts for bugs, pod 1 gives an independent merge verdict.
 #
-# The CronJobs in nightly-cronjobs.yaml are suspended, kept as a fallback.
+# The CronJobs that used to run these on a clock were removed 2026-11-10;
+# the dispatcher is the only caller now.
 # The prompts ship as their own files (prompts/) rather than heredocs inside
 # the scripts, so they can be edited and diffed without touching shell code.
 COPY nightly-author.sh /usr/local/bin/nightly-author

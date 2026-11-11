@@ -204,7 +204,7 @@ if ip -4 addr show bond0 | grep -qF "${ADDR%/*}" && ping -c2 -W2 "$GW" >/dev/nul
 else
   logger -t wifi-bond "bond0 UNHEALTHY - stopping dead-man, reverting"
   systemctl stop wifi-bond-deadman.timer wifi-bond-deadman.service 2>/dev/null
-  /run/wifi-bond-revert.sh
+  /bin/bash /run/wifi-bond-revert.sh
 fi
 EOF
 cat > /run/wifi-bond-revert.sh <<EOF
@@ -228,8 +228,12 @@ nmcli --wait 30 con up "$WIRED_CON"
 EOF
 chmod 755 /run/wifi-bond-switch.sh /run/wifi-bond-revert.sh
 rm -f /run/wifi-bond-healthy /run/wifi-bond.lock
-systemd-run --collect --unit wifi-bond-deadman --on-active=180 /run/wifi-bond-revert.sh
-systemd-run --collect --unit wifi-bond-switch /run/wifi-bond-switch.sh
+# Via bash, not executed directly: Pop!_OS mounts /run noexec, and
+# systemd-run refuses an ExecStart on a noexec filesystem ("Failed to
+# find executable ... Permission denied" - the first pop-os apply).
+# bash only READS the file, which noexec permits.
+systemd-run --collect --unit wifi-bond-deadman --on-active=180 /bin/bash /run/wifi-bond-revert.sh
+systemd-run --collect --unit wifi-bond-switch /bin/bash /run/wifi-bond-switch.sh
 
 say "transition launched (detached). Reconnect if your SSH drops - the"
 say "address stays ${ADDR%/*} either way (bond0, or reverted wired)."

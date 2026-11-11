@@ -14,7 +14,7 @@ From the homelab repository:
 
 The first command submits a one-off Job from the GitOps-managed `codex-dependabot` CronJob template and returns its name and log command. `--follow` starts a run and streams logs; closing the terminal only stops watching. `--status` lists runs. Job submission is a runtime action; configuration changes still go through PRs and Argo CD.
 
-Each run starts its own pod. The container exits when the task succeeds or fails, releasing CPU and memory. A server-side six-hour task deadline plus 30 minutes for startup prevents an interrupted client from leaving it running forever. Finished Job/Pod records remain for one day, then TTL cleanup removes them. Login state, tools, workspace, and logs remain on persistent volumes.
+Each run starts its own pod. The container exits when the task succeeds or fails, releasing CPU and memory. A server-side six-hour task deadline plus 30 minutes for startup prevents an interrupted client from leaving it running forever. Finished Job/Pod records remain for one day, then TTL cleanup removes them. Login state, workspace, and logs remain on persistent volumes. The CLI is supplied by the worker image.
 
 The helper refuses to submit while a worker Job is active. A lock on the home PVC covers installation, OAuth refresh, and the full task, protecting the login and shared checkout if submissions race. A second worker that encounters the lock exits without working. Scheduled overlap is also prevented by `concurrencyPolicy: Forbid`.
 
@@ -24,15 +24,15 @@ The CronJob runs at **06:00 America/New_York**. It scans open Dependabot PRs in 
 
 Codex reads CI logs, makes focused repairs that preserve the dependency upgrade, and runs relevant checks. A separate Codex process reviews the exact staged patch and execution log. The runner checks working files, staged tree, HEAD, current PR head, and committed tree/parent before a normal push to the original Dependabot branch. It never merges, force-pushes, creates PRs, or posts comments. Workflow changes require human review.
 
-Yarn uses two heavy-task workers and eight network requests; Node subprocesses default to a 1024 MiB old-space heap cap. The pod limit is **4 GiB**, with a **512 MiB** scheduling request. The heap cap is per process, not total container memory. Missing resources and failed validation are reported rather than claimed as a pass.
+Yarn uses two heavy-task workers and eight network requests; Node subprocesses default to a 1024 MiB old-space heap cap. The pod limit is **4 GiB**, with a **512 MiB** scheduling request. Node prefers IPv4 and disables automatic address-family switching: the default 250 ms attempts failed against npm on the current cluster route, while a single IPv4 connection succeeded. These settings cover bootstrap npm and task subprocesses. The heap cap is per process, not total container memory. Missing resources and failed validation are reported rather than claimed as a pass.
 
 Logs and summaries persist under `/workspace/.codex-dependabot/run-*`. `daily-dependabot.sh --dry-run` only discovers candidates, without model calls, checkouts, commits, or pushes.
 
 ## Startup and isolation
 
-The worker locks its persistent state, installs Codex CLI **0.167.0** only when the cached version is missing or invalid, and configures the writable ChatGPT login. It verifies GitHub access and requires a real successful shell-tool JSONL event for `printf CODEX_POD_TOOL_OK`, plus the final `CODEX_POD_OK` response, before running its task.
+The worker locks its persistent state, verifies the image contains Codex CLI **0.167.0**, and configures the writable ChatGPT login. A missing or mismatched CLI fails startup immediately; startup never installs or updates it. It verifies GitHub access and requires a real successful shell-tool JSONL event for `printf CODEX_POD_TOOL_OK`, plus the final `CODEX_POD_OK` response, before running its task.
 
-The existing tooling image supplies development tools. The pinned CLI and npm cache live on the home PVC, so later starts do not download Codex again. No image pipeline or CI job is added. The worker has no Kubernetes API token, host mounts, elevated capabilities, or privileged mode.
+A dedicated `codex-pod` image adds the pinned CLI under `/opt/codex` to a digest-pinned copy of the existing development-tool image. The `codex-pod image` workflow builds and tests it with networking disabled and a fresh home directory before publishing. The Job references a published image digest through GitOps. The home PVC cannot shadow the image CLI; old cached CLI files are unused. The worker has no Kubernetes API token, host mounts, elevated capabilities, or privileged mode.
 
 Startup and task agents use `--sandbox danger-full-access` inside the unprivileged container because Bubblewrap cannot create a nested mount namespace here. The container is the isolation boundary, following the [official guidance](https://learn.chatgpt.com/docs/agent-approvals-security). Other invocations retain configured defaults.
 

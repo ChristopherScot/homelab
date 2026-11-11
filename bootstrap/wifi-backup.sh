@@ -63,7 +63,9 @@ fi
 
 ADDR=$(nmcli -g IP4.ADDRESS dev show "$WIRED_DEV" | head -1)
 GW=$(nmcli -g IP4.GATEWAY dev show "$WIRED_DEV" | head -1)
-DNS=$(nmcli -g IP4.DNS dev show "$WIRED_DEV" | paste -sd, -)
+# nmcli -g joins multiple values on one line with " | "; ipv4.dns wants
+# commas. (Caught by the pop-os --detect-only preview.)
+DNS=$(nmcli -g IP4.DNS dev show "$WIRED_DEV" | sed 's/ | /,/g' | paste -sd, -)
 [ -n "$ADDR" ] && [ -n "$GW" ] || die "could not read current IPv4 address/gateway from $WIRED_DEV"
 
 # Refuse to proceed if this session arrived via the wifi address: the

@@ -22,13 +22,86 @@ spec:
       execErrState: OK
       labels: { app: longhorn, severity: warning }
       annotations:
-        summary: "Longhorn volume {{ $labels.pvc_namespace }}/{{ $labels.pvc }} is not healthy (robustness code {{ $values.A }}: 0=unknown, 2=degraded, 3=faulted) on node {{ $labels.node }}"
-        description: "The Longhorn volume backing {{ $labels.pvc_namespace }}/{{ $labels.pvc }} has been in a non-healthy robustness state for over 10m. Check the Longhorn UI or `kubectl get volumes.longhorn.io -n longhorn-system`. Degraded usually self-heals via replica rebuild; faulted needs attention."
+        summary: "Longhorn volume {{ $labels.pvc_namespace }}/{{ $labels.pvc }} is not healthy (robustness code {{ $values.A }}: 2=degraded, 3=faulted) on node {{ $labels.node }}"
+        description: "The Longhorn volume backing {{ $labels.pvc_namespace }}/{{ $labels.pvc }} has been degraded or faulted for over 10m. Check the Longhorn UI or `kubectl get volumes.longhorn.io -n longhorn-system`. Degraded usually self-heals via replica rebuild; faulted needs attention."
       data:
         - refId: A
           relativeTimeRange: { from: 600, to: 0 }
           datasourceUid: grafanacloud-prom
-          model: { expr: "longhorn_volume_robustness != 1", instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+          # >= 2 means degraded or faulted. Robustness 0 (unknown) is what a
+          # DETACHED volume reports - every scale-to-zero app parks its volume
+          # there while asleep, so != 1 paged for healthy sleeping apps.
+          model: { expr: "longhorn_volume_robustness >= 2", instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
+    # Robustness only grades volumes that are SERVING. The failure it
+    # cannot see: a workload wants its volume and the attach never
+    # completes (dead LUN, node network black-hole) - the pod hangs in
+    # ContainerCreating while robustness reads "unknown". A healthy
+    # attach passes through state 4 in seconds; a scale-to-zero volume
+    # sleeps at 3 (detached) and never enters 4 uninvited.
+    - uid: dfml7stuckattach
+      title: Longhorn volume stuck attaching
+      condition: B
+      # 3m, not 10m: a healthy attach is in state 4 for seconds, and a
+      # wake-on-request app hangs its user the whole time. The floor is
+      # post-node-failure re-attach, where releasing the old attachment
+      # ticket can legitimately take a minute or two.
+      for: 3m
+      noDataState: OK
+      execErrState: OK
+      labels: { app: longhorn, severity: warning }
+      annotations:
+        summary: "Longhorn volume {{ $labels.pvc_namespace }}/{{ $labels.pvc }} has been stuck attaching for 3m on node {{ $labels.node }}"
+        description: "A workload is waiting on this volume but the attach has not completed in 3m (state=attaching). Its pod is likely stuck in ContainerCreating. Check `kubectl get volumes.longhorn.io -n longhorn-system`, `kubectl describe pod` for the consumer, and the Longhorn UI. Past causes here: iSCSI LUN gone, node network black-holing long flows."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          # longhorn_volume_state: 2=attached, 3=detached, 4=attaching
+          model: { expr: "longhorn_volume_state == 4", instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
+    # With filtering exprs above, "no data" is the healthy steady state -
+    # which makes a dead metrics pipeline indistinguishable from a healthy
+    # fleet. This backstop fires if the robustness family vanishes outright.
+    - uid: dfml7absentlhms
+      title: Longhorn metrics absent
+      condition: B
+      for: 15m
+      noDataState: OK
+      # Alerting, not OK: this rule IS the net under "no data means
+      # healthy". A query error (VictoriaMetrics down, datasource
+      # unreachable) blinds every rule in this stack at once; for: 15m
+      # damps transient restarts.
+      execErrState: Alerting
+      labels: { app: longhorn, severity: warning }
+      annotations:
+        summary: "Longhorn volume metrics have been absent for 15m - volume alerts are flying blind"
+        description: "longhorn_volume_robustness has no series at all, so the volume-health and stuck-attaching alerts above cannot fire regardless of actual volume state. Check longhorn-manager pods and the metrics pipeline (Alloy -> VictoriaMetrics)."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: "absent(longhorn_volume_robustness)", instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
         - refId: B
           relativeTimeRange: { from: 0, to: 0 }
           datasourceUid: __expr__

@@ -88,3 +88,33 @@ spec:
             maxDataPoints: 43200
             conditions:
               - evaluator: { type: gt, params: [0] }
+    # CrashLoopBackOff above catches containers that start and die; this
+    # catches containers that never start at all - stuck volume attach,
+    # a hung image pull, a missing secret. 15m rather than 10m: a cold
+    # image pull on this LAN can legitimately take several minutes.
+    - uid: cfmldstuckcreate
+      title: Pod stuck in ContainerCreating
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: workloads, severity: warning }
+      annotations:
+        summary: '{{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} stuck in ContainerCreating for 15m'
+        description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} has been waiting in ContainerCreating for 15m - it never started. Usual suspects: a volume that cannot attach (check `kubectl describe pod -n {{ $labels.namespace }} {{ $labels.pod }}` events and Longhorn), a hung image pull, or a missing secret/configmap."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'max by (namespace, pod, container) (kube_pod_container_status_waiting_reason{reason="ContainerCreating"})', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }

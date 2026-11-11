@@ -23,6 +23,15 @@ reclaimPolicy: Retain
 allowVolumeExpansion: true
 volumeBindingMode: Immediate
 ---
+# Don't put new PVCs here. Two volumes were lost on 2026-11-10, both in
+# the gluetun-qbit-prowlarr pod: qbittorrent-config came back from a node
+# reboot with btrfs reporting `parent transid verify failed` on both
+# mirrors, and gluetun-config's LUN vanished from the NAS outright while
+# its PVC and PV still read Bound.
+#
+# Neither was recoverable, because there is no VolumeSnapshotClass for
+# this provisioner -- only Longhorn has one. Use longhorn for anything
+# that matters; the remaining claims on this class are all Released.
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:

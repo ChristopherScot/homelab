@@ -28,7 +28,8 @@ SSH_HOST="${HOMELAB_SSH_HOST:-homelab}"
 # Rewrite it to an address this Mac can reach.
 #
 # Default to mDNS rather than the LAN IP or the Tailscale name:
-#   - the LAN IP (192.168.50.179) is a DHCP lease and can move;
+#   - the LAN IP (192.168.50.164) is a DHCP lease and can move - it was
+#     .179 until the 2026-11-09 wired migration, which is the point;
 #   - the Tailscale name is unreliable here on purpose - multiple tailnets
 #     are in play, so you can be physically home but signed into a
 #     different account, and /etc/hosts pins pop-os to a Tailscale IP that
