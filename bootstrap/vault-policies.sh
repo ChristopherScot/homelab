@@ -90,8 +90,14 @@ done
 # The ntfy grant was missing until 2026-11-10. ddns-secrets pulls four
 # keys, three from cert-manager/route53 and grafana_token from ntfy/config,
 # and Vault denied the whole read for the one ungranted path -- a 403 that
-# reads as an auth failure rather than a missing grant. Add the path here
-# when ddns starts reading a new one.
+# reads as an auth failure rather than a missing grant.
+#
+# The other half of this pair is the ExternalSecret in
+# ChristopherScot/ddns (deploy/ddns/externalsecret.yaml), which declares
+# the paths ddns reads. Nothing compares the two, so adding a path there
+# without adding it here fails exactly this way. ddns is hand-written
+# rather than homelabctl-scaffolded, so it has no config.yaml to derive
+# this from.
 vault policy write ddns - <<EOF
 path "kv/data/cert-manager/route53"     { capabilities = ["read"] }
 path "kv/metadata/cert-manager/route53" { capabilities = ["read", "list"] }
