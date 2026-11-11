@@ -218,6 +218,49 @@ SUB_REASONS: dict[tuple[str, str], str] = {
         "sanctioned path and carries --force-with-lease",
 }
 
+
+def _known_verbs(namespace: str) -> frozenset[str]:
+    """Every verb this gate has an opinion about, for one namespace.
+
+    Derived from the tables that hold the opinions, so a verb added to
+    any of them is recognised here without a second edit.
+    """
+    verbs = set(ALLOWED_SUB.get(f"gh {namespace}", ()))
+    verbs |= {v for (ns, v) in SUB_REASONS if ns == f"gh {namespace}"}
+    for key, canonical in VERB_ALIASES.items():
+        if len(key) == 3 and key[1] == namespace:
+            verbs.add(key[2])
+            verbs.add(canonical)
+    return frozenset(verbs)
+
+
+def _verb_of(namespace: str, words: list[str]) -> tuple[str | None, bool]:
+    """The verb among these positionals, and whether they are ambiguous.
+
+    gh resolves the first positional as the verb and validates flags
+    against that verb, so a flag belonging to the verb may legally come
+    before it: `gh pr --match-head-commit view merge 5 --squash` runs a
+    MERGE, with `view` consumed as the flag's value. Taking the first
+    positional read that as a `view`, so the merge refusal never ran --
+    and the three flags that reach it (--match-head-commit,
+    --author-email, --subject) are `gh pr merge`'s own, all three
+    missing from VALUE_FLAGS.
+
+    Enumerating harder is not the fix: VALUE_FLAGS copies another
+    project's flag arity and can only trail its releases. Instead pick
+    the word this gate recognises, and if two are recognised, report it
+    ambiguous so the caller refuses rather than choosing. A permitted
+    verb then cannot launder a refused one, whatever the flag table
+    happens to know.
+    """
+    known = _known_verbs(namespace)
+    found = [w for w in words if w in known]
+    if len(found) > 1:
+        return found[0], True
+    if found:
+        return found[0], False
+    return (words[0] if words else None), False
+
 FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # --- the main guarantee -------------------------------------------
     # Anything that could put a commit on a protected branch, or open a
@@ -503,6 +546,15 @@ def check_bash(command: str) -> Decision:
         words = _positionals(rest)
         sub = words[0] if words else None
         sub_at = rest.index(sub) if sub in rest else None
+        if sub is not None and f"gh {sub}" in ALLOWED_SUB:
+            verb, ambiguous = _verb_of(sub, words[1:])
+            if ambiguous:
+                return Decision(
+                    False,
+                    f"two subcommands named in `gh {sub}`: a flag's value "
+                    f"and a verb are indistinguishable here, and gh would "
+                    f"run the later one -- put the verb straight after "
+                    f"`gh {sub}`")
     else:
         sub_at = next((i for i, a in enumerate(rest)
                        if not a.startswith("-")), None)

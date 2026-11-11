@@ -161,6 +161,25 @@ DENY = [
      "the create alias, against main"),
     ("gh pr new -B main --title t", "the same, short flag"),
     ("gh pr close 7", "orphans the PRs above it in the stack"),
+    # gh resolves the FIRST positional as the verb and validates flags
+    # against that verb, so a flag belonging to the verb may legally
+    # precede it. These really run merge/edit/close -- gh 2.102.0
+    # reports "Merge a pull request on GitHub" for the first -- while
+    # the policy read the flag's value as a `view`. All three flags are
+    # `gh pr merge`'s own and were missing from VALUE_FLAGS, which is
+    # why enumerating flags harder cannot be the fix.
+    ("gh pr --match-head-commit view merge 5 --squash",
+     "two verbs named; gh runs the later one"),
+    ("gh pr --author-email view merge 5", "the same via --author-email"),
+    ("gh pr --subject view merge 5", "the same via --subject"),
+    ("gh pr --add-label view edit 164 --base main",
+     "the same, reaching the retarget gate"),
+    ("gh pr -c view close 164", "the same, reaching close"),
+    ("gh pr --match-head-commit view create --base main --title t",
+     "the same, reaching the base gate"),
+    # gh stack's flags are not in VALUE_FLAGS at all, so this class had
+    # to be closed without reference to the table.
+    ("gh stack --name view merge", "two verbs named in gh stack"),
     # A repeated base flag: gh takes the last to appear, so a good value
     # followed by a bad one creates against the bad one. The walker used
     # to stop at the first flag that had a value and approve these.
@@ -287,6 +306,11 @@ REASON = [
     ("gh pr --repo schoolhouse-world/app edit 5 --base main",
      "retargeting a PR's base"),
     ("gh pr new --base main --title t", "only permitted PR base"),
+    # The ambiguity refusal, not a lucky "unknown verb" denial: these
+    # launder a refused verb behind a permitted one as a flag value.
+    ("gh pr --match-head-commit view merge 5 --squash",
+     "two subcommands named"),
+    ("gh stack --name view merge", "two subcommands named"),
 ]
 
 
