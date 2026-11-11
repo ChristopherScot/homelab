@@ -4,7 +4,13 @@ on:
   push:
     branches: [main]
     paths:
+      # Same scoping as claude-pod-image: desloppify-pod/ also holds the
+      # k8s manifests and the test scripts, and the Dockerfile COPYs
+      # neither, so editing one used to rebuild the image for nothing.
       - 'desloppify-pod/**'
+      - '!desloppify-pod/**.yaml'
+      - '!desloppify-pod/test-*.sh'
+      - '!desloppify-pod/README.md'
       - '.github/workflows/desloppify-image.yml'
   workflow_dispatch:
 

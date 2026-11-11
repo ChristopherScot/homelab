@@ -4,7 +4,19 @@ on:
   push:
     branches: [main]
     paths:
+      # Only what actually lands in the image. claude-pods/ also holds
+      # the k8s manifests and the test suite, and neither is COPYd --
+      # so editing kaneo-dispatcher.yaml used to rebuild a container
+      # that does not contain it, mint a new digest, and force Argo to
+      # redeploy the very thing the manifest describes. A 1.6GB pull,
+      # during which nothing advances the Kaneo board, because the
+      # dispatcher is now the only trigger (the cronjobs went in #160).
+      # 2026-11-11 saw three such rebuilds in 45 minutes, all from
+      # comment and rename changes.
       - 'claude-pods/**'
+      - '!claude-pods/**.yaml'
+      - '!claude-pods/tests/**'
+      - '!claude-pods/README.md'
       - '.github/workflows/claude-pod-image.yml'
   workflow_dispatch:
 
