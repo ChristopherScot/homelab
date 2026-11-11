@@ -149,32 +149,46 @@ if ! git -C "$dir" rev-parse --verify --quiet "origin/$INTEGRATION_BRANCH" >/dev
   git -C "$dir" fetch --quiet origin || exit 1
 fi
 
-# Stack on the last night's work. PRs are left open for review, so
-# cutting each night from the integration branch would hand every run
-# the same base and make the second one conflict with the first.
-base_ref="origin/$INTEGRATION_BRANCH"
-base_pr=""
-prev=$(gh pr list --repo "$REPO" --base "$INTEGRATION_BRANCH" --state open \
-         --json number,headRefName,createdAt \
-         --jq '[.[] | select(.headRefName | startswith("desloppify/"))]
-               | sort_by(.createdAt) | last | "\(.number) \(.headRefName)"' 2>/dev/null)
-if [ -n "$prev" ] && [ "$prev" != "null" ]; then
-  base_pr="${prev%% *}"
-  prev_branch="${prev##* }"
-  if git -C "$dir" rev-parse --verify --quiet "origin/$prev_branch" >/dev/null; then
-    base_ref="origin/$prev_branch"
-    echo "stacking on PR #$base_pr ($prev_branch)"
-  else
-    echo "PR #$base_pr names a branch that is gone; basing on $INTEGRATION_BRANCH"
-  fi
-else
-  echo "no open desloppify PR; basing on $INTEGRATION_BRANCH"
-fi
-
+# Stack on the last night's work with gh-stack. PRs are left open for
+# review, so cutting each night from the integration branch would hand
+# every run the same base and make the second one conflict with the first.
+#
+# This used to hand-roll it: find the newest open desloppify PR, then
+# `git checkout -B new origin/that-branch`. That produced branches shaped
+# like a stack that GitHub did not know were one, so none of the stack
+# commands worked on them. In particular nothing retargeted the PRs above
+# one that merged -- GitHub only retargets on merge, never on close, and
+# a PR left based on a closed branch cannot be merged at all. homelab#64
+# sat unmergeable for ten days for exactly that reason.
+#
+# --base keeps the trunk at the integration branch. main is never the
+# trunk and never a base; the guard above refuses the run if this token
+# can even see main's protection settings.
 branch="desloppify/webapp-$(date +%Y%m%d-%H%M)"
-git -C "$dir" checkout --quiet -B "$branch" "$base_ref" || exit 1
+
+# checkout finds the stack CONTAINING a branch, and the trunk is not a
+# member of its own stack - so look up the newest open desloppify PR and
+# check that out instead. Any member reaches the whole stack.
+prev_pr=$(gh pr list --repo "$REPO" --base "$INTEGRATION_BRANCH" --state open \
+            --json number,headRefName,createdAt \
+            --jq '[.[] | select(.headRefName | startswith("desloppify/"))]
+                  | sort_by(.createdAt) | last | .number' 2>/dev/null)
+
+# gh stack has no -C; it acts on the repo in the current directory, and
+# this script otherwise never leaves its starting cwd (every git call
+# passes -C "$dir"). So each of these runs in a subshell that cd's first.
+if [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
+   && (cd "$dir" && gh stack checkout "$prev_pr" >/dev/null 2>&1); then
+  echo "found the existing stack via PR #$prev_pr"
+  (cd "$dir" && gh stack sync >/dev/null 2>&1) \
+    || echo "WARNING: gh stack sync failed; the stack may be behind its trunk"
+  (cd "$dir" && gh stack add "$branch") || exit 1
+  echo "work branch: $branch (added to the stack)"
+else
+  (cd "$dir" && gh stack init "$branch" --base "$INTEGRATION_BRANCH") || exit 1
+  echo "work branch: $branch (new stack on $INTEGRATION_BRANCH)"
+fi
 git -C "$dir" clean -qfd
-echo "work branch: $branch (from origin/$INTEGRATION_BRANCH)"
 
 # desloppify keeps its queue in .desloppify. The clone is reset between
 # runs, so the real directory lives on the PVC and is linked in - that is
@@ -208,6 +222,25 @@ fi
 report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
 
 # One attempt on the account currently selected, writing its report.
+# Agent directives fire at desloppify's own lifecycle transitions, which
+# is a better place for these than the prompt: triage fires exactly when
+# clustering happens, and execute fires as work starts, so the rule
+# arrives at the moment it applies rather than as one wall of text read
+# once at the beginning.
+#
+# Set here, not by hand on the pod, so they are version-controlled and a
+# rebuilt pod does not silently lose them. Both are idempotent.
+set_directives() (
+  cd "$dir" || return 0
+  desloppify directives set triage \
+    "Each cluster should be one systemic change that stands on its own as a PR. Merge clusters that are really the same change; split one that is two. A cluster of hundreds of items is not reviewable - carve off a coherent subset and leave the rest queued." \
+    >/dev/null 2>&1 || echo "WARNING: could not set the triage directive"
+  desloppify directives set execute \
+    "One cluster at a time. Finish it, commit it alone, then 'gh stack add' the next branch. One 'gh stack submit' at the end, never 'gh pr create'. Same budget as always - the same work, in reviewable pieces." \
+    >/dev/null 2>&1 || echo "WARNING: could not set the execute directive"
+)
+set_directives
+
 run_once() {
   "${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
     --repo "$REPO" --dir "$dir" --branch "$branch" \

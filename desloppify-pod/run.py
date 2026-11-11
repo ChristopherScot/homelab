@@ -182,14 +182,33 @@ then killed by max_turns six seconds before finishing.
 
 ## Committing
 
-You are on `{args.branch}`, cut from `{args.integration_branch}`. Commit
-your work there, push it, and open ONE pull request:
+You are on `{args.branch}`, the top of a gh-stack whose trunk is
+`{args.integration_branch}`. Open one PR per cluster rather than one for
+everything: a cluster is one systemic change, which is the unit a reviewer
+can hold in their head. Twenty mixed fixes in one diff is not.
 
-    gh pr create --repo {args.repo} --base {args.integration_branch} \\
-      --title "desloppify: <what you fixed>" --body "<details>"
+    desloppify plan cluster list          # what clusters exist
+    desloppify plan queue --cluster NAME  # the findings in one
 
-The PR body should say what findings you resolved, what the score did, and
-anything you deliberately deferred.
+Work a cluster to completion, then commit it alone. For the next cluster:
+
+    gh stack add desloppify/webapp-<cluster-slug>
+
+which branches from the one you are on, so the chain stays in order.
+When you are done with all of them, once:
+
+    gh stack submit
+
+That pushes every branch and opens or updates every PR in one call. Do
+not use `gh pr create` -- a PR made that way is not part of the stack,
+so nothing retargets it when the PR below it merges, and GitHub will not
+let it merge once its base closes.
+
+Title each PR after its cluster. The body should say what findings it
+resolved, what the score did, and anything deliberately deferred.
+
+A cluster of a thousand items is not one PR. Carve off a coherent subset,
+say in the body which part you took, and leave the rest queued.
 
 ## Tests
 
