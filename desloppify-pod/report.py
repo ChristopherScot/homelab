@@ -26,9 +26,6 @@ def prs_for_run(repo: str, branch: str) -> list[int]:
     verification silently returns nothing and a killed run reports real
     work as lost. test_report.py pins the pairing with real branch names.
 
-    Returns the head branch alongside each number so a caller can show
-    which cluster a PR belongs to.
-
     `--state open`, not `all`: the fact being verified is "the create
     succeeded seconds before the agent died", and that PR is open. A PR
     the agent opened and then deliberately closed is a decision, not
@@ -39,7 +36,7 @@ def prs_for_run(repo: str, branch: str) -> list[int]:
         out = subprocess.run(
             ["gh", "pr", "list", "--repo", repo,
              "--search", f"head:{branch}", "--state", "open",
-             "--json", "number,headRefName"],
+             "--json", "number"],
             capture_output=True, text=True, timeout=30,
         )
         if out.returncode != 0:
@@ -58,17 +55,39 @@ def prs_for_run(repo: str, branch: str) -> list[int]:
         return []
 
 
+def normalize_pr_fields(payload: dict) -> dict:
+    """Make pr_numbers authoritative and pr_number derived from it.
+
+    One run now opens one PR per cluster, so the list is the fact and
+    the scalar is a view of it -- kept because the logfmt line and the
+    lockfile check read a single number. Deriving it here, at the one
+    place the report is assembled, is what stops the two from
+    disagreeing: a payload naming only `pr_numbers` used to ship
+    `pr_number: null`, and the runner's `[ -z "$pr" ]` gate then
+    announced "complete (no PR)" over three open PRs -- the same
+    failure this module exists to prevent, one field over.
+    """
+    numbers = [n for n in (payload.get("pr_numbers") or []) if n is not None]
+    if not numbers and payload.get("pr_number") is not None:
+        numbers = [payload["pr_number"]]
+    if not numbers:
+        return payload
+    return {**payload, "pr_numbers": numbers, "pr_number": numbers[0]}
+
+
 def apply_pr_verification(payload: dict, found: list[int]) -> tuple[dict, bool]:
-    """Fold a GitHub-verified PR into a self-report that lacks one.
+    """Fold GitHub-verified PRs into a self-report that lacks them.
 
     Returns the (possibly corrected) payload and whether a correction
     was applied. A payload that already names a PR is left alone - the
     verification exists for the run that died before its bookkeeping,
-    not to second-guess one that finished.
+    not to second-guess one that finished. Either way the caller gets
+    pr_number and pr_numbers in agreement.
     """
-    if payload.get("pr_numbers") or payload.get("pr_number") or not found:
+    if payload.get("pr_numbers") or payload.get("pr_number"):
+        return normalize_pr_fields(payload), False
+    if not found:
         return payload, False
-    return {**payload,
-            "outcome": "PROGRESS",
-            "pr_number": found[0],
-            "pr_numbers": found}, True
+    return normalize_pr_fields({**payload,
+                                "outcome": "PROGRESS",
+                                "pr_numbers": found}), True

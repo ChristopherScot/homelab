@@ -113,3 +113,47 @@ with mock.patch.object(report.subprocess, "run",
     assert report.prs_for_run("o/r", "b") == []
 
 print("test_report: all assertions passed")
+
+# pr_number is a view of pr_numbers, and the two must never disagree.
+# They did: a payload naming only pr_numbers shipped `pr_number: null`,
+# because apply_pr_verification short-circuited on pr_numbers being
+# truthy and declined to derive the scalar. The runner's
+# `pr=$(jq -r '.pr_number // empty')` gate then printed "complete
+# (no PR)" and exited before the multi-PR footer -- three open PRs
+# reported as no work, which is the 2026-11-10 incident this module
+# exists to prevent, one field over.
+AGREEMENT = [
+    # (payload, found, expected pr_number, expected pr_numbers)
+    ({"outcome": "PROGRESS", "pr_number": None,
+      "pr_numbers": [29, 30, 31]}, [], 29, [29, 30, 31]),
+    ({"outcome": "PROGRESS", "pr_numbers": [29, 30, 31]}, [], 29, [29, 30, 31]),
+    ({"outcome": "PROGRESS", "pr_number": 29}, [], 29, [29]),
+    ({"outcome": "PROGRESS", "pr_numbers": [42]}, [], 42, [42]),
+    ({"outcome": "BLOCKED", "pr_number": None}, [29, 30, 31], 29, [29, 30, 31]),
+    ({"outcome": "BLOCKED", "pr_number": None}, [], None, []),
+    ({"outcome": "NOTHING_TO_DO", "pr_number": None}, [], None, []),
+    ({"outcome": "PROGRESS", "pr_numbers": [29, None, 31]}, [], 29, [29, 31]),
+]
+for payload, found, want_n, want_ns in AGREEMENT:
+    out, _ = report.apply_pr_verification(dict(payload), found)
+    got_n = out.get("pr_number")
+    got_ns = out.get("pr_numbers", [])
+    assert got_n == want_n, (
+        f"{payload} with found={found}: pr_number is {got_n}, want {want_n}")
+    assert got_ns == want_ns, (
+        f"{payload} with found={found}: pr_numbers is {got_ns}, "
+        f"want {want_ns}")
+    # The invariant the shell gate depends on, stated directly: an empty
+    # list means no PR, and otherwise the scalar is the list's first.
+    assert (got_ns == [] and got_n is None) or got_n == got_ns[0], (
+        f"pr_number {got_n} disagrees with pr_numbers {got_ns} -- the "
+        f"runner's [ -z \"$pr\" ] gate would report real PRs as no work")
+
+# The schema must not require the derived field. Requiring it is what
+# invited `pr_number: null` beside a populated pr_numbers.
+assert '"required": ["outcome", "findings_resolved", "pr_numbers"]' in _run_src, (
+    "the report schema must require pr_numbers, not pr_number: the "
+    "scalar is derived in report.py, and requiring it asks the agent to "
+    "fill in a field that can contradict the list")
+
+print("test_report: pr field agreement pinned")

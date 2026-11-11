@@ -252,7 +252,7 @@ set_directives() (
     "Each cluster should be one systemic change that stands on its own as a PR. Merge clusters that are really the same change; split one that is two. A cluster of hundreds of items is not reviewable - carve off a coherent subset and leave the rest queued." \
     >/dev/null 2>&1 || echo "WARNING: could not set the triage directive"
   desloppify directives set execute \
-    "One cluster at a time. Finish it, commit it alone, then 'gh stack add' the next branch. One 'gh stack submit' at the end, never 'gh pr create'. Same budget as always - the same work, in reviewable pieces." \
+    "One cluster at a time. Finish it, commit it alone, then 'gh stack add' the next branch. One 'gh stack submit' at the end, never 'gh pr create'. Do not pass --open: these open as drafts for a human to read first. Same budget as always - the same work, in reviewable pieces." \
     >/dev/null 2>&1 || echo "WARNING: could not set the execute directive"
 )
 set_directives
@@ -358,15 +358,14 @@ fi
 
 # One PR per cluster, so name every one of them. pr_number alone sent
 # the morning reader after the bottom of the stack while the rest of the
-# night's work sat unmentioned.
-prs=$(jq -r '(.pr_numbers // [.pr_number] | map(select(. != null)))[]' \
-        "$report" 2>/dev/null)
-if [ -n "$prs" ]; then
-  echo "open against $INTEGRATION_BRANCH and NOT merged:"
-  for n in $prs; do echo "  #$n  https://github.com/$REPO/pull/$n"; done
-else
-  echo "PR #$pr is open against $INTEGRATION_BRANCH and was NOT merged"
-  echo "  https://github.com/$REPO/pull/$pr"
-fi
+# night's work sat unmentioned. report.py derives pr_number from
+# pr_numbers, so reaching here with a non-empty $pr means the list is
+# non-empty too -- no fallback branch to get stale.
+prs=$(jq -r '(.pr_numbers // [])[]' "$report" 2>/dev/null)
+echo "open against $INTEGRATION_BRANCH and NOT merged:"
+for n in $prs; do echo "  #$n  https://github.com/$REPO/pull/$n"; done
+# gh stack submit is non-interactive here, so these are drafts by
+# design. Nothing merges from a draft; a reviewer marks each ready.
+echo "  (drafts -- mark ready for review before merging)"
 
 echo "=== nightly-desloppify complete $(date -Is) ==="

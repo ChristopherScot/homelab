@@ -48,7 +48,7 @@ REPORT_SCHEMA = {
     "type": "json_schema",
     "schema": {
         "type": "object",
-        "required": ["outcome", "findings_resolved", "pr_number"],
+        "required": ["outcome", "findings_resolved", "pr_numbers"],
         "additionalProperties": False,
         "properties": {
             "outcome": {
@@ -60,17 +60,21 @@ REPORT_SCHEMA = {
                     "BLOCKED: you could not run the loop."
                 ),
             },
-            "pr_number": {
-                "type": ["integer", "null"],
-                "description": (
-                    "The bottom PR of your stack, or null. Kept singular "
-                    "because the logfmt line and the lockfile check read it."
-                ),
-            },
             "pr_numbers": {
                 "type": "array",
                 "items": {"type": "integer"},
-                "description": "Every PR you opened, one per cluster.",
+                "description": (
+                    "Every PR you opened, one per cluster, bottom first. "
+                    "Empty if you opened none."
+                ),
+            },
+            "pr_number": {
+                "type": ["integer", "null"],
+                "description": (
+                    "Leave this out. report.py derives it from pr_numbers "
+                    "for the logfmt line and the lockfile check, which read "
+                    "a single number."
+                ),
             },
             "findings_resolved": {
                 "type": "array",
@@ -216,11 +220,17 @@ not use `gh pr create` -- a PR made that way is not part of the stack,
 so nothing retargets it when the PR below it merges, and GitHub will not
 let it merge once its base closes.
 
+These open as drafts, deliberately: this pod is non-interactive, where
+`gh stack submit` defaults to draft, and overnight work waits for a
+human to read it before it is reviewable. Do not pass `--open`. A
+reviewer marks each one ready; nothing merges from a draft, which is
+the intent.
+
 Title each PR after its cluster. The body should say what findings it
 resolved, what the score did, and anything deliberately deferred.
 
-A cluster of a thousand items is not one PR. Carve off a coherent subset,
-say in the body which part you took, and leave the rest queued.
+A cluster of hundreds of items is not reviewable. Carve off a coherent
+subset, say in the body which part you took, and leave the rest queued.
 
 ## Tests
 
@@ -370,7 +380,7 @@ async def run(args: argparse.Namespace) -> int:
     # morning report. The wiring lives in report.py where the tests
     # reach it without the SDK.
     found: list[int] = []
-    if not payload.get("pr_number"):
+    if not payload.get("pr_numbers") and not payload.get("pr_number"):
         found = report_mod.prs_for_run(args.repo, args.branch)
     payload, pr_verified = report_mod.apply_pr_verification(payload, found)
     if pr_verified:
@@ -397,8 +407,7 @@ async def run(args: argparse.Namespace) -> int:
         "branch": args.branch,
         "outcome": payload.get("outcome", "BLOCKED"),
         "pr_number": payload.get("pr_number"),
-        "pr_numbers": payload.get("pr_numbers")
-        or ([payload["pr_number"]] if payload.get("pr_number") else []),
+        "pr_numbers": payload.get("pr_numbers", []),
         "elapsed_s": round(time.monotonic() - started, 1),
         "cost_usd": result.total_cost_usd if result else None,
         "turns": result.num_turns if result else None,

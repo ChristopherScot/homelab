@@ -81,6 +81,19 @@ ALLOWED: dict[str, set[str]] = {
     "paste": set(), "tar": set(), "gzip": set(), "unzip": set(),
 }
 
+# A second level, for a namespace whose subcommands are not all safe.
+# Every other entry in ALLOWED names the subcommands it permits; `stack`
+# would otherwise be the one that admits a whole namespace, because
+# check_bash stops at the first level. gh-stack v0.2.0 ships 20
+# subcommands and is still a 0.x: enumerating the five the runner's
+# prompt actually instructs means a version bump cannot widen this gate
+# without someone adding a line here. The refusals below are kept as
+# well, so a reader greping for `merge` finds the reason and not just
+# an absence.
+ALLOWED_SUB: dict[str, set[str]] = {
+    "gh stack": {"init", "add", "submit", "sync", "checkout", "view"},
+}
+
 FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # --- the main guarantee -------------------------------------------
     # Anything that could put a commit on a protected branch, or open a
@@ -103,24 +116,35 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # synonym. unstack and link are here for the same reason: unstack
     # drops the stack on GitHub, which is the state that left homelab#64
     # unmergeable for ten days, and link chains PRs onto an arbitrary
-    # base, which is what `gh pr edit --base` is refused for.
-    (re.compile(r"^gh\s+stack\s+(merge|unstack|link)\b"),
-     "merging, unstacking and relinking are the runner's, not the agent's"),
-    (re.compile(r"^gh\s+pr\s+create\b(?!.*--base\s)"),
+    # base, which is what `gh pr edit --base` is refused for. modify
+    # drops, folds and reorders branches, which is unstack's authority
+    # through a TUI; rebase does a cascading rebase across the stack,
+    # which is the capability `git rebase` is refused for below -- the
+    # first draft of this rule enumerated three synonyms from a
+    # miscounted surface and left both of those open.
+    (re.compile(r"^gh\s+stack\s+(merge|unstack|link|modify|rebase)\b"),
+     "merging, unstacking, relinking and restructuring are the runner's, "
+     "not the agent's"),
+    (re.compile(r"^gh\s+pr\s+create\b(?!.*(--base[= ]|-B\s))"),
      "gh pr create without --base defaults to main; pass "
      f"--base {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+pr\s+create\b.*--base[= ]\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
+    (re.compile(r"^gh\s+pr\s+create\b.*(--base[= ]|-B\s)\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
      f"the only permitted PR base is {INTEGRATION_BRANCH}"),
     (re.compile(r"^gh\s+pr\s+edit\b.*(--base|-B)\b"), "retargeting a PR's base"),
 
+    # Each presence rule spells out all three forms (--base X, --base=X,
+    # -B X). Matching only `--base\s` made the rule fire on input that
+    # had passed --base=main, denying with "pass --base" -- advice the
+    # agent had already followed, and a wasted turn when turns are the
+    # budget that runs out first.
     # gh-stack opens and retargets PRs, so it needs the same base guards
     # as gh pr. init is the only subcommand that sets the trunk, and the
     # runner always passes --base; a bare init would inherit the repo
     # default, which is main.
-    (re.compile(r"^gh\s+stack\s+init\b(?!.*--base\s)"),
+    (re.compile(r"^gh\s+stack\s+init\b(?!.*(--base[= ]|-B\s))"),
      "gh stack init without --base takes the repo default as trunk; pass "
      f"--base {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+stack\s+init\b.*--base[= ]\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
+    (re.compile(r"^gh\s+stack\s+init\b.*(--base[= ]|-B\s)\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
      f"the only permitted stack trunk is {INTEGRATION_BRANCH}"),
 
     # --- protection and repository settings ---------------------------
@@ -282,6 +306,21 @@ def check_bash(command: str) -> Decision:
         return Decision(True, f"{binary} with no subcommand")
     if sub not in subcommands:
         return Decision(False, f"{binary} {sub} is not allowed for this pod")
+
+    # A namespace that carries its own subcommands (`gh stack`) is
+    # checked one level deeper, or the allowance above would admit
+    # everything under it.
+    nested = ALLOWED_SUB.get(f"{binary} {sub}")
+    if nested is not None:
+        tail = rest[rest.index(sub) + 1:]
+        verb = next((a for a in tail if not a.startswith("-")), None)
+        if verb is None:
+            return Decision(False, f"{binary} {sub} needs a subcommand")
+        if verb not in nested:
+            return Decision(
+                False, f"{binary} {sub} {verb} is not allowed for this pod")
+        return Decision(True, f"{binary} {sub} {verb} allowed")
+
     return Decision(True, f"{binary} {sub} allowed")
 
 

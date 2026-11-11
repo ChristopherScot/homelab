@@ -42,11 +42,15 @@ ALLOW = [
     # agent's only PR path was denied and the one it was told not to use
     # was the one allowed. Both directions are pinned below.
     "gh stack init desloppify/webapp-x --base chris-agentic-looping",
+    "gh stack init desloppify/webapp-x --base=chris-agentic-looping",
+    "gh stack init desloppify/webapp-x -B chris-agentic-looping",
+    "gh pr create --base=chris-agentic-looping --title t --body b",
+    "gh pr create -B chris-agentic-looping --title t --body b",
     "gh stack add desloppify/webapp-y",
     "gh stack submit",
     "gh stack sync",
     "gh stack checkout 12",
-    "gh stack list",
+    "gh stack view",
     # the webapp toolchain
     "yarn lint:biome",
     "yarn workspace @schoolhouse/webapp build",
@@ -95,6 +99,19 @@ DENY = [
     ("gh stack merge --yes", "merges the stack; the runner merges"),
     ("gh stack unstack 7", "drops the stack, which is the homelab#64 state"),
     ("gh stack link main desloppify/webapp-x", "chains a PR onto a chosen base"),
+    # modify drops, folds and reorders branches -- unstack's authority
+    # through a TUI. rebase is the cascading rebase, which is what
+    # `git rebase` is refused for. Both were allowed when this rule
+    # enumerated three synonyms from a surface it had miscounted as 13.
+    ("gh stack modify", "restructures the stack: drop, fold, reorder"),
+    ("gh stack rebase", "rewrites history across the stack"),
+    ("gh stack rebase --no-trunk", "the same, skipping the trunk"),
+    # Not dangerous, but not needed either: the gate is an allowlist, so
+    # a future gh-stack release cannot widen it by adding a verb.
+    ("gh stack push", "submit is the runner's push path"),
+    ("gh stack trunk main", "changes which branch the stack targets"),
+    ("gh stack alias", "not part of the runner's flow"),
+    ("gh stack", "a bare namespace names no operation"),
     # \b matched between the g and the hyphen, so a branch merely
     # prefixed by the integration branch slipped through both rules.
     ("gh pr create --base chris-agentic-looping-evil --title t --body b",
@@ -104,6 +121,14 @@ DENY = [
     # -B is gh's short form for --base; the edit guard only knew --base.
     ("gh pr edit 12 --repo schoolhouse-world/app -B main",
      "retargets to main via the short flag"),
+    ("gh pr create --base=main --title t --body b",
+     "--base=main is still main"),
+    ("gh pr create -B main --title t --body b",
+     "-B is --base's short form"),
+    ("gh stack init desloppify/webapp-x --base=main",
+     "--base=main is still main"),
+    ("gh stack init desloppify/webapp-x -B main",
+     "-B is --base's short form"),
     ("gh stack init desloppify/webapp-x",
      "no --base, so the trunk defaults to the repo default, which is main"),
     ("gh pr merge 12 --repo schoolhouse-world/app --squash", "merges, which is the runner's job"),
@@ -178,6 +203,29 @@ DENY = [
 ]
 
 
+# A denial's reason is the only thing the agent sees, and a wrong one
+# costs a turn -- `--base=main` used to be refused with "pass --base",
+# advice it had just followed. Each entry is (command, text the reason
+# must contain).
+REASON = [
+    ("gh pr create --title t --body b", "without --base"),
+    ("gh pr create --base=main --title t --body b", "only permitted PR base"),
+    ("gh pr create -B main --title t --body b", "only permitted PR base"),
+    ("gh stack init x", "without --base"),
+    ("gh stack init x --base=main", "only permitted stack trunk"),
+    ("gh stack init x -B main", "only permitted stack trunk"),
+    # Two layers refuse these: the allowlist (which does not name them)
+    # and the explicit rule (which says why). Asserting the reason pins
+    # the second -- without it, deleting the rule leaves the suite green
+    # and the next person to widen the allowlist gets no warning.
+    ("gh stack merge --yes", "are the runner's"),
+    ("gh stack unstack 7", "are the runner's"),
+    ("gh stack link 1 2", "are the runner's"),
+    ("gh stack modify", "are the runner's"),
+    ("gh stack rebase", "are the runner's"),
+]
+
+
 def main() -> int:
     failures = []
 
@@ -201,13 +249,23 @@ def main() -> int:
         if policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD DENY tool: {name}")
 
-    total = len(ALLOW) + len(DENY) + 9
+    for cmd, expected in REASON:
+        d = policy.check_bash(cmd)
+        if d.allow:
+            failures.append(f"SHOULD DENY: {cmd}")
+        elif expected not in d.reason:
+            failures.append(
+                f"WRONG REASON: {cmd}\n      got: {d.reason}\n"
+                f"      want substring: {expected}")
+
+    total = len(ALLOW) + len(DENY) + len(REASON) + 9
     if failures:
         print(f"FAIL - {len(failures)} of {total}\n")
         for f in failures:
             print("  " + f)
         return 1
-    print(f"PASS - {total} cases ({len(ALLOW)} allow, {len(DENY)} deny)")
+    print(f"PASS - {total} cases ({len(ALLOW)} allow, {len(DENY)} deny, "
+          f"{len(REASON)} reason)")
     return 0
 
 
