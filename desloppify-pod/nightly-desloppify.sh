@@ -189,10 +189,19 @@ if [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
     echo "$sync_err" | head -5
     exit 1
   fi
-  (cd "$dir" && gh stack add "$branch") || exit 1
+  if ! add_err=$( (cd "$dir" && gh stack add "$branch") 2>&1 ); then
+    echo "FATAL: gh stack add $branch failed"
+    echo "$add_err" | head -5
+    exit 1
+  fi
   echo "work branch: $branch (added to the stack)"
 else
-  (cd "$dir" && gh stack init "$branch" --base "$INTEGRATION_BRANCH") || exit 1
+  if ! init_err=$( (cd "$dir" && gh stack init "$branch" \
+                      --base "$INTEGRATION_BRANCH") 2>&1 ); then
+    echo "FATAL: gh stack init failed"
+    echo "$init_err" | head -5
+    exit 1
+  fi
   echo "work branch: $branch (new stack on $INTEGRATION_BRANCH)"
 fi
 git -C "$dir" clean -qfd
@@ -347,7 +356,17 @@ if git -C "$dir" diff --name-only "origin/$INTEGRATION_BRANCH"...HEAD 2>/dev/nul
   fi
 fi
 
-echo "PR #$pr is open against $INTEGRATION_BRANCH and was NOT merged"
-echo "  https://github.com/$REPO/pull/$pr"
+# One PR per cluster, so name every one of them. pr_number alone sent
+# the morning reader after the bottom of the stack while the rest of the
+# night's work sat unmentioned.
+prs=$(jq -r '(.pr_numbers // [.pr_number] | map(select(. != null)))[]' \
+        "$report" 2>/dev/null)
+if [ -n "$prs" ]; then
+  echo "open against $INTEGRATION_BRANCH and NOT merged:"
+  for n in $prs; do echo "  #$n  https://github.com/$REPO/pull/$n"; done
+else
+  echo "PR #$pr is open against $INTEGRATION_BRANCH and was NOT merged"
+  echo "  https://github.com/$REPO/pull/$pr"
+fi
 
 echo "=== nightly-desloppify complete $(date -Is) ==="

@@ -200,9 +200,13 @@ can hold in their head. Twenty mixed fixes in one diff is not.
 
 Work a cluster to completion, then commit it alone. For the next cluster:
 
-    gh stack add desloppify/webapp-<cluster-slug>
+    gh stack add {args.branch}-<cluster-slug>
 
 which branches from the one you are on, so the chain stays in order.
+Keep that exact prefix: the runner verifies your PRs by searching for
+branches that extend `{args.branch}`, and a branch named anything else
+is invisible to it. A run killed before its bookkeeping then reports
+work it actually did as lost.
 When you are done with all of them, once:
 
     gh stack submit
@@ -365,12 +369,14 @@ async def run(args: argparse.Namespace) -> int:
     # bookkeeping", which need opposite responses from whoever reads the
     # morning report. The wiring lives in report.py where the tests
     # reach it without the SDK.
-    found = None
+    found: list[int] = []
     if not payload.get("pr_number"):
         found = report_mod.prs_for_run(args.repo, args.branch)
     payload, pr_verified = report_mod.apply_pr_verification(payload, found)
     if pr_verified:
-        print(f"VERIFIED: PR #{found} is open on GitHub for "
+        listed = ", ".join(f"#{n}" for n in found)
+        noun = "PR" if len(found) == 1 else "PRs"
+        print(f"VERIFIED: {noun} {listed} open on GitHub for "
               f"{args.branch}; overriding the self-reported outcome",
               file=sys.stderr)
 
@@ -391,6 +397,8 @@ async def run(args: argparse.Namespace) -> int:
         "branch": args.branch,
         "outcome": payload.get("outcome", "BLOCKED"),
         "pr_number": payload.get("pr_number"),
+        "pr_numbers": payload.get("pr_numbers")
+        or ([payload["pr_number"]] if payload.get("pr_number") else []),
         "elapsed_s": round(time.monotonic() - started, 1),
         "cost_usd": result.total_cost_usd if result else None,
         "turns": result.num_turns if result else None,

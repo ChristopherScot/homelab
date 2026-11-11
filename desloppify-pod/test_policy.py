@@ -88,6 +88,22 @@ DENY = [
     ("gh pr edit 12 --repo schoolhouse-world/app --base main", "retargets a PR to main"),
     ("gh stack init desloppify/webapp-x --base main",
      "makes main the stack trunk"),
+    # Allowing the stack namespace admitted all thirteen subcommands,
+    # and gh stack merge merges every PR up to the one named -- without
+    # prompting, in a non-interactive terminal like this pod. That made
+    # the "gh pr merge" refusal above false by synonym.
+    ("gh stack merge --yes", "merges the stack; the runner merges"),
+    ("gh stack unstack 7", "drops the stack, which is the homelab#64 state"),
+    ("gh stack link main desloppify/webapp-x", "chains a PR onto a chosen base"),
+    # \b matched between the g and the hyphen, so a branch merely
+    # prefixed by the integration branch slipped through both rules.
+    ("gh pr create --base chris-agentic-looping-evil --title t --body b",
+     "a branch that only starts with the integration branch name"),
+    ("gh stack init desloppify/webapp-x --base chris-agentic-looping-evil",
+     "same hole, stack spelling"),
+    # -B is gh's short form for --base; the edit guard only knew --base.
+    ("gh pr edit 12 --repo schoolhouse-world/app -B main",
+     "retargets to main via the short flag"),
     ("gh stack init desloppify/webapp-x",
      "no --base, so the trunk defaults to the repo default, which is main"),
     ("gh pr merge 12 --repo schoolhouse-world/app --squash", "merges, which is the runner's job"),

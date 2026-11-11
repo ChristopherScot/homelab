@@ -17,10 +17,17 @@ import sys
 def prs_for_run(repo: str, branch: str) -> list[int]:
     """Every OPEN PR GitHub has for this run's branches.
 
-    One run opens one PR per cluster, each on a branch prefixed with the
-    run's own branch name, so `head:` prefix-matching finds the whole
-    stack in one call. Verified against the API: searching head:foo
-    matches foo-bar.
+    One run opens one PR per cluster. The prompt in run.py requires each
+    cluster branch to be `{branch}-<slug>`, so they all extend the run
+    branch and `head:` finds the whole stack in one call -- GitHub's
+    search matches extensions of the term (head:foo matches foo-bar),
+    which is why the prompt interpolates args.branch rather than naming
+    a prefix of its own. If that instruction and this query ever drift,
+    verification silently returns nothing and a killed run reports real
+    work as lost. test_report.py pins the pairing with real branch names.
+
+    Returns the head branch alongside each number so a caller can show
+    which cluster a PR belongs to.
 
     `--state open`, not `all`: the fact being verified is "the create
     succeeded seconds before the agent died", and that PR is open. A PR
@@ -32,7 +39,7 @@ def prs_for_run(repo: str, branch: str) -> list[int]:
         out = subprocess.run(
             ["gh", "pr", "list", "--repo", repo,
              "--search", f"head:{branch}", "--state", "open",
-             "--json", "number"],
+             "--json", "number,headRefName"],
             capture_output=True, text=True, timeout=30,
         )
         if out.returncode != 0:

@@ -96,12 +96,22 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^git\s+push\b.*--delete\b"), "deleting a remote branch"),
     (re.compile(r"^gh\s+pr\s+merge\b"),
      "merging is done by the runner after its checks, not by the agent"),
+    # Same rule, the gh-stack spelling. `gh stack merge` merges every PR
+    # up to the one named, and in a non-interactive terminal -- which the
+    # pod is -- it does so without prompting. Allowing the `stack`
+    # namespace without this would have made the line above false by
+    # synonym. unstack and link are here for the same reason: unstack
+    # drops the stack on GitHub, which is the state that left homelab#64
+    # unmergeable for ten days, and link chains PRs onto an arbitrary
+    # base, which is what `gh pr edit --base` is refused for.
+    (re.compile(r"^gh\s+stack\s+(merge|unstack|link)\b"),
+     "merging, unstacking and relinking are the runner's, not the agent's"),
     (re.compile(r"^gh\s+pr\s+create\b(?!.*--base\s)"),
      "gh pr create without --base defaults to main; pass "
      f"--base {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+pr\s+create\b.*--base\s+(?!" + INTEGRATION_BRANCH + r"\b)"),
+    (re.compile(r"^gh\s+pr\s+create\b.*--base[= ]\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
      f"the only permitted PR base is {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+pr\s+edit\b.*--base\b"), "retargeting a PR's base"),
+    (re.compile(r"^gh\s+pr\s+edit\b.*(--base|-B)\b"), "retargeting a PR's base"),
 
     # gh-stack opens and retargets PRs, so it needs the same base guards
     # as gh pr. init is the only subcommand that sets the trunk, and the
@@ -110,7 +120,7 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^gh\s+stack\s+init\b(?!.*--base\s)"),
      "gh stack init without --base takes the repo default as trunk; pass "
      f"--base {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+stack\s+init\b.*--base\s+(?!" + INTEGRATION_BRANCH + r"\b)"),
+    (re.compile(r"^gh\s+stack\s+init\b.*--base[= ]\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
      f"the only permitted stack trunk is {INTEGRATION_BRANCH}"),
 
     # --- protection and repository settings ---------------------------
