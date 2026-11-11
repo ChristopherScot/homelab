@@ -130,6 +130,19 @@ DENY = [
      "-B is --base's short form"),
     ("gh stack init desloppify/webapp-x --base=main",
      "--base=main is still main"),
+    # A repeated base flag: gh takes the last to appear, so a good value
+    # followed by a bad one creates against the bad one. The walker used
+    # to stop at the first flag that had a value and approve these.
+    ("gh pr create -B chris-agentic-looping --base main --title t",
+     "the last --base wins in gh, so this targets main"),
+    ("gh pr create --base=chris-agentic-looping --base=main --title t",
+     "the same, with the joined spelling"),
+    ("gh stack init x -b chris-agentic-looping --base main",
+     "the same on the stack trunk"),
+    # Everything after `--` is positional, so this names no base at all
+    # and gh would use the repo default.
+    ("gh pr create -- --base chris-agentic-looping --title t",
+     "a --base after -- is not a flag"),
     ("gh stack init desloppify/webapp-x -b main",
      "-b is gh stack init's short form for --base"),
     ("gh stack init desloppify/webapp-x -b=main",

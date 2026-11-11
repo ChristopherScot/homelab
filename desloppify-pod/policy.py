@@ -242,6 +242,11 @@ def _base_ok(argv: list[str]) -> Decision | None:
     had already followed. Spelling out more forms had been the fix three
     rounds running; walking the arguments ends the class.
     """
+    # Everything after `--` is positional, so a --base there is not a
+    # flag. Walking past it let `gh pr create -- --base <branch>` look
+    # like it had named a base when gh would have used the repo default.
+    if "--" in argv:
+        argv = argv[:argv.index("--")]
     words = [a for a in argv if not a.startswith("-")]
     key = tuple(words[:2])
     spec = BASE_FLAGS.get(key)
@@ -249,33 +254,36 @@ def _base_ok(argv: list[str]) -> Decision | None:
         return None
     short, label, noun = spec
 
-    value = None
-    seen = False
+    # Collect every occurrence rather than stopping at the first with a
+    # value: gh takes the last spelling to appear, so `-B <good>
+    # --base main` creates against main. Breaking early approved
+    # exactly that, and a repeated flag is the obvious way to probe a
+    # gate that reads only one. Any value that is not the integration
+    # branch refuses, whichever position it is in -- stricter than gh's
+    # last-wins, and the pod has no reason to pass the flag twice.
+    values: list[str | None] = []
     for i, arg in enumerate(argv):
         if arg in ("--base", short):
-            seen = True
-            value = argv[i + 1] if i + 1 < len(argv) else None
+            values.append(argv[i + 1] if i + 1 < len(argv) else None)
         elif arg.startswith("--base="):
-            seen = True
-            value = arg.split("=", 1)[1]
+            values.append(arg.split("=", 1)[1])
         elif arg.startswith(f"{short}=") and len(arg) > len(short) + 1:
-            seen = True
-            value = arg[len(short) + 1:]
+            values.append(arg[len(short) + 1:])
         elif arg.startswith(short) and len(arg) > len(short):
             # The glued POSIX short form, `-Bmain`.
-            seen = True
-            value = arg[len(short):]
-        if seen and value:
-            break
+            values.append(arg[len(short):])
+
+    seen = bool(values)
+    for value in values:
+        if value != INTEGRATION_BRANCH:
+            return Decision(
+                False, f"the only permitted {noun} is {INTEGRATION_BRANCH}")
 
     if not seen:
         return Decision(
             False,
             f"{label} without --base takes the repo default, which is "
             f"main; pass --base {INTEGRATION_BRANCH}")
-    if value != INTEGRATION_BRANCH:
-        return Decision(
-            False, f"the only permitted {noun} is {INTEGRATION_BRANCH}")
     return None
 
 
