@@ -76,6 +76,35 @@ spec:
             maxDataPoints: 43200
             conditions:
               - evaluator: { type: gt, params: [0] }
+    # With filtering exprs above, "no data" is the healthy steady state -
+    # which makes a dead metrics pipeline indistinguishable from a healthy
+    # fleet. This backstop fires if the robustness family vanishes outright.
+    - uid: dfml7absentlhms
+      title: Longhorn metrics absent
+      condition: B
+      for: 15m
+      noDataState: OK
+      execErrState: OK
+      labels: { app: longhorn, severity: warning }
+      annotations:
+        summary: "Longhorn volume metrics have been absent for 15m - volume alerts are flying blind"
+        description: "longhorn_volume_robustness has no series at all, so the volume-health and stuck-attaching alerts above cannot fire regardless of actual volume state. Check longhorn-manager pods and the metrics pipeline (Alloy -> VictoriaMetrics)."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: "absent(longhorn_volume_robustness)", instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
     - uid: cfml6nlv6pmgwdcr
       title: Longhorn backup in error state
       condition: B
