@@ -180,8 +180,15 @@ prev_pr=$(gh pr list --repo "$REPO" --base "$INTEGRATION_BRANCH" --state open \
 if [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
    && (cd "$dir" && gh stack checkout "$prev_pr" >/dev/null 2>&1); then
   echo "found the existing stack via PR #$prev_pr"
-  (cd "$dir" && gh stack sync >/dev/null 2>&1) \
-    || echo "WARNING: gh stack sync failed; the stack may be behind its trunk"
+  # Not a warning. sync is what rebases the stack onto its trunk, and
+  # building tonight's branch on an unsynced stack is the state #64 sat
+  # in for ten days. Keep the reason: a bare WARNING with no cause is
+  # what the morning log used to say.
+  if ! sync_err=$( (cd "$dir" && gh stack sync) 2>&1 ); then
+    echo "FATAL: gh stack sync failed; refusing to stack on it"
+    echo "$sync_err" | head -5
+    exit 1
+  fi
   (cd "$dir" && gh stack add "$branch") || exit 1
   echo "work branch: $branch (added to the stack)"
 else

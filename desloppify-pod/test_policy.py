@@ -37,6 +37,16 @@ ALLOW = [
     "gh pr list --repo schoolhouse-world/app --state open",
     "gh pr comment 12 --repo schoolhouse-world/app --body hi",
     "gh api repos/schoolhouse-world/app/pulls/12",
+    # gh-stack: every subcommand the runner and the agent use. These were
+    # refused until 2026-11-11 while the prompt instructed them, so the
+    # agent's only PR path was denied and the one it was told not to use
+    # was the one allowed. Both directions are pinned below.
+    "gh stack init desloppify/webapp-x --base chris-agentic-looping",
+    "gh stack add desloppify/webapp-y",
+    "gh stack submit",
+    "gh stack sync",
+    "gh stack checkout 12",
+    "gh stack list",
     # the webapp toolchain
     "yarn lint:biome",
     "yarn workspace @schoolhouse/webapp build",
@@ -76,6 +86,10 @@ DENY = [
      "no --base, so it defaults to the repo default, which is main"),
     ("gh pr create --base master --title t --body b", "opens a PR against master"),
     ("gh pr edit 12 --repo schoolhouse-world/app --base main", "retargets a PR to main"),
+    ("gh stack init desloppify/webapp-x --base main",
+     "makes main the stack trunk"),
+    ("gh stack init desloppify/webapp-x",
+     "no --base, so the trunk defaults to the repo default, which is main"),
     ("gh pr merge 12 --repo schoolhouse-world/app --squash", "merges, which is the runner's job"),
     # --- protection ---
     ("gh api -X DELETE repos/schoolhouse-world/app/branches/main/protection",

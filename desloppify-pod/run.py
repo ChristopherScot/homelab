@@ -62,7 +62,15 @@ REPORT_SCHEMA = {
             },
             "pr_number": {
                 "type": ["integer", "null"],
-                "description": "The PR you opened, or null.",
+                "description": (
+                    "The bottom PR of your stack, or null. Kept singular "
+                    "because the logfmt line and the lockfile check read it."
+                ),
+            },
+            "pr_numbers": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "Every PR you opened, one per cluster.",
             },
             "findings_resolved": {
                 "type": "array",
@@ -359,7 +367,7 @@ async def run(args: argparse.Namespace) -> int:
     # reach it without the SDK.
     found = None
     if not payload.get("pr_number"):
-        found = report_mod.pr_for_branch(args.repo, args.branch)
+        found = report_mod.prs_for_run(args.repo, args.branch)
     payload, pr_verified = report_mod.apply_pr_verification(payload, found)
     if pr_verified:
         print(f"VERIFIED: PR #{found} is open on GitHub for "

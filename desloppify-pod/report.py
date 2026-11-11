@@ -14,8 +14,13 @@ import subprocess
 import sys
 
 
-def pr_for_branch(repo: str, branch: str) -> int | None:
-    """The OPEN PR number GitHub has for a head branch, or None.
+def prs_for_run(repo: str, branch: str) -> list[int]:
+    """Every OPEN PR GitHub has for this run's branches.
+
+    One run opens one PR per cluster, each on a branch prefixed with the
+    run's own branch name, so `head:` prefix-matching finds the whole
+    stack in one call. Verified against the API: searching head:foo
+    matches foo-bar.
 
     `--state open`, not `all`: the fact being verified is "the create
     succeeded seconds before the agent died", and that PR is open. A PR
@@ -25,8 +30,9 @@ def pr_for_branch(repo: str, branch: str) -> int | None:
     """
     try:
         out = subprocess.run(
-            ["gh", "pr", "list", "--repo", repo, "--head", branch,
-             "--state", "open", "--json", "number"],
+            ["gh", "pr", "list", "--repo", repo,
+             "--search", f"head:{branch}", "--state", "open",
+             "--json", "number"],
             capture_output=True, text=True, timeout=30,
         )
         if out.returncode != 0:
@@ -35,17 +41,17 @@ def pr_for_branch(repo: str, branch: str) -> int | None:
             print(f"WARNING: PR verification failed: gh exited "
                   f"{out.returncode}: {(out.stderr or '').strip()[:200]}",
                   file=sys.stderr)
-            return None
+            return []
         prs = json.loads(out.stdout or "[]")
-        return int(prs[0]["number"]) if prs else None
+        return sorted(int(pr["number"]) for pr in prs)
     except Exception as exc:
         # Never turn a finished run into a crash; an unverifiable PR
         # leaves the self-report standing - but say why.
         print(f"WARNING: PR verification failed: {exc}", file=sys.stderr)
-        return None
+        return []
 
 
-def apply_pr_verification(payload: dict, found: int | None) -> tuple[dict, bool]:
+def apply_pr_verification(payload: dict, found: list[int]) -> tuple[dict, bool]:
     """Fold a GitHub-verified PR into a self-report that lacks one.
 
     Returns the (possibly corrected) payload and whether a correction
@@ -53,6 +59,9 @@ def apply_pr_verification(payload: dict, found: int | None) -> tuple[dict, bool]
     verification exists for the run that died before its bookkeeping,
     not to second-guess one that finished.
     """
-    if payload.get("pr_number") or found is None:
+    if payload.get("pr_numbers") or payload.get("pr_number") or not found:
         return payload, False
-    return {**payload, "outcome": "PROGRESS", "pr_number": found}, True
+    return {**payload,
+            "outcome": "PROGRESS",
+            "pr_number": found[0],
+            "pr_numbers": found}, True

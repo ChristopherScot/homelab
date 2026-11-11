@@ -53,7 +53,8 @@ ALLOWED: dict[str, set[str]] = {
         "cat-file", "for-each-ref", "config", "clean", "reset", "commit",
         "push", "rm", "mv", "apply", "symbolic-ref",
     },
-    "gh": {"pr", "issue", "label", "repo", "api", "search", "auth", "browse"},
+    "gh": {"pr", "issue", "label", "repo", "api", "search", "auth",
+           "browse", "stack"},
     "desloppify": set(),
     # Shell builtins and keywords. The table models binaries, so without
     # these a bare `cd` or the `for` opening a loop reads as an unknown
@@ -101,6 +102,16 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^gh\s+pr\s+create\b.*--base\s+(?!" + INTEGRATION_BRANCH + r"\b)"),
      f"the only permitted PR base is {INTEGRATION_BRANCH}"),
     (re.compile(r"^gh\s+pr\s+edit\b.*--base\b"), "retargeting a PR's base"),
+
+    # gh-stack opens and retargets PRs, so it needs the same base guards
+    # as gh pr. init is the only subcommand that sets the trunk, and the
+    # runner always passes --base; a bare init would inherit the repo
+    # default, which is main.
+    (re.compile(r"^gh\s+stack\s+init\b(?!.*--base\s)"),
+     "gh stack init without --base takes the repo default as trunk; pass "
+     f"--base {INTEGRATION_BRANCH}"),
+    (re.compile(r"^gh\s+stack\s+init\b.*--base\s+(?!" + INTEGRATION_BRANCH + r"\b)"),
+     f"the only permitted stack trunk is {INTEGRATION_BRANCH}"),
 
     # --- protection and repository settings ---------------------------
     # The PAT has no Administration scope, so these would fail anyway.
