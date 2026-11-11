@@ -60,20 +60,17 @@ REPORT_SCHEMA = {
                     "BLOCKED: you could not run the loop."
                 ),
             },
+            # No pr_number here on purpose: the report carries one, but
+            # report.py derives it from pr_numbers for the logfmt line
+            # and the lockfile check. Declaring it invited a null scalar
+            # beside a populated list, and additionalProperties:False
+            # now makes that shape unsendable rather than discouraged.
             "pr_numbers": {
                 "type": "array",
                 "items": {"type": "integer"},
                 "description": (
                     "Every PR you opened, one per cluster, bottom first. "
                     "Empty if you opened none."
-                ),
-            },
-            "pr_number": {
-                "type": ["integer", "null"],
-                "description": (
-                    "Leave this out. report.py derives it from pr_numbers "
-                    "for the logfmt line and the lockfile check, which read "
-                    "a single number."
                 ),
             },
             "findings_resolved": {
@@ -220,11 +217,12 @@ not use `gh pr create` -- a PR made that way is not part of the stack,
 so nothing retargets it when the PR below it merges, and GitHub will not
 let it merge once its base closes.
 
-These open as drafts, deliberately: this pod is non-interactive, where
-`gh stack submit` defaults to draft, and overnight work waits for a
-human to read it before it is reviewable. Do not pass `--open`. A
-reviewer marks each one ready; nothing merges from a draft, which is
-the intent.
+These open as drafts, deliberately. A non-interactive terminal -- which
+this pod is -- makes `gh stack submit` behave as `--auto`, and with
+`--auto` new PRs are created as drafts unless `--open` is passed. Do not
+pass `--open`; the policy refuses it. A reviewer marks each one ready,
+and nothing merges from a draft, which is the point: overnight work
+waits for a human to read it.
 
 Title each PR after its cluster. The body should say what findings it
 resolved, what the score did, and anything deliberately deferred.

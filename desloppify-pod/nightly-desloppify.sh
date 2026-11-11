@@ -364,8 +364,9 @@ fi
 prs=$(jq -r '(.pr_numbers // [])[]' "$report" 2>/dev/null)
 echo "open against $INTEGRATION_BRANCH and NOT merged:"
 for n in $prs; do echo "  #$n  https://github.com/$REPO/pull/$n"; done
-# gh stack submit is non-interactive here, so these are drafts by
-# design. Nothing merges from a draft; a reviewer marks each ready.
+# Non-interactive submit implies --auto, which opens new PRs as drafts
+# unless --open is passed -- and the policy refuses --open. Nothing
+# merges from a draft; a reviewer marks each ready.
 echo "  (drafts -- mark ready for review before merging)"
 
 echo "=== nightly-desloppify complete $(date -Is) ==="

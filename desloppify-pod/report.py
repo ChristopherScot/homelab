@@ -70,9 +70,15 @@ def normalize_pr_fields(payload: dict) -> dict:
     numbers = [n for n in (payload.get("pr_numbers") or []) if n is not None]
     if not numbers and payload.get("pr_number") is not None:
         numbers = [payload["pr_number"]]
-    if not numbers:
-        return payload
-    return {**payload, "pr_numbers": numbers, "pr_number": numbers[0]}
+    # Always write both fields, including the empty case. Returning the
+    # payload untouched when nothing survives the filter left a
+    # degenerate `pr_numbers: [null, null]` sitting beside a null
+    # scalar -- a non-empty list the shell gate reads as no PR, which
+    # is the failure this function exists to rule out. The schema
+    # forbids that shape; the postcondition should not depend on it.
+    return {**payload,
+            "pr_numbers": numbers,
+            "pr_number": numbers[0] if numbers else None}
 
 
 def apply_pr_verification(payload: dict, found: list[int]) -> tuple[dict, bool]:

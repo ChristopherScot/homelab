@@ -133,6 +133,11 @@ AGREEMENT = [
     ({"outcome": "BLOCKED", "pr_number": None}, [], None, []),
     ({"outcome": "NOTHING_TO_DO", "pr_number": None}, [], None, []),
     ({"outcome": "PROGRESS", "pr_numbers": [29, None, 31]}, [], 29, [29, 31]),
+    # Every entry null: the filter empties the list, so both fields must
+    # come back empty rather than leaving a non-empty list beside a null
+    # scalar -- which the shell gate reads as no PR.
+    ({"outcome": "PROGRESS", "pr_numbers": [None, None]}, [], None, []),
+    ({"outcome": "PROGRESS", "pr_numbers": []}, [], None, []),
 ]
 for payload, found, want_n, want_ns in AGREEMENT:
     out, _ = report.apply_pr_verification(dict(payload), found)
@@ -145,12 +150,19 @@ for payload, found, want_n, want_ns in AGREEMENT:
         f"want {want_ns}")
     # The invariant the shell gate depends on, stated directly: an empty
     # list means no PR, and otherwise the scalar is the list's first.
+    assert all(x is not None for x in got_ns), (
+        f"pr_numbers {got_ns} still holds a null; the shell gate reads a "
+        f"non-empty list beside a null scalar as no PR")
     assert (got_ns == [] and got_n is None) or got_n == got_ns[0], (
         f"pr_number {got_n} disagrees with pr_numbers {got_ns} -- the "
         f"runner's [ -z \"$pr\" ] gate would report real PRs as no work")
 
 # The schema must not require the derived field. Requiring it is what
 # invited `pr_number: null` beside a populated pr_numbers.
+assert '"pr_number": {' not in _run_src, (
+    "pr_number must not be a schema property: declaring a field whose "
+    "description says to omit it is what invited a null scalar beside a "
+    "populated pr_numbers; additionalProperties:False makes it unsendable")
 assert '"required": ["outcome", "findings_resolved", "pr_numbers"]' in _run_src, (
     "the report schema must require pr_numbers, not pr_number: the "
     "scalar is derived in report.py, and requiring it asks the agent to "

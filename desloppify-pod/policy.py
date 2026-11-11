@@ -85,13 +85,45 @@ ALLOWED: dict[str, set[str]] = {
 # Every other entry in ALLOWED names the subcommands it permits; `stack`
 # would otherwise be the one that admits a whole namespace, because
 # check_bash stops at the first level. gh-stack v0.2.0 ships 20
-# subcommands and is still a 0.x: enumerating the five the runner's
+# subcommands and is still a 0.x: enumerating the ones the runner's
 # prompt actually instructs means a version bump cannot widen this gate
 # without someone adding a line here. The refusals below are kept as
 # well, so a reader greping for `merge` finds the reason and not just
 # an absence.
+# sync is the sanctioned rebase path: it cascade-rebases onto updated
+# parents and force-pushes with --force-with-lease --atomic, which is
+# the capability `gh stack rebase` is refused for. The runner calls it
+# itself, and --force-with-lease bounds it to branches this pod owns; a
+# bare rebase has neither the lease nor the runner's sequencing.
 ALLOWED_SUB: dict[str, set[str]] = {
     "gh stack": {"init", "add", "submit", "sync", "checkout", "view"},
+}
+
+# Why a particular refused verb is refused. These are messages, not a
+# second gate: ALLOWED_SUB alone decides, and a verb named here that is
+# also allowlisted is simply allowed. Keeping the reasons as a lookup
+# rather than as parallel FORBIDDEN rules is what stops the two from
+# disagreeing -- the earlier design had both, and a verb added to the
+# allowlist stayed denied by the regex while the suite reported PASS,
+# so neither layer's failure was visible through the other.
+SUB_REASONS: dict[tuple[str, str], str] = {
+    ("gh stack", "merge"):
+        "merging is the runner's after its checks, not the agent's -- and "
+        "`gh stack merge` merges every PR up to the one named, without "
+        "prompting in a non-interactive terminal",
+    ("gh stack", "unstack"):
+        "unstacking drops the stack on GitHub, which is the state that "
+        "left homelab#64 unmergeable for ten days",
+    ("gh stack", "link"):
+        "relinking chains PRs onto an arbitrary base, which is what "
+        "`gh pr edit --base` is refused for",
+    ("gh stack", "modify"):
+        "restructuring drops, folds and reorders branches -- unstack's "
+        "authority through a TUI",
+    ("gh stack", "rebase"):
+        "a cascading rebase rewrites history across the stack, which is "
+        "what `git rebase` is refused for; `gh stack sync` is the "
+        "sanctioned path and carries --force-with-lease",
 }
 
 FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
@@ -109,43 +141,16 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^git\s+push\b.*--delete\b"), "deleting a remote branch"),
     (re.compile(r"^gh\s+pr\s+merge\b"),
      "merging is done by the runner after its checks, not by the agent"),
-    # Same rule, the gh-stack spelling. `gh stack merge` merges every PR
-    # up to the one named, and in a non-interactive terminal -- which the
-    # pod is -- it does so without prompting. Allowing the `stack`
-    # namespace without this would have made the line above false by
-    # synonym. unstack and link are here for the same reason: unstack
-    # drops the stack on GitHub, which is the state that left homelab#64
-    # unmergeable for ten days, and link chains PRs onto an arbitrary
-    # base, which is what `gh pr edit --base` is refused for. modify
-    # drops, folds and reorders branches, which is unstack's authority
-    # through a TUI; rebase does a cascading rebase across the stack,
-    # which is the capability `git rebase` is refused for below -- the
-    # first draft of this rule enumerated three synonyms from a
-    # miscounted surface and left both of those open.
-    (re.compile(r"^gh\s+stack\s+(merge|unstack|link|modify|rebase)\b"),
-     "merging, unstacking, relinking and restructuring are the runner's, "
-     "not the agent's"),
-    (re.compile(r"^gh\s+pr\s+create\b(?!.*(--base[= ]|-B\s))"),
-     "gh pr create without --base defaults to main; pass "
-     f"--base {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+pr\s+create\b.*(--base[= ]|-B\s)\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
-     f"the only permitted PR base is {INTEGRATION_BRANCH}"),
+    # Overnight PRs open as drafts so a human reads them before they are
+    # reviewable; nothing merges from a draft. Non-interactive `gh stack
+    # submit` implies --auto, which creates drafts unless --open is
+    # passed, so this refuses only that flag. Stated in the prompt and
+    # the execute directive too -- this is the copy that holds when one
+    # of those is edited.
+    (re.compile(r"^gh\s+stack\s+submit\b.*--open\b"),
+     "overnight PRs open as drafts; a reviewer marks them ready"),
     (re.compile(r"^gh\s+pr\s+edit\b.*(--base|-B)\b"), "retargeting a PR's base"),
 
-    # Each presence rule spells out all three forms (--base X, --base=X,
-    # -B X). Matching only `--base\s` made the rule fire on input that
-    # had passed --base=main, denying with "pass --base" -- advice the
-    # agent had already followed, and a wasted turn when turns are the
-    # budget that runs out first.
-    # gh-stack opens and retargets PRs, so it needs the same base guards
-    # as gh pr. init is the only subcommand that sets the trunk, and the
-    # runner always passes --base; a bare init would inherit the repo
-    # default, which is main.
-    (re.compile(r"^gh\s+stack\s+init\b(?!.*(--base[= ]|-B\s))"),
-     "gh stack init without --base takes the repo default as trunk; pass "
-     f"--base {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+stack\s+init\b.*(--base[= ]|-B\s)\s*(?!" + INTEGRATION_BRANCH + r"(\s|$))"),
-     f"the only permitted stack trunk is {INTEGRATION_BRANCH}"),
 
     # --- protection and repository settings ---------------------------
     # The PAT has no Administration scope, so these would fail anyway.
@@ -214,6 +219,64 @@ ALLOWED_TOOLS = {
 class Decision:
     allow: bool
     reason: str
+
+
+# Which base/trunk flag each command spells, and what to call it in a
+# refusal. `gh pr create` takes -B; `gh stack init` takes -b and rejects
+# -B as an unknown shorthand, so the spelling is per-command data rather
+# than something a reader has to infer.
+BASE_FLAGS: dict[tuple[str, ...], tuple[str, str, str]] = {
+    ("pr", "create"): ("-B", "gh pr create", "PR base"),
+    ("stack", "init"): ("-b", "gh stack init", "stack trunk"),
+}
+
+
+def _base_ok(argv: list[str]) -> Decision | None:
+    """Refuse a gh command that opens a PR or stack on the wrong base.
+
+    Walks argv the way _repo_args_ok does rather than matching the
+    command string. A regex cannot see argument boundaries: `--base  X`
+    with two spaces made the old lookahead test the space instead of X
+    and refuse the correct branch, and `-BX` glued to its value was
+    invisible to the presence check -- both denied with advice the agent
+    had already followed. Spelling out more forms had been the fix three
+    rounds running; walking the arguments ends the class.
+    """
+    words = [a for a in argv if not a.startswith("-")]
+    key = tuple(words[:2])
+    spec = BASE_FLAGS.get(key)
+    if spec is None:
+        return None
+    short, label, noun = spec
+
+    value = None
+    seen = False
+    for i, arg in enumerate(argv):
+        if arg in ("--base", short):
+            seen = True
+            value = argv[i + 1] if i + 1 < len(argv) else None
+        elif arg.startswith("--base="):
+            seen = True
+            value = arg.split("=", 1)[1]
+        elif arg.startswith(f"{short}=") and len(arg) > len(short) + 1:
+            seen = True
+            value = arg[len(short) + 1:]
+        elif arg.startswith(short) and len(arg) > len(short):
+            # The glued POSIX short form, `-Bmain`.
+            seen = True
+            value = arg[len(short):]
+        if seen and value:
+            break
+
+    if not seen:
+        return Decision(
+            False,
+            f"{label} without --base takes the repo default, which is "
+            f"main; pass --base {INTEGRATION_BRANCH}")
+    if value != INTEGRATION_BRANCH:
+        return Decision(
+            False, f"the only permitted {noun} is {INTEGRATION_BRANCH}")
+    return None
 
 
 def _repo_args_ok(argv: list[str]) -> Decision | None:
@@ -296,12 +359,23 @@ def check_bash(command: str) -> Decision:
         verdict = _repo_args_ok(rest)
         if verdict is not None:
             return verdict
+        verdict = _base_ok(rest)
+        if verdict is not None:
+            return verdict
 
     subcommands = ALLOWED[binary]
     if not subcommands:
         return Decision(True, f"{binary} allowed")
 
-    sub = next((a for a in rest if not a.startswith("-")), None)
+    # Index the subcommand by position rather than by searching for its
+    # string later, which found the wrong element whenever a flag's
+    # value equalled it. A flag that consumes the next argument can
+    # still make that value look like the subcommand (`gh --title stack
+    # stack add`); the checks below then read the wrong word and refuse,
+    # which is the safe direction and is why this is not special-cased.
+    sub_at = next((i for i, a in enumerate(rest)
+                   if not a.startswith("-")), None)
+    sub = rest[sub_at] if sub_at is not None else None
     if sub is None:
         return Decision(True, f"{binary} with no subcommand")
     if sub not in subcommands:
@@ -312,11 +386,14 @@ def check_bash(command: str) -> Decision:
     # everything under it.
     nested = ALLOWED_SUB.get(f"{binary} {sub}")
     if nested is not None:
-        tail = rest[rest.index(sub) + 1:]
+        tail = rest[sub_at + 1:]
         verb = next((a for a in tail if not a.startswith("-")), None)
         if verb is None:
             return Decision(False, f"{binary} {sub} needs a subcommand")
         if verb not in nested:
+            why = SUB_REASONS.get((f"{binary} {sub}", verb))
+            if why:
+                return Decision(False, why)
             return Decision(
                 False, f"{binary} {sub} {verb} is not allowed for this pod")
         return Decision(True, f"{binary} {sub} {verb} allowed")

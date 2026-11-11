@@ -43,7 +43,7 @@ ALLOW = [
     # was the one allowed. Both directions are pinned below.
     "gh stack init desloppify/webapp-x --base chris-agentic-looping",
     "gh stack init desloppify/webapp-x --base=chris-agentic-looping",
-    "gh stack init desloppify/webapp-x -B chris-agentic-looping",
+    "gh stack init desloppify/webapp-x -b chris-agentic-looping",
     "gh pr create --base=chris-agentic-looping --title t --body b",
     "gh pr create -B chris-agentic-looping --title t --body b",
     "gh stack add desloppify/webapp-y",
@@ -105,6 +105,9 @@ DENY = [
     # enumerated three synonyms from a surface it had miscounted as 13.
     ("gh stack modify", "restructures the stack: drop, fold, reorder"),
     ("gh stack rebase", "rewrites history across the stack"),
+    # The draft decision lived in three prose statements and no gate.
+    ("gh stack submit --open",
+     "drafts are deliberate; a reviewer marks them ready"),
     ("gh stack rebase --no-trunk", "the same, skipping the trunk"),
     # Not dangerous, but not needed either: the gate is an allowlist, so
     # a future gh-stack release cannot widen it by adding a verb.
@@ -127,8 +130,10 @@ DENY = [
      "-B is --base's short form"),
     ("gh stack init desloppify/webapp-x --base=main",
      "--base=main is still main"),
-    ("gh stack init desloppify/webapp-x -B main",
-     "-B is --base's short form"),
+    ("gh stack init desloppify/webapp-x -b main",
+     "-b is gh stack init's short form for --base"),
+    ("gh stack init desloppify/webapp-x -b=main",
+     "the same, joined with ="),
     ("gh stack init desloppify/webapp-x",
      "no --base, so the trunk defaults to the repo default, which is main"),
     ("gh pr merge 12 --repo schoolhouse-world/app --squash", "merges, which is the runner's job"),
@@ -213,17 +218,27 @@ REASON = [
     ("gh pr create -B main --title t --body b", "only permitted PR base"),
     ("gh stack init x", "without --base"),
     ("gh stack init x --base=main", "only permitted stack trunk"),
-    ("gh stack init x -B main", "only permitted stack trunk"),
-    # Two layers refuse these: the allowlist (which does not name them)
-    # and the explicit rule (which says why). Asserting the reason pins
-    # the second -- without it, deleting the rule leaves the suite green
-    # and the next person to widen the allowlist gets no warning.
-    ("gh stack merge --yes", "are the runner's"),
-    ("gh stack unstack 7", "are the runner's"),
-    ("gh stack link 1 2", "are the runner's"),
-    ("gh stack modify", "are the runner's"),
-    ("gh stack rebase", "are the runner's"),
+    ("gh stack init x -b main", "only permitted stack trunk"),
+    ("gh stack init x -bmain", "only permitted stack trunk"),
+    ("gh stack init x --base  main", "only permitted stack trunk"),
+    ("gh pr create -Bmain --title t", "only permitted PR base"),
+    ("gh pr create --base  main --title t", "only permitted PR base"),
+    # One list refuses these; SUB_REASONS says why. Asserting each
+    # verb's own reason keeps the messages specific -- a shared string
+    # told the agent five different problems in the same words.
+    ("gh stack merge --yes", "merging is the runner's"),
+    ("gh stack unstack 7", "homelab#64"),
+    ("gh stack link 1 2", "arbitrary base"),
+    ("gh stack modify", "unstack's authority"),
+    ("gh stack rebase", "gh stack sync` is the sanctioned path"),
+    ("gh stack submit --open", "open as drafts"),
 ]
+
+
+# The gate is one list, so pin its contents. Adding a verb here used to
+# leave the suite green because a parallel denylist caught it; with the
+# denylist gone, this assertion is what fails.
+EXPECTED_STACK_SUBS = {"init", "add", "submit", "sync", "checkout", "view"}
 
 
 def main() -> int:
@@ -249,6 +264,15 @@ def main() -> int:
         if policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD DENY tool: {name}")
 
+    got = policy.ALLOWED_SUB.get("gh stack", set())
+    if got != EXPECTED_STACK_SUBS:
+        extra = ", ".join(sorted(got - EXPECTED_STACK_SUBS)) or "none"
+        missing = ", ".join(sorted(EXPECTED_STACK_SUBS - got)) or "none"
+        failures.append(
+            f"ALLOWED_SUB['gh stack'] changed: added [{extra}], "
+            f"removed [{missing}]. The allowlist is the whole gate -- "
+            f"widening it grants the agent that capability outright")
+
     for cmd, expected in REASON:
         d = policy.check_bash(cmd)
         if d.allow:
@@ -258,7 +282,7 @@ def main() -> int:
                 f"WRONG REASON: {cmd}\n      got: {d.reason}\n"
                 f"      want substring: {expected}")
 
-    total = len(ALLOW) + len(DENY) + len(REASON) + 9
+    total = len(ALLOW) + len(DENY) + len(REASON) + 10
     if failures:
         print(f"FAIL - {len(failures)} of {total}\n")
         for f in failures:
