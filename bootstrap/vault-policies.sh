@@ -6,19 +6,24 @@
 # bound to a specific service account in a specific namespace. Compromise
 # of one pod does not expose other apps' secrets.
 #
-# Usage (from a host that can reach the vault pod):
-#   export VAULT_ADDR="http://127.0.0.1:8200"
-#   export VAULT_TOKEN="<root or admin token>"
-#   kubectl port-forward -n default svc/vault 8200:8200 &
+# Usage, from a host that can reach Vault:
+#   vault login              # OIDC via Authelia; writes ~/.vault-token
 #   ./bootstrap/vault-policies.sh
 #
-# Or exec inside the vault pod:
-#   kubectl exec -n default vault-0 -- sh < bootstrap/vault-policies.sh
+# Nothing else to export. VAULT_ADDR defaults to the port-forward address,
+# and the token is read from ~/.vault-token the same way every other vault
+# command reads it. Set VAULT_TOKEN explicitly to override (CI, or the
+# break-glass root token).
+#
+# This cannot be piped into the vault pod -- `kubectl exec ... -- sh <
+# this-file` runs it where there is no token and no ~/.vault-token, so it
+# exits on the check below.
 
 set -euo pipefail
 
 : "${VAULT_ADDR:=http://127.0.0.1:8200}"
-: "${VAULT_TOKEN:?VAULT_TOKEN must be set}"
+: "${VAULT_TOKEN:=$(cat "${HOME}/.vault-token" 2>/dev/null || true)}"
+: "${VAULT_TOKEN:?no token - run 'vault login' first, or set VAULT_TOKEN}"
 export VAULT_ADDR VAULT_TOKEN
 
 vault auth list 2>/dev/null | grep -q '^kubernetes/' || \
