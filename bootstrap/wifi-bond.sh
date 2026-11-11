@@ -29,6 +29,8 @@
 # wired profile comes back automatically. The old profiles are kept
 # (autoconnect off) as the manual rollback:
 #   nmcli con down bond0; nmcli con up "<old wired con>"
+#   (on a k3s node, also point flannel-iface in /etc/rancher/k3s/config.yaml
+#    back at the wired device - this script moves it to bond0)
 #
 # Run AS ROOT on the node, over the wired connection:
 #   sudo bash bootstrap/wifi-bond.sh --detect-only   # preview
@@ -103,6 +105,28 @@ ping -c1 -W2 "$GW" >/dev/null || die "gateway $GW does not answer ping from the 
 # it was - a reverted run must put the old world back, not a new one.
 WIFI_AUTOCONNECT_WAS=$(nmcli -g connection.autoconnect con show "$WIFI_CON")
 
+# k3s pins flannel-iface in its config and reads it ONCE, at startup.
+# Enslaving that device leaves it IP-less: the running k3s is fine, but
+# every restart after the bond dies at flannel start - a time bomb, not
+# an immediate failure (the 2026-11-10 three-node control-plane outage).
+# The switch script rewrites the pin to bond0 only AFTER the bond proves
+# healthy; the running k3s is untouched and the next restart picks it up.
+# A failed transition reverts before the rewrite, so there is nothing to
+# undo on that path.
+K3S_CONFIG=/etc/rancher/k3s/config.yaml
+K3S_PIN=$(awk -F': *' '$1=="flannel-iface" {gsub(/^[ \t"]+|[ \t"]+$/, "", $2); print $2; exit}' "$K3S_CONFIG" 2>/dev/null || true)
+case "$K3S_PIN" in
+  *[!A-Za-z0-9._-]*) die "k3s flannel-iface value '$K3S_PIN' has unexpected characters - fix $K3S_CONFIG first" ;;
+esac
+if grep -qsE -- '--flannel-iface' /etc/systemd/system/k3s.service /etc/systemd/system/k3s-agent.service; then
+  die "k3s pins --flannel-iface on its unit command line - move it to $K3S_CONFIG first (this script only rewrites the config file)"
+fi
+K3S_FIX=""
+if [ -n "$K3S_PIN" ] && [ "$K3S_PIN" != bond0 ]; then
+  [ "$K3S_PIN" = "$WIRED_DEV" ] || [ "$K3S_PIN" = "$WIFI_DEV" ] || die "k3s pins flannel-iface to '$K3S_PIN', which is neither $WIRED_DEV nor $WIFI_DEV - fix $K3S_CONFIG before bonding"
+  K3S_FIX="sed -i 's/^flannel-iface:.*/flannel-iface: bond0/' $K3S_CONFIG && logger -t wifi-bond 'k3s flannel-iface rewritten to bond0 (was $K3S_PIN)'"
+fi
+
 # SSH-over-wifi guard (socket table; SSH_CONNECTION dies under sudo).
 PHASE=ssh-guard
 WIFI_ADDRS=$( { nmcli -g IP4.ADDRESS dev show "$WIFI_DEV" 2>/dev/null | cut -d/ -f1; nmcli -g IP6.ADDRESS dev show "$WIFI_DEV" 2>/dev/null | cut -d/ -f1; } | grep . || true)
@@ -117,6 +141,7 @@ say "bond0      : $ADDR gw $GW dns ${DNS:-'(none)'} mode=active-backup primary=$
 say "wired port : $WIRED_DEV (from '$WIRED_CON', kept as rollback, autoconnect off)"
 say "wifi port  : $WIFI_DEV ssid '$SSID' (from '$WIFI_CON', kept as rollback, autoconnect $WIFI_AUTOCONNECT_WAS -> off)"
 say "ipv6       : disabled on bond0 (old profile's IPv6 config is NOT mirrored)"
+[ -n "$K3S_FIX" ] && say "k3s        : flannel-iface '$K3S_PIN' -> bond0 (rewritten once the bond proves healthy; takes effect on the next k3s restart)"
 [ -e /etc/NetworkManager/dispatcher.d/90-wifi-backup ] && say "legacy     : wifi-backup dispatcher+timer present - will be removed before the transition"
 if [ "$DETECT_ONLY" = yes ]; then trap - EXIT; say "(detect-only: nothing changed)"; exit 0; fi
 [ "$YES" = yes ] || die "re-run with --yes to apply exactly the above"
@@ -201,6 +226,7 @@ sleep 3
 if ip -4 addr show bond0 | grep -qF "${ADDR%/*}" && ping -c2 -W2 "$GW" >/dev/null; then
   touch /run/wifi-bond-healthy
   logger -t wifi-bond "bond0 healthy at $ADDR"
+  $K3S_FIX
 else
   logger -t wifi-bond "bond0 UNHEALTHY - stopping dead-man, reverting"
   systemctl stop wifi-bond-deadman.timer wifi-bond-deadman.service 2>/dev/null
