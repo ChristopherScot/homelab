@@ -82,12 +82,21 @@ EOF
 done
 
 # ddns updates the ntfy WAN A record and reuses cert-manager's Route 53
-# credential rather than a second AWS key, so its policy points at
-# cert-manager's kv path instead of a kv/ddns/* of its own. Read-only, one
-# path, bound to the ddns namespace's SA.
+# credential rather than a second AWS key, so it reads from other apps'
+# kv paths instead of a kv/ddns/* of its own: route53 for the DNS update,
+# ntfy/config for the token it notifies with. Read-only, bound to the ddns
+# namespace's SA.
+#
+# The ntfy grant was missing until 2026-11-10. ddns-secrets pulls four
+# keys, three from cert-manager/route53 and grafana_token from ntfy/config,
+# and Vault denied the whole read for the one ungranted path -- a 403 that
+# reads as an auth failure rather than a missing grant. Add the path here
+# when ddns starts reading a new one.
 vault policy write ddns - <<EOF
 path "kv/data/cert-manager/route53"     { capabilities = ["read"] }
 path "kv/metadata/cert-manager/route53" { capabilities = ["read", "list"] }
+path "kv/data/ntfy/config"              { capabilities = ["read"] }
+path "kv/metadata/ntfy/config"          { capabilities = ["read", "list"] }
 EOF
 
 # Binds "ddns", not the "external-secrets-sa" every other app role uses.
