@@ -3,8 +3,15 @@ name: desloppify-pod image
 on:
   push:
     branches: [main]
+    # Only what the Dockerfile actually COPYs (plus itself) - see the
+    # note in claude-pod-image.yml for why '**' minted no-op digests.
+    # claude-pods/lib/claude-account.sh is a cross-directory COPY.
     paths:
-      - 'desloppify-pod/**'
+      - 'desloppify-pod/Dockerfile'
+      - 'desloppify-pod/*.sh'
+      - 'desloppify-pod/*.py'
+      - 'desloppify-pod/git-hooks/**'
+      - 'claude-pods/lib/claude-account.sh'
       - '.github/workflows/desloppify-image.yml'
   workflow_dispatch:
 

@@ -3,8 +3,21 @@ name: claude-pod image
 on:
   push:
     branches: [main]
+    # Only what the Dockerfile actually COPYs (plus itself). The old
+    # 'claude-pods/**' rebuilt on manifest and test changes too; builds
+    # are not byte-reproducible, so every no-op rebuild minted a new
+    # digest and argocd-image-updater rolled the whole fleet for
+    # nothing. Adding a COPY to the Dockerfile? Add its source here,
+    # like codex-pod-image.yml does.
     paths:
-      - 'claude-pods/**'
+      - 'claude-pods/Dockerfile'
+      - 'claude-pods/*.sh'
+      - 'claude-pods/*.lua'
+      - 'claude-pods/tmux.conf'
+      - 'claude-pods/dispatcher/**'
+      - 'claude-pods/lib/**'
+      - 'claude-pods/prompts/**'
+      - 'claude-pods/skills/**'
       - '.github/workflows/claude-pod-image.yml'
   workflow_dispatch:
 
