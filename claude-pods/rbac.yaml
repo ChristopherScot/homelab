@@ -27,3 +27,35 @@ subjects:
   - kind: ServiceAccount
     name: claude-session
     namespace: claude-pods
+---
+# argocd-image-updater polls ghcr for new digests of the claude-pod and
+# desloppify-pod images (annotations on their Applications in
+# app-of-apps/apps/). Both images are private, so the poll needs the
+# ghcr-pull dockerconfigjson - and the updater's own RBAC only reads
+# secrets in the argocd namespace. Without this grant the poll fails
+# with a forbidden secret read and nothing ever updates. One verb, one
+# named secret: it cannot read anything else here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: image-updater-pull-secret
+  namespace: claude-pods
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [ghcr-pull]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: image-updater-pull-secret
+  namespace: claude-pods
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: image-updater-pull-secret
+subjects:
+  - kind: ServiceAccount
+    name: argocd-image-updater
+    namespace: argocd

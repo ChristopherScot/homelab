@@ -8,11 +8,19 @@ on:
   pull_request:
     paths:
       - 'claude-pods/**'
+      # tests/image-pinning.sh also checks the Applications and the
+      # root app, so a change there runs it too.
+      - 'app-of-apps/app-of-apps.yaml'
+      - 'app-of-apps/apps/claude-pods.yaml'
+      - 'app-of-apps/apps/desloppify-pod.yaml'
       - '.github/workflows/claude-pods-tests.yml'
   push:
     branches: [main]
     paths:
       - 'claude-pods/**'
+      - 'app-of-apps/app-of-apps.yaml'
+      - 'app-of-apps/apps/claude-pods.yaml'
+      - 'app-of-apps/apps/desloppify-pod.yaml'
       - '.github/workflows/claude-pods-tests.yml'
 
 permissions:

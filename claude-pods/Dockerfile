@@ -8,8 +8,11 @@
 # Rebuilt by .github/workflows/claude-pod-image.yml: pushing to main with
 # changes under claude-pods/ builds and pushes ghcr.io/christopherscot/
 # claude-pod:latest. To build a branch, `gh workflow run
-# claude-pod-image.yml --ref <branch>`. Then `kubectl rollout restart` the
-# claude-pods StatefulSet to pick it up.
+# claude-pod-image.yml --ref <branch>`. argocd-image-updater sees the new
+# :latest digest within its poll interval and rolls the StatefulSet and
+# the dispatcher Deployment itself; the CronJobs pick the new digest up
+# on their next run. There is nothing to restart by hand (see
+# kustomization.yaml).
 FROM node:22-trixie-slim
 
 ARG CLAUDE_CODE_VERSION=2.1.310
@@ -333,9 +336,10 @@ COPY nightly-test.sh /usr/local/bin/nightly-test
 COPY lib/ /usr/local/share/claude-pods/lib/
 COPY prompts/ /usr/local/share/claude-pods/prompts/
 # The scoped Bash allow-list ships inside prompts/ (copied above). It
-# lives there rather than beside the manifests because Argo parses every
-# .json under claude-pods/ as a Kubernetes manifest — a settings file
-# there has no 'kind' and breaks the whole Application's sync.
+# lives there rather than beside the manifests because Argo, in the
+# directory mode this app used before kustomization.yaml, parsed every
+# top-level .json in claude-pods/ as a Kubernetes manifest — a settings file
+# there has no 'kind' and broke the whole Application's sync.
 # The dispatcher, which turns a card move into one of the runs above. It
 # ships in this image rather than one of its own because it needs node (it
 # is a node script) and kubectl (it execs with it), and both are already

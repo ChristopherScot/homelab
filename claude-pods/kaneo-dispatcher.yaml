@@ -52,6 +52,8 @@ spec:
       containers:
         - name: dispatcher
           image: ghcr.io/christopherscot/claude-pod:latest
+          # Digest-pinned by argocd-image-updater on the live Application (see kustomization.yaml); pull-on-change, cache otherwise.
+          imagePullPolicy: IfNotPresent
           command: ["node", "/usr/local/share/claude-pods/dispatcher/dispatch.mjs"]
           ports:
             - name: http
