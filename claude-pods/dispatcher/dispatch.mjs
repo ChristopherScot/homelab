@@ -9,7 +9,8 @@
 // so the only way to make a cycle is for a human to drag a card backwards,
 // which is a deliberate "do it again".
 //
-// Replaces the three nightly cronjobs. Work starts when a card moves rather
+// Replaced the three nightly cronjobs, removed 2026-11-10. Work starts
+// when a card moves rather
 // than at 00:00, and each stage hands to the next by moving the card.
 //
 // Node rather than a shell script because the HMAC must be computed over the
