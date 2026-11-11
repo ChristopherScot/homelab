@@ -60,7 +60,35 @@ spec:
     # kube_deployment_status_replicas_{updated,available,spec} were all 1,
     # because the surviving old pod satisfies every one of them. The
     # failure is only visible at the container.
-    # CrashLoopBackOff catches containers that start and die; this
+    - uid: cfmld7mw9c5j4ecr
+      title: Pod container crash looping
+      condition: B
+      # 10m rather than 15m: the state is true immediately, so this only
+      # has to outlast a genuine restart-and-recover.
+      for: 10m
+      noDataState: OK
+      execErrState: OK
+      labels: { component: workloads, severity: warning }
+      annotations:
+        summary: '{{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is in CrashLoopBackOff'
+        description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} has been in CrashLoopBackOff for 10m. This can be true while the service is still UP: a failed rolling update leaves the previous ReplicaSet serving, so nothing else reports a problem. Check `kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }} --previous`, and `kubectl get rs -n {{ $labels.namespace }}` to see whether an old ReplicaSet is covering for it."
+      data:
+        - refId: A
+          relativeTimeRange: { from: 600, to: 0 }
+          datasourceUid: grafanacloud-prom
+          model: { expr: 'max by (namespace, pod, container) (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"})', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
+        - refId: B
+          relativeTimeRange: { from: 0, to: 0 }
+          datasourceUid: __expr__
+          model:
+            refId: B
+            type: threshold
+            expression: A
+            intervalMs: 1000
+            maxDataPoints: 43200
+            conditions:
+              - evaluator: { type: gt, params: [0] }
+    # CrashLoopBackOff above catches containers that start and die; this
     # catches containers that never start at all - stuck volume attach,
     # a hung image pull, a missing secret. 15m rather than 10m: a cold
     # image pull on this LAN can legitimately take several minutes.
@@ -79,34 +107,6 @@ spec:
           relativeTimeRange: { from: 600, to: 0 }
           datasourceUid: grafanacloud-prom
           model: { expr: 'max by (namespace, pod, container) (kube_pod_container_status_waiting_reason{reason="ContainerCreating"})', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
-        - refId: B
-          relativeTimeRange: { from: 0, to: 0 }
-          datasourceUid: __expr__
-          model:
-            refId: B
-            type: threshold
-            expression: A
-            intervalMs: 1000
-            maxDataPoints: 43200
-            conditions:
-              - evaluator: { type: gt, params: [0] }
-    - uid: cfmld7mw9c5j4ecr
-      title: Pod container crash looping
-      condition: B
-      # 10m rather than 15m: the state is true immediately, so this only
-      # has to outlast a genuine restart-and-recover.
-      for: 10m
-      noDataState: OK
-      execErrState: OK
-      labels: { component: workloads, severity: warning }
-      annotations:
-        summary: '{{ $labels.namespace }}/{{ $labels.pod }} container {{ $labels.container }} is in CrashLoopBackOff'
-        description: "Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }} has been in CrashLoopBackOff for 10m. This can be true while the service is still UP: a failed rolling update leaves the previous ReplicaSet serving, so nothing else reports a problem. Check `kubectl logs -n {{ $labels.namespace }} {{ $labels.pod }} -c {{ $labels.container }} --previous`, and `kubectl get rs -n {{ $labels.namespace }}` to see whether an old ReplicaSet is covering for it."
-      data:
-        - refId: A
-          relativeTimeRange: { from: 600, to: 0 }
-          datasourceUid: grafanacloud-prom
-          model: { expr: 'max by (namespace, pod, container) (kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"})', instant: true, intervalMs: 1000, maxDataPoints: 43200, refId: A }
         - refId: B
           relativeTimeRange: { from: 0, to: 0 }
           datasourceUid: __expr__

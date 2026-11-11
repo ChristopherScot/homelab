@@ -84,7 +84,11 @@ spec:
       condition: B
       for: 15m
       noDataState: OK
-      execErrState: OK
+      # Alerting, not OK: this rule IS the net under "no data means
+      # healthy". A query error (VictoriaMetrics down, datasource
+      # unreachable) blinds every rule in this stack at once; for: 15m
+      # damps transient restarts.
+      execErrState: Alerting
       labels: { app: longhorn, severity: warning }
       annotations:
         summary: "Longhorn volume metrics have been absent for 15m - volume alerts are flying blind"
