@@ -10,7 +10,7 @@ if [ "$#" -eq 0 ]; then
   echo 'FATAL: a worker command is required' >&2
   exit 64
 fi
-# Shared across scheduled/manual pods. Hold through startup, OAuth refresh,
+# Shared across scheduled/manual pods. Hold through startup, authentication,
 # repairs and reviews, not just the task, so concurrent Jobs cannot corrupt
 # the writable login cache or shared checkout.
 exec 8>"$CODEX_HOME/worker.lock"
@@ -30,17 +30,12 @@ if ! { [ -x /opt/codex/node_modules/.bin/codex ] \
 fi
 cp /etc/codex-pod/config.toml "$CODEX_HOME/config.toml"
 
-# Seed once. Codex refreshes this writable copy on the home PVC; recopying the
-# immutable seed at each boot would roll back refreshed OAuth credentials.
-if [ ! -e "$CODEX_HOME/auth.json" ]; then
-  install -m 600 /run/secrets/codex/auth.json "$CODEX_HOME/auth.json"
-fi
-jq -e '.auth_mode == "chatgpt" and (.tokens.access_token | length > 0)
-  and (.tokens.refresh_token | length > 0) and (.OPENAI_API_KEY == null)' \
-  "$CODEX_HOME/auth.json" >/dev/null || {
-  echo "FATAL: expected a cached ChatGPT login, not an API key" >&2
+# Use the workspace's automation token directly. Never fall back to the
+# obsolete laptop OAuth cache or silently switch to Platform API billing.
+if [ -z "${CODEX_ACCESS_TOKEN:-}" ]; then
+  echo 'FATAL: CODEX_ACCESS_TOKEN must come from the Vault-backed worker secret' >&2
   exit 1
-}
+fi
 codex --version
 codex login status
 
@@ -63,5 +58,5 @@ timeout --kill-after=15s 180s codex exec --cd /tmp --skip-git-repo-check \
 jq -se -f /etc/codex-pod/startup-check.jq "$CODEX_HOME/startup-check.jsonl" >/dev/null
 grep -qx 'CODEX_POD_OK' "$CODEX_HOME/startup-check.txt"
 touch /tmp/codex-ready
-echo 'Codex worker ready: ChatGPT login and shell execution verified; starting task.'
+echo 'Codex worker ready: workspace access token and shell execution verified; starting task.'
 exec "$@"

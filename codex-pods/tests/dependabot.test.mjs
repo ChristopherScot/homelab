@@ -113,6 +113,16 @@ test('discovery failure fails the run rather than reporting no work', async t =>
 // are real, so stale/rejected reviews must leave the remote untouched.
 async function runScenario(t, scenario) {
   const options = fixture(t);
+  const credentialKeys = ['CODEX_ACCESS_TOKEN', 'OPENAI_API_KEY', 'CODEX_API_KEY', 'OPENAI_BASE_URL'];
+  const previousCredentials = Object.fromEntries(credentialKeys.map(key => [key, process.env[key]]));
+  t.after(() => {
+    for (const key of credentialKeys) {
+      if (previousCredentials[key] === undefined) delete process.env[key];
+      else process.env[key] = previousCredentials[key];
+    }
+  });
+  process.env.CODEX_ACCESS_TOKEN = 'fixture-workspace-access-token';
+  for (const key of credentialKeys.slice(1)) process.env[key] = 'fixture-api-value';
   const source = join(options.stateDir, 'source');
   const remote = join(options.stateDir, 'remote.git');
   mkdirSync(source);
@@ -180,7 +190,11 @@ async function runScenario(t, scenario) {
         ? args.map(a => a === 'https://github.com/schoolhouse-world/app.git' ? remote : a) : args;
       return spawnSync(bin, ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', ...gitArgs], config);
     };
-    summary = await main({ ...options, run, agentRun: (bin, args, config) => run('timeout', args, config) });
+    summary = await main({ ...options, run, agentRun: (bin, args, config) => {
+      assert.equal(config.env.CODEX_ACCESS_TOKEN, 'fixture-workspace-access-token');
+      for (const key of credentialKeys.slice(1)) assert.equal(config.env[key], undefined);
+      return run('timeout', args, config);
+    } });
   } finally { process.exitCode = previousExit; }
   return { summary, candidate, calls, remoteHead: localGit(['rev-parse', `refs/heads/${candidate.headRefName}`], remote),
     remoteMain: localGit(['rev-parse', 'refs/heads/main'], remote) };
@@ -188,7 +202,7 @@ async function runScenario(t, scenario) {
 
 function configDirForTest() { return new URL('..', import.meta.url).pathname.replace(/\/$/, ''); }
 
-test('reviewed fix fast-forwards only the original Dependabot branch', async t => {
+test('workspace token reaches both agents and reviewed fix fast-forwards only its branch', async t => {
   const result = await runScenario(t, 'approved');
   assert.deepEqual(result.summary.repaired, [17054]);
   assert.notEqual(result.remoteHead, result.candidate.headRefOid);

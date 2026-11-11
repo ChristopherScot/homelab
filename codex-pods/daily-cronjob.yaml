@@ -47,6 +47,11 @@ spec:
               value: "/home/node"
             - name: CODEX_HOME
               value: "/home/node/.codex"
+            - name: CODEX_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codex-access-token
+                  key: access-token
             - name: PATH
               value: "/opt/codex/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/node/go/bin"
             # Node's 250 ms address-family switching abandons healthy IPv4
@@ -83,9 +88,6 @@ spec:
             - name: config
               mountPath: "/etc/codex-pod"
               readOnly: true
-            - name: auth-seed
-              mountPath: "/run/secrets/codex"
-              readOnly: true
             - name: git-creds
               mountPath: "/run/secrets/git"
               readOnly: true
@@ -96,9 +98,6 @@ spec:
           - name: config
             configMap:
               name: codex-pod-config
-          - name: auth-seed
-            secret:
-              secretName: codex-auth-seed
           - name: git-creds
             secret:
               secretName: codex-git
