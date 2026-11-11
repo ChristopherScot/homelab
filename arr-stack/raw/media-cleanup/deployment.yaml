@@ -27,11 +27,11 @@ data:
     ARR_TARGETS = {
         'radarr': [
             ('cluster', 'http://radarr.media.svc.cluster.local:7878', R('RADARR_KEY')),
-            ('q-stack', 'http://192.168.50.179:7879', R('Q_RADARR_KEY')),
+            ('q-stack', 'http://192.168.50.164:7879', R('Q_RADARR_KEY')),
         ],
         'sonarr': [
             ('cluster', 'http://sonarr.media.svc.cluster.local:8989', R('SONARR_KEY')),
-            ('q-stack', 'http://192.168.50.179:8990', R('Q_SONARR_KEY')),
+            ('q-stack', 'http://192.168.50.164:8990', R('Q_SONARR_KEY')),
         ],
     }
     JELLYFIN = ('http://jellyfin.media.svc.cluster.local:8096', R('JELLYFIN_KEY'))
