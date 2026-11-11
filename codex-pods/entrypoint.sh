@@ -19,14 +19,14 @@ if ! flock -n 8; then
   exit 75
 fi
 
-# Cache the pinned CLI on the existing home PVC. Subsequent runs need no npm
-# download to start, unlike the former emptyDir init container.
+# Executables belong to the image, not the writable home PVC. Fail fast on
+# an incorrect image; never install or update tools during worker startup.
 CODEX_VERSION="${CODEX_VERSION:-0.167.0}"
-export PATH="$CODEX_HOME/tools/node_modules/.bin:$PATH"
-if ! { [ -x "$CODEX_HOME/tools/node_modules/.bin/codex" ] \
-  && "$CODEX_HOME/tools/node_modules/.bin/codex" --version 2>/dev/null | grep -qx "codex-cli $CODEX_VERSION"; }; then
-  npm install --prefix "$CODEX_HOME/tools" --cache "$CODEX_HOME/npm-cache" \
-    --prefer-offline --no-audit --no-fund "@openai/codex@$CODEX_VERSION"
+export PATH="/opt/codex/node_modules/.bin:$PATH"
+if ! { [ -x /opt/codex/node_modules/.bin/codex ] \
+  && codex --version 2>/dev/null | grep -qx "codex-cli $CODEX_VERSION"; }; then
+  echo "FATAL: worker image must contain Codex CLI $CODEX_VERSION under /opt/codex" >&2
+  exit 1
 fi
 cp /etc/codex-pod/config.toml "$CODEX_HOME/config.toml"
 
