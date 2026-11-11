@@ -10,11 +10,11 @@
 # four agents reading the same diff are correlated, not independent.
 set -uo pipefail
 
-# Shared preamble for the three nightly pods — see lib/nightly-common.sh.
+# Shared preamble for the three nightly pods — see lib/pod-common.sh.
 # A fix there reaches all three.
-NIGHTLY_LIB="${NIGHTLY_LIB:-/usr/local/share/claude-pods/lib/nightly-common.sh}"
-# shellcheck source=lib/nightly-common.sh
-source "$NIGHTLY_LIB" || { echo "FATAL: cannot source $NIGHTLY_LIB" >&2; exit 1; }
+POD_LIB="${POD_LIB:-/usr/local/share/claude-pods/lib/pod-common.sh}"
+# shellcheck source=lib/pod-common.sh
+source "$POD_LIB" || { echo "FATAL: cannot source $POD_LIB" >&2; exit 1; }
 
 PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-1800}"
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
@@ -22,7 +22,7 @@ LOG="$STATE_DIR/merge-$(date +%Y%m%d).log"
 
 mkdir -p "$STATE_DIR"
 log_to "$LOG"
-echo "=== nightly-merge $(date -Is) model=$MODEL ==="
+echo "=== stage-merge $(date -Is) model=$MODEL ==="
 
 require_gh_token || exit 1
 require_kaneo_key || exit 1
@@ -33,7 +33,7 @@ pick_model
 
 now=$(date +%s)
 
-# The card this run is for; see nightly-test.sh for the reasoning. Empty
+# The card this run is for; see stage-test.sh for the reasoning. Empty
 # means sweep everything, which is what a hand-run or the reconciler does.
 ONLY_TASK="${1:-}"
 
@@ -266,4 +266,4 @@ if [ -s "$MERGED_FILE" ]; then
   done
 fi
 
-echo "=== nightly-merge complete $(date -Is) ==="
+echo "=== stage-merge complete $(date -Is) ==="

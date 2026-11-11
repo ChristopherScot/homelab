@@ -15,7 +15,7 @@ printf 'work-token' > "$CLAUDE_TOKEN_DIR/oauth-token"
 printf 'personal-token' > "$CLAUDE_TOKEN_DIR/oauth-token-personal"
 
 # shellcheck disable=SC1091
-NIGHTLY_NS=test . "$(dirname "${BASH_SOURCE[0]}")/../lib/nightly-common.sh" 2>/dev/null
+NIGHTLY_NS=test . "$(dirname "${BASH_SOURCE[0]}")/../lib/pod-common.sh" 2>/dev/null
 
 # --- the rate-limit signal -------------------------------------------
 for text in \

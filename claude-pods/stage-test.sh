@@ -12,11 +12,11 @@
 # them means the second gets answered carelessly once the first looks fine.
 set -uo pipefail
 
-# Shared preamble for the three nightly pods — see lib/nightly-common.sh.
+# Shared preamble for the three nightly pods — see lib/pod-common.sh.
 # A fix there reaches all three.
-NIGHTLY_LIB="${NIGHTLY_LIB:-/usr/local/share/claude-pods/lib/nightly-common.sh}"
-# shellcheck source=lib/nightly-common.sh
-source "$NIGHTLY_LIB" || { echo "FATAL: cannot source $NIGHTLY_LIB" >&2; exit 1; }
+POD_LIB="${POD_LIB:-/usr/local/share/claude-pods/lib/pod-common.sh}"
+# shellcheck source=lib/pod-common.sh
+source "$POD_LIB" || { echo "FATAL: cannot source $POD_LIB" >&2; exit 1; }
 
 PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-2700}"
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
@@ -24,7 +24,7 @@ LOG="$STATE_DIR/test-$(date +%Y%m%d).log"
 
 mkdir -p "$STATE_DIR"
 log_to "$LOG"
-echo "=== nightly-test $(date -Is) ==="
+echo "=== stage-test $(date -Is) ==="
 
 require_gh_token || exit 1
 require_kaneo_key || exit 1
@@ -213,4 +213,4 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
   done
 done
 
-echo "=== nightly-test complete $(date -Is) ==="
+echo "=== stage-test complete $(date -Is) ==="

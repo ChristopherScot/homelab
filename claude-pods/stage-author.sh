@@ -10,11 +10,11 @@
 # to do.
 set -uo pipefail
 
-# Shared preamble for the three nightly pods — see lib/nightly-common.sh.
+# Shared preamble for the three nightly pods — see lib/pod-common.sh.
 # A fix there reaches all three.
-NIGHTLY_LIB="${NIGHTLY_LIB:-/usr/local/share/claude-pods/lib/nightly-common.sh}"
-# shellcheck source=lib/nightly-common.sh
-source "$NIGHTLY_LIB" || { echo "FATAL: cannot source $NIGHTLY_LIB" >&2; exit 1; }
+POD_LIB="${POD_LIB:-/usr/local/share/claude-pods/lib/pod-common.sh}"
+# shellcheck source=lib/pod-common.sh
+source "$POD_LIB" || { echo "FATAL: cannot source $POD_LIB" >&2; exit 1; }
 
 MAX_TICKETS="${NIGHTLY_MAX_TICKETS:-3}"
 ROUNDS="${NIGHTLY_ROUNDS:-3}"
@@ -23,7 +23,7 @@ LOG="$STATE_DIR/author-$(date +%Y%m%d).log"
 
 mkdir -p "$STATE_DIR"
 log_to "$LOG"
-echo "=== nightly-author $(date -Is) model=$MODEL max=$MAX_TICKETS rounds=$ROUNDS ==="
+echo "=== stage-author $(date -Is) model=$MODEL max=$MAX_TICKETS rounds=$ROUNDS ==="
 
 require_gh_token || exit 1
 require_kaneo_key || exit 1
@@ -89,7 +89,7 @@ collect_tickets() {
 # reconcile sweep hands back cards stranded in In Progress by a run
 # that died after moving them, and a scan of To Do here would make that
 # hand-back a silent no-op that re-wakes the pods every hour forever
-# (the 2026-11-10 strand). Siblings nightly-test/nightly-merge carry
+# (the 2026-11-10 strand). Siblings stage-test/stage-merge carry
 # the same ${1:-} contract; this script didn't until it bit.
 # A hand-run with no arguments still scans To Do, position-ordered.
 ONLY_TASK="${1:-}"
@@ -267,4 +267,4 @@ for t in "${TICKETS[@]}"; do
 done
 
 date -Is > "$STATE_DIR/author-done"
-echo "=== nightly-author complete $(date -Is) ==="
+echo "=== stage-author complete $(date -Is) ==="

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The preamble the three nightly scripts share: nightly-author (pod 0),
-# nightly-test (pod 2) and nightly-merge (pod 1) each source this before
+# The preamble the three nightly scripts share: stage-author (pod 0),
+# stage-test (pod 2) and stage-merge (pod 1) each source this before
 # doing anything of their own.
 #
 # One copy, because three copies held in step by hand did not stay in
@@ -12,7 +12,7 @@
 # Sourced, never run. Sourcing it defines defaults and functions and does
 # nothing else — no output, no exec, no exit — so a test can source it
 # too. The image ships it at /usr/local/share/claude-pods/lib/ and the
-# scripts find it through NIGHTLY_LIB.
+# scripts find it through POD_LIB.
 #
 # The scripts then call, in this order: log_to (before anything prints,
 # or it is lost to Loki), require_gh_token, preflight_credential, and
@@ -180,7 +180,7 @@ merge_pr() {
 revert_pr() {
   local repo="$1" pr="$2" url
   url=$(gh pr revert "$pr" --repo "$repo" \
-          --body "Reverts #$pr. Opened by nightly-merge because main's CI went red after it landed.") \
+          --body "Reverts #$pr. Opened by stage-merge because main's CI went red after it landed.") \
     || return 1
   echo "$url"
   # GitHub works out a new PR's mergeability in the background, and a

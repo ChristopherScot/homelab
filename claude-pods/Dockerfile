@@ -328,11 +328,11 @@ COPY kbrowser.sh /usr/local/bin/kbrowser
 # the dispatcher is the only caller now.
 # The prompts ship as their own files (prompts/) rather than heredocs inside
 # the scripts, so they can be edited and diffed without touching shell code.
-COPY nightly-author.sh /usr/local/bin/nightly-author
-COPY nightly-merge.sh /usr/local/bin/nightly-merge
-COPY nightly-test.sh /usr/local/bin/nightly-test
+COPY --chmod=0755 stage-author.sh /usr/local/bin/stage-author
+COPY --chmod=0755 stage-merge.sh /usr/local/bin/stage-merge
+COPY --chmod=0755 stage-test.sh  /usr/local/bin/stage-test
 # The preamble all three share is one sourced file, at the path the
-# scripts default NIGHTLY_LIB to.
+# scripts default POD_LIB to.
 COPY lib/ /usr/local/share/claude-pods/lib/
 COPY prompts/ /usr/local/share/claude-pods/prompts/
 # The scoped Bash allow-list ships inside prompts/ (copied above). It
@@ -346,7 +346,7 @@ COPY prompts/ /usr/local/share/claude-pods/prompts/
 # here at known versions. Only the dispatcher Deployment runs it.
 COPY dispatcher/dispatch.mjs /usr/local/share/claude-pods/dispatcher/dispatch.mjs
 
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/nightly-author /usr/local/bin/nightly-merge /usr/local/bin/nightly-test
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the

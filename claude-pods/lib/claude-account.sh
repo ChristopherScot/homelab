@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude account selection, shared by every pod that runs the CLI.
 #
-# Separate from nightly-common.sh because that file carries kubectl,
+# Separate from pod-common.sh because that file carries kubectl,
 # Kaneo and namespace machinery the desloppify pod has no use for, and
 # sourcing all of it to get two functions would couple the two images
 # together for no reason.

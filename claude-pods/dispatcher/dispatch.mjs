@@ -22,7 +22,7 @@ import { readFileSync } from "node:fs";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const NS = process.env.DISPATCH_NS ?? "claude-pods";
-// Same default and same env var as nightly-common.sh, so a short repo: label
+// Same default and same env var as pod-common.sh, so a short repo: label
 // resolves to the same full name here as it does in the scripts.
 const OWNER = process.env.NIGHTLY_OWNER ?? "ChristopherScot";
 const BRANCH_PREFIX = process.env.KANEO_BRANCH_PREFIX ?? "fix/";
@@ -34,9 +34,9 @@ const SECRET_FILE =
 
 // column slug -> which pod runs which script. Anything not here is inert.
 const ROUTES = {
-  "to-do": ["claude-session-0", "/usr/local/bin/nightly-author"],
-  "in-review": ["claude-session-2", "/usr/local/bin/nightly-test"],
-  mergeable: ["claude-session-1", "/usr/local/bin/nightly-merge"],
+  "to-do": ["claude-session-0", "/usr/local/bin/stage-author"],
+  "in-review": ["claude-session-2", "/usr/local/bin/stage-test"],
+  mergeable: ["claude-session-1", "/usr/local/bin/stage-merge"],
 };
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -77,7 +77,7 @@ function podIsBusy(pod) {
   const r = spawnSync(
     "kubectl",
     // A lockfile, not a process scan. The scripts take the lock
-    // themselves (see nightly-common.sh), so what is checked here is what
+    // themselves (see pod-common.sh), so what is checked here is what
     // the run actually holds — a cmdline grep guesses at that from
     // outside and gets it wrong for a script invoked as `sh <path>`.
     //
