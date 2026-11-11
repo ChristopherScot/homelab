@@ -12,7 +12,7 @@
 # them means the second gets answered carelessly once the first looks fine.
 set -uo pipefail
 
-# Shared preamble for the three nightly pods — see lib/pod-common.sh.
+# Shared preamble for the three stage pods — see lib/pod-common.sh.
 # A fix there reaches all three.
 POD_LIB="${POD_LIB:-/usr/local/share/claude-pods/lib/pod-common.sh}"
 # shellcheck source=lib/pod-common.sh

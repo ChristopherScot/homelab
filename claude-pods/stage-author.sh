@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pod 0's nightly job: turn open GitHub issues into reviewed pull requests.
+# Pod 0's stage: turn open GitHub issues into reviewed pull requests.
 #
 # Runs non-interactively via `claude -p`, so everything it needs must be in
 # the prompt — there's nobody to answer a question at 00:00. It opens PRs and
@@ -10,7 +10,7 @@
 # to do.
 set -uo pipefail
 
-# Shared preamble for the three nightly pods — see lib/pod-common.sh.
+# Shared preamble for the three stage pods — see lib/pod-common.sh.
 # A fix there reaches all three.
 POD_LIB="${POD_LIB:-/usr/local/share/claude-pods/lib/pod-common.sh}"
 # shellcheck source=lib/pod-common.sh

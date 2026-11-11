@@ -78,7 +78,7 @@ rm -f "$CLAUDE_TOKEN_DIR/oauth-token-personal"
 
 # A pod with no mounted token must still pass if the CLI has its own
 # login. The session pods authenticate that way and have no
-# /run/secrets/claude mount; refusing them would stop three nightly jobs
+# /run/secrets/claude mount; refusing them would stop all three stages
 # that work today, which is what this guards against.
 export HOME="$tmp/home"
 mkdir -p "$HOME/.claude"

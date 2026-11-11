@@ -10,8 +10,8 @@
 // which is a deliberate "do it again".
 //
 // Replaced the three nightly cronjobs, removed 2026-11-10. Work starts
-// when a card moves rather
-// than at 00:00, and each stage hands to the next by moving the card.
+// when a card moves rather than at 00:00, and each stage hands to the
+// next by moving the card.
 //
 // Node rather than a shell script because the HMAC must be computed over the
 // exact bytes Kaneo sent: reading a raw body is the one thing a shell HTTP

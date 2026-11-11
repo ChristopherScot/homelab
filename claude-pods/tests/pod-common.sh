@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for issue #59: the three nightly scripts each carried
+# Regression test for issue #59: the three stage scripts each carried
 # their own copy of pick_model, render_prompt, cred_ok,
 # preflight_credential, the GitHub token check and the Loki tee, and the
 # copies drifted — a fix landed in one pod and not the others. They now
@@ -90,4 +90,4 @@ for s in "${scripts[@]}"; do
     || fail "Dockerfile does not COPY lib/ to $(dirname "$default"), where $s looks for it"
 done
 
-echo "PASS: lib/pod-common.sh sources cleanly, all three nightly scripts source it first, none keeps a private copy, and the image ships it where they look"
+echo "PASS: lib/pod-common.sh sources cleanly, all three stage scripts source it first, none keeps a private copy, and the image ships it where they look"

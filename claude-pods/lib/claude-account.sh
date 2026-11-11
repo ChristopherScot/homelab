@@ -103,7 +103,7 @@ preflight_credential() {
   # /run/secrets/claude mount; migrating them needs their own
   # setup-token credential in Vault and is a separate change. Until
   # then, saying "no token here" and letting the CLI use the file it
-  # has always used is correct - refusing would stop three nightly jobs
+  # has always used is correct - refusing would stop all three stages
   # that work today.
   if [ -s "$HOME/.claude/.credentials.json" ]; then
     echo "credential: no mounted token; using the CLI's own login" >&2

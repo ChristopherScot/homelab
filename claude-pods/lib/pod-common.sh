@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The preamble the three nightly scripts share: stage-author (pod 0),
+# The preamble the three stage scripts share: stage-author (pod 0),
 # stage-test (pod 2) and stage-merge (pod 1) each source this before
 # doing anything of their own.
 #
