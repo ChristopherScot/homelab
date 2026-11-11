@@ -34,9 +34,34 @@ ALLOW = [
     "gh pr create --repo schoolhouse-world/app --base chris-agentic-looping "
     "--title t --body b",
     "gh pr view 12 --repo schoolhouse-world/app --json body",
+    # The flag-before-verb form is legal gh and the pod may read with it.
+    "gh pr --repo schoolhouse-world/app list --state open",
+    "gh pr --repo schoolhouse-world/app view 12 --json body",
+    "gh pr new --base chris-agentic-looping --title t --body b",
+    "gh pr edit 12 --title x",
+    "gh pr checks 12",
+    # Drafts are the prompt's default, not a gate: the agent may mark
+    # one reviewable. Only `gh stack submit --open` is refused, which
+    # keeps the default without removing the capability.
+    "gh pr ready 7",
+    "gh pr review 7 --comment --body ok",
     "gh pr list --repo schoolhouse-world/app --state open",
     "gh pr comment 12 --repo schoolhouse-world/app --body hi",
     "gh api repos/schoolhouse-world/app/pulls/12",
+    # gh-stack: every subcommand the runner and the agent use. These were
+    # refused until 2026-11-11 while the prompt instructed them, so the
+    # agent's only PR path was denied and the one it was told not to use
+    # was the one allowed. Both directions are pinned below.
+    "gh stack init desloppify/webapp-x --base chris-agentic-looping",
+    "gh stack init desloppify/webapp-x --base=chris-agentic-looping",
+    "gh stack init desloppify/webapp-x -b chris-agentic-looping",
+    "gh pr create --base=chris-agentic-looping --title t --body b",
+    "gh pr create -B chris-agentic-looping --title t --body b",
+    "gh stack add desloppify/webapp-y",
+    "gh stack submit",
+    "gh stack sync",
+    "gh stack checkout 12",
+    "gh stack view",
     # the webapp toolchain
     "yarn lint:biome",
     "yarn workspace @schoolhouse/webapp build",
@@ -76,6 +101,104 @@ DENY = [
      "no --base, so it defaults to the repo default, which is main"),
     ("gh pr create --base master --title t --body b", "opens a PR against master"),
     ("gh pr edit 12 --repo schoolhouse-world/app --base main", "retargets a PR to main"),
+    ("gh stack init desloppify/webapp-x --base main",
+     "makes main the stack trunk"),
+    # Allowing the stack namespace admitted all thirteen subcommands,
+    # and gh stack merge merges every PR up to the one named -- without
+    # prompting, in a non-interactive terminal like this pod. That made
+    # the "gh pr merge" refusal above false by synonym.
+    ("gh stack merge --yes", "merges the stack; the runner merges"),
+    ("gh stack unstack 7", "drops the stack, which is the homelab#64 state"),
+    ("gh stack link main desloppify/webapp-x", "chains a PR onto a chosen base"),
+    # modify drops, folds and reorders branches -- unstack's authority
+    # through a TUI. rebase is the cascading rebase, which is what
+    # `git rebase` is refused for. Both were allowed when this rule
+    # enumerated three synonyms from a surface it had miscounted as 13.
+    ("gh stack modify", "restructures the stack: drop, fold, reorder"),
+    ("gh stack rebase", "rewrites history across the stack"),
+    # The draft decision lived in three prose statements and no gate.
+    ("gh stack submit --open",
+     "drafts are deliberate; a reviewer marks them ready"),
+    ("gh stack rebase --no-trunk", "the same, skipping the trunk"),
+    # Not dangerous, but not needed either: the gate is an allowlist, so
+    # a future gh-stack release cannot widen it by adding a verb.
+    ("gh stack push", "submit is the runner's push path"),
+    ("gh stack trunk main", "changes which branch the stack targets"),
+    ("gh stack alias", "not part of the runner's flow"),
+    ("gh stack", "a bare namespace names no operation"),
+    # \b matched between the g and the hyphen, so a branch merely
+    # prefixed by the integration branch slipped through both rules.
+    ("gh pr create --base chris-agentic-looping-evil --title t --body b",
+     "a branch that only starts with the integration branch name"),
+    ("gh stack init desloppify/webapp-x --base chris-agentic-looping-evil",
+     "same hole, stack spelling"),
+    # -B is gh's short form for --base; the edit guard only knew --base.
+    ("gh pr edit 12 --repo schoolhouse-world/app -B main",
+     "retargets to main via the short flag"),
+    ("gh pr create --base=main --title t --body b",
+     "--base=main is still main"),
+    ("gh pr create -B main --title t --body b",
+     "-B is --base's short form"),
+    ("gh stack init desloppify/webapp-x --base=main",
+     "--base=main is still main"),
+    # A flag placed BEFORE its verb. gh accepts this (`gh pr --repo X
+    # list` is the form its own docs show), and it defeated every gate
+    # that read the command as text: the merge and edit refusals needed
+    # `pr` adjacent to the verb, and the word filter read --repo's value
+    # as the subcommand. A squash-merge and a PR against main were both
+    # allowed, unpinned across five rounds of review.
+    ("gh pr --repo schoolhouse-world/app merge 5 --squash",
+     "merging, with the repo flag before the verb"),
+    ("gh pr -R schoolhouse-world/app merge 5", "the same, short flag"),
+    ("gh pr --repo schoolhouse-world/app create --base main --title t",
+     "a PR against main, with the flag before the verb"),
+    ("gh pr --repo schoolhouse-world/app edit 5 --base main",
+     "retargeting, with the flag before the verb"),
+    ("gh pr --title x merge 5", "any value-taking flag does it, not just --repo"),
+    # gh pr new is gh's own alias for create, so the base gate must see
+    # through it; it did not, and `gh pr new --base main` was allowed.
+    ("gh pr new --base main --title t --body b",
+     "the create alias, against main"),
+    ("gh pr new -B main --title t", "the same, short flag"),
+    ("gh pr close 7", "orphans the PRs above it in the stack"),
+    # gh resolves the FIRST positional as the verb and validates flags
+    # against that verb, so a flag belonging to the verb may legally
+    # precede it. These really run merge/edit/close -- gh 2.102.0
+    # reports "Merge a pull request on GitHub" for the first -- while
+    # the policy read the flag's value as a `view`. All three flags are
+    # `gh pr merge`'s own and were missing from VALUE_FLAGS, which is
+    # why enumerating flags harder cannot be the fix.
+    ("gh pr --match-head-commit view merge 5 --squash",
+     "two verbs named; gh runs the later one"),
+    ("gh pr --author-email view merge 5", "the same via --author-email"),
+    ("gh pr --subject view merge 5", "the same via --subject"),
+    ("gh pr --add-label view edit 164 --base main",
+     "the same, reaching the retarget gate"),
+    ("gh pr -c view close 164", "the same, reaching close"),
+    ("gh pr --match-head-commit view create --base main --title t",
+     "the same, reaching the base gate"),
+    # gh stack's flags are not in VALUE_FLAGS at all, so this class had
+    # to be closed without reference to the table.
+    ("gh stack --name view merge", "two verbs named in gh stack"),
+    # A repeated base flag: gh takes the last to appear, so a good value
+    # followed by a bad one creates against the bad one. The walker used
+    # to stop at the first flag that had a value and approve these.
+    ("gh pr create -B chris-agentic-looping --base main --title t",
+     "the last --base wins in gh, so this targets main"),
+    ("gh pr create --base=chris-agentic-looping --base=main --title t",
+     "the same, with the joined spelling"),
+    ("gh stack init x -b chris-agentic-looping --base main",
+     "the same on the stack trunk"),
+    # Everything after `--` is positional, so this names no base at all
+    # and gh would use the repo default.
+    ("gh pr create -- --base chris-agentic-looping --title t",
+     "a --base after -- is not a flag"),
+    ("gh stack init desloppify/webapp-x -b main",
+     "-b is gh stack init's short form for --base"),
+    ("gh stack init desloppify/webapp-x -b=main",
+     "the same, joined with ="),
+    ("gh stack init desloppify/webapp-x",
+     "no --base, so the trunk defaults to the repo default, which is main"),
     ("gh pr merge 12 --repo schoolhouse-world/app --squash", "merges, which is the runner's job"),
     # --- protection ---
     ("gh api -X DELETE repos/schoolhouse-world/app/branches/main/protection",
@@ -148,6 +271,57 @@ DENY = [
 ]
 
 
+# A denial's reason is the only thing the agent sees, and a wrong one
+# costs a turn -- `--base=main` used to be refused with "pass --base",
+# advice it had just followed. Each entry is (command, text the reason
+# must contain).
+REASON = [
+    ("gh pr create --title t --body b", "without --base"),
+    ("gh pr create --base=main --title t --body b", "only permitted PR base"),
+    ("gh pr create -B main --title t --body b", "only permitted PR base"),
+    ("gh stack init x", "without --base"),
+    ("gh stack init x --base=main", "only permitted stack trunk"),
+    ("gh stack init x -b main", "only permitted stack trunk"),
+    ("gh stack init x -bmain", "only permitted stack trunk"),
+    ("gh stack init x --base  main", "only permitted stack trunk"),
+    ("gh pr create -Bmain --title t", "only permitted PR base"),
+    ("gh pr create --base  main --title t", "only permitted PR base"),
+    # One list refuses these; SUB_REASONS says why. Asserting each
+    # verb's own reason keeps the messages specific -- a shared string
+    # told the agent five different problems in the same words.
+    ("gh stack merge --yes", "merging is the runner's"),
+    ("gh stack unstack 7", "homelab#64"),
+    ("gh stack link 1 2", "arbitrary base"),
+    ("gh stack modify", "unstack's authority"),
+    ("gh stack rebase", "gh stack sync` is the sanctioned path"),
+    ("gh stack submit --open", "open as drafts"),
+    # A flag before the verb must be parsed, not stumbled over: these
+    # deny either because the verb was correctly identified (right) or
+    # because a repo name read as an unknown verb (luck). Pinning the
+    # reason tells the two apart.
+    ("gh pr --repo schoolhouse-world/app merge 5", "merging is done by the runner"),
+    ("gh pr --title x merge 5", "merging is done by the runner"),
+    ("gh pr --repo schoolhouse-world/app create --base main --title t",
+     "only permitted PR base"),
+    ("gh pr --repo schoolhouse-world/app edit 5 --base main",
+     "retargeting a PR's base"),
+    ("gh pr new --base main --title t", "only permitted PR base"),
+    # The ambiguity refusal, not a lucky "unknown verb" denial: these
+    # launder a refused verb behind a permitted one as a flag value.
+    ("gh pr --match-head-commit view merge 5 --squash",
+     "two subcommands named"),
+    ("gh stack --name view merge", "two subcommands named"),
+]
+
+
+# The gate is one list, so pin its contents. Adding a verb here used to
+# leave the suite green because a parallel denylist caught it; with the
+# denylist gone, this assertion is what fails.
+EXPECTED_STACK_SUBS = {"init", "add", "submit", "sync", "checkout", "view"}
+EXPECTED_PR_SUBS = {"create", "view", "list", "comment", "edit", "checks",
+                    "diff", "status", "ready", "review"}
+
+
 def main() -> int:
     failures = []
 
@@ -171,13 +345,41 @@ def main() -> int:
         if policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD DENY tool: {name}")
 
-    total = len(ALLOW) + len(DENY) + 9
+    got_pr = policy.ALLOWED_SUB.get("gh pr", set())
+    if got_pr != EXPECTED_PR_SUBS:
+        extra = ", ".join(sorted(got_pr - EXPECTED_PR_SUBS)) or "none"
+        missing = ", ".join(sorted(EXPECTED_PR_SUBS - got_pr)) or "none"
+        failures.append(
+            f"ALLOWED_SUB['gh pr'] changed: added [{extra}], removed "
+            f"[{missing}]. Adding a verb grants it outright -- `merge` "
+            f"and `create` reach the main guarantee")
+
+    got = policy.ALLOWED_SUB.get("gh stack", set())
+    if got != EXPECTED_STACK_SUBS:
+        extra = ", ".join(sorted(got - EXPECTED_STACK_SUBS)) or "none"
+        missing = ", ".join(sorted(EXPECTED_STACK_SUBS - got)) or "none"
+        failures.append(
+            f"ALLOWED_SUB['gh stack'] changed: added [{extra}], "
+            f"removed [{missing}]. The allowlist is the whole gate -- "
+            f"widening it grants the agent that capability outright")
+
+    for cmd, expected in REASON:
+        d = policy.check_bash(cmd)
+        if d.allow:
+            failures.append(f"SHOULD DENY: {cmd}")
+        elif expected not in d.reason:
+            failures.append(
+                f"WRONG REASON: {cmd}\n      got: {d.reason}\n"
+                f"      want substring: {expected}")
+
+    total = len(ALLOW) + len(DENY) + len(REASON) + 11
     if failures:
         print(f"FAIL - {len(failures)} of {total}\n")
         for f in failures:
             print("  " + f)
         return 1
-    print(f"PASS - {total} cases ({len(ALLOW)} allow, {len(DENY)} deny)")
+    print(f"PASS - {total} cases ({len(ALLOW)} allow, {len(DENY)} deny, "
+          f"{len(REASON)} reason)")
     return 0
 
 

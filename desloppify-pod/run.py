@@ -48,7 +48,7 @@ REPORT_SCHEMA = {
     "type": "json_schema",
     "schema": {
         "type": "object",
-        "required": ["outcome", "findings_resolved", "pr_number"],
+        "required": ["outcome", "findings_resolved", "pr_numbers"],
         "additionalProperties": False,
         "properties": {
             "outcome": {
@@ -60,9 +60,18 @@ REPORT_SCHEMA = {
                     "BLOCKED: you could not run the loop."
                 ),
             },
-            "pr_number": {
-                "type": ["integer", "null"],
-                "description": "The PR you opened, or null.",
+            # No pr_number here on purpose: the report carries one, but
+            # report.py derives it from pr_numbers for the logfmt line
+            # and the lockfile check. Declaring it invited a null scalar
+            # beside a populated list, and additionalProperties:False
+            # now makes that shape unsendable rather than discouraged.
+            "pr_numbers": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": (
+                    "Every PR you opened, one per cluster, bottom first. "
+                    "Empty if you opened none."
+                ),
             },
             "findings_resolved": {
                 "type": "array",
@@ -182,14 +191,44 @@ then killed by max_turns six seconds before finishing.
 
 ## Committing
 
-You are on `{args.branch}`, cut from `{args.integration_branch}`. Commit
-your work there, push it, and open ONE pull request:
+You are on `{args.branch}`, the top of a gh-stack whose trunk is
+`{args.integration_branch}`. Open one PR per cluster rather than one for
+everything: a cluster is one systemic change, which is the unit a reviewer
+can hold in their head. Twenty mixed fixes in one diff is not.
 
-    gh pr create --repo {args.repo} --base {args.integration_branch} \\
-      --title "desloppify: <what you fixed>" --body "<details>"
+    desloppify plan cluster list          # what clusters exist
+    desloppify plan queue --cluster NAME  # the findings in one
 
-The PR body should say what findings you resolved, what the score did, and
-anything you deliberately deferred.
+Work a cluster to completion, then commit it alone. For the next cluster:
+
+    gh stack add {args.branch}-<cluster-slug>
+
+which branches from the one you are on, so the chain stays in order.
+Keep that exact prefix: the runner verifies your PRs by searching for
+branches that extend `{args.branch}`, and a branch named anything else
+is invisible to it. A run killed before its bookkeeping then reports
+work it actually did as lost.
+When you are done with all of them, once:
+
+    gh stack submit
+
+That pushes every branch and opens or updates every PR in one call. Do
+not use `gh pr create` -- a PR made that way is not part of the stack,
+so nothing retargets it when the PR below it merges, and GitHub will not
+let it merge once its base closes.
+
+These open as drafts, deliberately. A non-interactive terminal -- which
+this pod is -- makes `gh stack submit` behave as `--auto`, and with
+`--auto` new PRs are created as drafts unless `--open` is passed. Do not
+pass `--open`; the policy refuses it. A reviewer marks each one ready,
+and nothing merges from a draft, which is the point: overnight work
+waits for a human to read it.
+
+Title each PR after its cluster. The body should say what findings it
+resolved, what the score did, and anything deliberately deferred.
+
+A cluster of hundreds of items is not reviewable. Carve off a coherent
+subset, say in the body which part you took, and leave the rest queued.
 
 ## Tests
 
@@ -338,12 +377,18 @@ async def run(args: argparse.Namespace) -> int:
     # bookkeeping", which need opposite responses from whoever reads the
     # morning report. The wiring lives in report.py where the tests
     # reach it without the SDK.
-    found = None
-    if not payload.get("pr_number"):
-        found = report_mod.pr_for_branch(args.repo, args.branch)
+    # Normalize before asking whether a PR is named: a raw truthiness
+    # test on pr_numbers treated a list of nulls as work reported and
+    # skipped the GitHub lookup entirely.
+    payload = report_mod.normalize_pr_fields(payload)
+    found: list[int] = []
+    if not payload.get("pr_numbers"):
+        found = report_mod.prs_for_run(args.repo, args.branch)
     payload, pr_verified = report_mod.apply_pr_verification(payload, found)
     if pr_verified:
-        print(f"VERIFIED: PR #{found} is open on GitHub for "
+        listed = ", ".join(f"#{n}" for n in found)
+        noun = "PR" if len(found) == 1 else "PRs"
+        print(f"VERIFIED: {noun} {listed} open on GitHub for "
               f"{args.branch}; overriding the self-reported outcome",
               file=sys.stderr)
 
@@ -364,6 +409,7 @@ async def run(args: argparse.Namespace) -> int:
         "branch": args.branch,
         "outcome": payload.get("outcome", "BLOCKED"),
         "pr_number": payload.get("pr_number"),
+        "pr_numbers": payload.get("pr_numbers", []),
         "elapsed_s": round(time.monotonic() - started, 1),
         "cost_usd": result.total_cost_usd if result else None,
         "turns": result.num_turns if result else None,
