@@ -1,6 +1,6 @@
 name: claude-pods tests
 
-# The nightly scripts run unattended; a bug in a rarely-taken path (like
+# The stage scripts run unattended; a bug in a rarely-taken path (like
 # the post-merge revert in #60) can sit for weeks before a real run hits
 # it. Their tests live in claude-pods/tests/ and run here on every change
 # so they do not depend on someone remembering to.

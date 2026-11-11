@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude account selection, shared by every pod that runs the CLI.
 #
-# Separate from nightly-common.sh because that file carries kubectl,
+# Separate from pod-common.sh because that file carries kubectl,
 # Kaneo and namespace machinery the desloppify pod has no use for, and
 # sourcing all of it to get two functions would couple the two images
 # together for no reason.
@@ -103,7 +103,7 @@ preflight_credential() {
   # /run/secrets/claude mount; migrating them needs their own
   # setup-token credential in Vault and is a separate change. Until
   # then, saying "no token here" and letting the CLI use the file it
-  # has always used is correct - refusing would stop three nightly jobs
+  # has always used is correct - refusing would stop all three stages
   # that work today.
   if [ -s "$HOME/.claude/.credentials.json" ]; then
     echo "credential: no mounted token; using the CLI's own login" >&2

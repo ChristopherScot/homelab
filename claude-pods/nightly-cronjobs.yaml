@@ -10,7 +10,7 @@
 #
 # What remains is the ServiceAccount and its Role, which session-sleep-cron
 # and kaneo-dispatcher still bind to. The scripts themselves
-# (nightly-author.sh, nightly-test.sh, nightly-merge.sh) are still in the
+# (stage-author.sh, stage-test.sh, stage-merge.sh) are still in the
 # image and still tested; nothing schedules them.
 ---
 apiVersion: v1

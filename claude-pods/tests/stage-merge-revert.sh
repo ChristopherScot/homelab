@@ -9,7 +9,7 @@
 # does, and records every call. The test then checks that the revert PR
 # the fake "opens" is merged, since `gh pr revert` only opens one.
 #
-# Run: claude-pods/tests/nightly-merge-revert.sh
+# Run: claude-pods/tests/stage-merge-revert.sh
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -50,11 +50,11 @@ chmod +x "$tmp/bin/gh"
 PATH="$tmp/bin:$PATH"
 
 # merge_pr and revert_pr live in the library, so the library is what this
-# exercises. Sourcing nightly-merge.sh would run a pod's whole preamble —
+# exercises. Sourcing stage-merge.sh would run a pod's whole preamble —
 # a Loki tee, a token check, a credential probe — none of which this test
 # is about.
-# shellcheck source=../lib/nightly-common.sh
-source "$here/../lib/nightly-common.sh"
+# shellcheck source=../lib/pod-common.sh
+source "$here/../lib/pod-common.sh"
 
 fail() {
   echo "FAIL: $*"

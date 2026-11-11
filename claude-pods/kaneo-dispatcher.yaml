@@ -11,7 +11,7 @@
 # and removed 2026-11-10. There is no clock fallback any more: if this
 # dispatcher is down, nothing advances the board. The scripts it execs are
 # unchanged and still in the image, so re-adding CronJobs is possible, but
-# nightly-merge.sh carries the open bugs in #63/#67/#68 and should not be
+# the merge stage carries the open bugs in #63/#67/#68 and should not be
 # put back on a schedule without reading them.
 #
 # Runs in the same image as the session pods: it needs node (it is a node
