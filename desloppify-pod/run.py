@@ -377,8 +377,12 @@ async def run(args: argparse.Namespace) -> int:
     # bookkeeping", which need opposite responses from whoever reads the
     # morning report. The wiring lives in report.py where the tests
     # reach it without the SDK.
+    # Normalize before asking whether a PR is named: a raw truthiness
+    # test on pr_numbers treated a list of nulls as work reported and
+    # skipped the GitHub lookup entirely.
+    payload = report_mod.normalize_pr_fields(payload)
     found: list[int] = []
-    if not payload.get("pr_numbers") and not payload.get("pr_number"):
+    if not payload.get("pr_numbers"):
         found = report_mod.prs_for_run(args.repo, args.branch)
     payload, pr_verified = report_mod.apply_pr_verification(payload, found)
     if pr_verified:

@@ -40,10 +40,13 @@ assert verified is True
 assert payload["pr_number"] == 29
 assert payload["pr_numbers"] == [29, 30, 31]
 
-# No PR on GitHub: the self-report stands, whatever it says.
+# No PR on GitHub: the self-report stands, whatever it says. The
+# outcome is what must survive -- the PR fields are normalized onto
+# every payload now, so the shell never reads an absent .pr_number.
 payload, verified = report.apply_pr_verification({"outcome": "BLOCKED"}, [])
 assert verified is False
-assert payload == {"outcome": "BLOCKED"}
+assert payload["outcome"] == "BLOCKED"
+assert payload["pr_number"] is None and payload["pr_numbers"] == []
 
 # A run that reported its own PR is never second-guessed.
 original = {"outcome": "PROGRESS", "pr_number": 17001}
@@ -138,6 +141,17 @@ AGREEMENT = [
     # scalar -- which the shell gate reads as no PR.
     ({"outcome": "PROGRESS", "pr_numbers": [None, None]}, [], None, []),
     ({"outcome": "PROGRESS", "pr_numbers": []}, [], None, []),
+    # The case the previous fixture missed: a degenerate list WHILE
+    # GitHub holds real PRs. Asserting it only with found=[] tested the
+    # fix rather than the failure -- a raw truthiness check on the
+    # unfiltered list skipped the lookup and announced "no PR" over
+    # open work.
+    ({"outcome": "PROGRESS", "pr_numbers": [None, None]}, [41, 42],
+     41, [41, 42]),
+    ({"outcome": "BLOCKED", "pr_number": None}, [41, 42], 41, [41, 42]),
+    # Both fields present after every shape, so the shell's
+    # `jq -r '.pr_number // empty'` never reads an absent field.
+    ({"outcome": "NOTHING_TO_DO"}, [], None, []),
 ]
 for payload, found, want_n, want_ns in AGREEMENT:
     out, _ = report.apply_pr_verification(dict(payload), found)
@@ -156,6 +170,37 @@ for payload, found, want_n, want_ns in AGREEMENT:
     assert (got_ns == [] and got_n is None) or got_n == got_ns[0], (
         f"pr_number {got_n} disagrees with pr_numbers {got_ns} -- the "
         f"runner's [ -z \"$pr\" ] gate would report real PRs as no work")
+
+# A degenerate list must not suppress the GitHub lookup. This is the
+# incident in report.py's docstring, reachable through the field added
+# to fix it: `pr_numbers: [None, None]` is truthy, so a raw check read
+# it as "work already reported" and never asked GitHub.
+out, verified = report.apply_pr_verification(
+    {"outcome": "PROGRESS", "pr_numbers": [None, None]}, [41, 42])
+assert verified and out["pr_numbers"] == [41, 42], (
+    "a list of nulls must fall through to GitHub verification, not be "
+    "treated as a reported PR; got "
+    f"{out.get('pr_numbers')!r} verified={verified}")
+
+# Both fields always present, whatever went in.
+for _pl in ({}, {"pr_numbers": []}, {"pr_numbers": [None]},
+            {"pr_number": None}, {"outcome": "BLOCKED"}):
+    _o, _ = report.apply_pr_verification(dict(_pl), [])
+    assert "pr_number" in _o and "pr_numbers" in _o, (
+        f"{_pl} lost a field; the shell reads .pr_number unconditionally")
+
+# run.py must normalize BEFORE deciding whether to ask GitHub, or a
+# degenerate list suppresses the lookup there even though report.py
+# handles it correctly. Asserted against run.py's text, since importing
+# it needs the SDK -- the same instrument as the branch-prefix pin.
+assert "payload = report_mod.normalize_pr_fields(payload)" in _run_src, (
+    "run.py must call normalize_pr_fields before testing pr_numbers: a "
+    "raw truthiness check treats [None, None] as a reported PR and "
+    "skips prs_for_run, announcing 'no PR' over open work")
+_norm_at = _run_src.index("payload = report_mod.normalize_pr_fields(payload)")
+_decide_at = _run_src.index('if not payload.get("pr_numbers"):')
+assert _norm_at < _decide_at, (
+    "normalize_pr_fields must run before the pr_numbers test, not after")
 
 # The schema must not require the derived field. Requiring it is what
 # invited `pr_number: null` beside a populated pr_numbers.

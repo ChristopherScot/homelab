@@ -90,8 +90,14 @@ def apply_pr_verification(payload: dict, found: list[int]) -> tuple[dict, bool]:
     not to second-guess one that finished. Either way the caller gets
     pr_number and pr_numbers in agreement.
     """
-    if payload.get("pr_numbers") or payload.get("pr_number"):
-        return normalize_pr_fields(payload), False
+    # Normalize first, then decide. Reading the raw field meant a
+    # degenerate `pr_numbers: [None, None]` looked like work already
+    # reported, so GitHub was never asked and the run was announced as
+    # "no PR" while real PRs sat open -- the incident in this module's
+    # docstring, reached through the field the fix for it added.
+    payload = normalize_pr_fields(payload)
+    if payload.get("pr_numbers"):
+        return payload, False
     if not found:
         return payload, False
     return normalize_pr_fields({**payload,

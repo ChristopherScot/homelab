@@ -97,7 +97,79 @@ ALLOWED: dict[str, set[str]] = {
 # bare rebase has neither the lease nor the runner's sequencing.
 ALLOWED_SUB: dict[str, set[str]] = {
     "gh stack": {"init", "add", "submit", "sync", "checkout", "view"},
+    # Same argument for `gh pr`: 18 verbs are exposed and the runner's
+    # prompt instructs six. Refusing the dangerous ones by name left
+    # `gh pr new` -- gh's own documented alias for create, so _base_ok
+    # found no spec and skipped the base check entirely -- and `gh pr
+    # ready`, which marks a draft reviewable and is the same capability
+    # the `submit --open` rule refuses. Both allowed while the suite
+    # reported 166 green. Closing the namespace ends the class instead
+    # of adding two more names to it.
+    "gh pr": {"create", "view", "list", "comment", "edit", "checks",
+              "diff", "status"},
 }
+
+# gh's own command aliases, resolved to the canonical verb before any
+# per-verb lookup. A gate keyed on spelling is defeated by every synonym
+# the tool ships: `gh pr new` is documented as an alias for create, and
+# because _base_ok keys on ("pr", "create") it found no spec for ("pr",
+# "new") and skipped the base check -- so `gh pr new --base main` opened
+# a PR against main with the suite green. Canonicalising first means the
+# verb lists and BASE_FLAGS are keyed on capability, not on how it was
+# typed.
+VERB_ALIASES: dict[tuple[str, str, str], str] = {
+    ("gh", "pr", "new"): "create",
+}
+
+
+# gh flags that consume the following argument. Without this, every
+# gate guessing at "which word is the subcommand" reads a flag's value
+# as a positional: `gh pr --repo <repo> merge 5` looked like the
+# subcommand was the repo name, so `gh pr merge`'s refusal -- a regex
+# needing `pr` and `merge` adjacent -- never matched, and a squash-merge
+# was allowed. The flags are gh's, not a guess: --repo/-R, the base
+# flags, and the text flags the pod passes.
+VALUE_FLAGS: frozenset[str] = frozenset({
+    "--repo", "-R", "--base", "-B", "-b", "--head", "-H",
+    "--title", "-t", "--body", "--body-file", "-F", "--label", "-l",
+    "--assignee", "-a", "--reviewer", "-r", "--milestone", "-m",
+    "--project", "-p", "--template", "-T", "--json", "-q", "--jq",
+    "--template-file", "--limit", "-L", "--state", "-s", "--search",
+    "--author", "-A", "--comment-body", "--remote", "--stack",
+})
+
+
+def _positionals(argv: list[str]) -> list[str]:
+    """The positional words of a gh command, flag values excluded.
+
+    One parse, so every gate agrees on which word is the subcommand.
+    Three gates used to work this out separately -- a regex over the
+    raw string, a filtered word list, and an index of the first
+    non-flag argument -- and they disagreed: a flag placed before its
+    verb defeated the regex and fooled the word list, which is how
+    `gh pr --repo <repo> merge` reached the allow path.
+    """
+    words: list[str] = []
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg == "--":
+            break
+        if arg.startswith("-"):
+            # `--flag=value` carries its value; a bare value flag eats
+            # the next argument.
+            if "=" not in arg and arg in VALUE_FLAGS:
+                skip = True
+            continue
+        words.append(arg)
+    return words
+
+
+def _canonical_verb(namespace: str, sub: str, verb: str) -> str:
+    """The canonical spelling of a verb, for gating purposes."""
+    return VERB_ALIASES.get((namespace, sub, verb), verb)
 
 # Why a particular refused verb is refused. These are messages, not a
 # second gate: ALLOWED_SUB alone decides, and a verb named here that is
@@ -120,6 +192,20 @@ SUB_REASONS: dict[tuple[str, str], str] = {
     ("gh stack", "modify"):
         "restructuring drops, folds and reorders branches -- unstack's "
         "authority through a TUI",
+    ("gh pr", "ready"):
+        "marking a draft ready is the reviewer's; overnight PRs stay "
+        "drafts, which is what `gh stack submit --open` is refused for",
+    ("gh pr", "review"):
+        "the agent does not review its own PRs",
+    ("gh pr", "merge"):
+        "merging is done by the runner after its checks, not by the agent",
+    ("gh pr", "revert"):
+        "reverting opens a PR the runner did not sequence",
+    ("gh pr", "close"):
+        "closing a stacked PR orphans the ones above it, which is the "
+        "state that left homelab#64 unmergeable for ten days",
+    ("gh pr", "update-branch"):
+        "updating a stacked branch is `gh stack sync`'s job",
     ("gh stack", "rebase"):
         "a cascading rebase rewrites history across the stack, which is "
         "what `git rebase` is refused for; `gh stack sync` is the "
@@ -149,7 +235,6 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # of those is edited.
     (re.compile(r"^gh\s+stack\s+submit\b.*--open\b"),
      "overnight PRs open as drafts; a reviewer marks them ready"),
-    (re.compile(r"^gh\s+pr\s+edit\b.*(--base|-B)\b"), "retargeting a PR's base"),
 
 
     # --- protection and repository settings ---------------------------
@@ -225,10 +310,36 @@ class Decision:
 # refusal. `gh pr create` takes -B; `gh stack init` takes -b and rejects
 # -B as an unknown shorthand, so the spelling is per-command data rather
 # than something a reader has to infer.
-BASE_FLAGS: dict[tuple[str, ...], tuple[str, str, str]] = {
-    ("pr", "create"): ("-B", "gh pr create", "PR base"),
-    ("stack", "init"): ("-b", "gh stack init", "stack trunk"),
+# The short base flag and what to call the value, per command. The
+# command name itself is the key, so the refusal message derives from it
+# rather than restating it -- a hand-written label that drifted from its
+# key would name a different command than the one being gated, which is
+# the wrong-advice class these rules keep tripping over.
+BASE_FLAGS: dict[tuple[str, ...], tuple[str, str]] = {
+    ("pr", "create"): ("-B", "PR base"),
+    ("stack", "init"): ("-b", "stack trunk"),
 }
+
+
+def _base_values(argv: list[str], short: str) -> list[str | None]:
+    """Every base value named in argv, in the order it appears.
+
+    All occurrences, not the first: gh takes the last spelling to
+    appear, so `-B <good> --base main` creates against main, and a
+    collector that stopped early approved exactly that.
+    """
+    values: list[str | None] = []
+    for i, arg in enumerate(argv):
+        if arg in ("--base", short):
+            values.append(argv[i + 1] if i + 1 < len(argv) else None)
+        elif arg.startswith("--base="):
+            values.append(arg.split("=", 1)[1])
+        elif arg.startswith(f"{short}=") and len(arg) > len(short) + 1:
+            values.append(arg[len(short) + 1:])
+        elif arg.startswith(short) and len(arg) > len(short):
+            # The glued POSIX short form, `-Bmain`.
+            values.append(arg[len(short):])
+    return values
 
 
 def _base_ok(argv: list[str]) -> Decision | None:
@@ -247,12 +358,24 @@ def _base_ok(argv: list[str]) -> Decision | None:
     # like it had named a base when gh would have used the repo default.
     if "--" in argv:
         argv = argv[:argv.index("--")]
-    words = [a for a in argv if not a.startswith("-")]
+    words = _positionals(argv)
+    if len(words) >= 2:
+        words[1] = _canonical_verb("gh", words[0], words[1])
     key = tuple(words[:2])
+
+    # Retargeting an existing PR is refused outright, whatever the
+    # value: the runner owns the stack's shape, and a PR moved onto
+    # another base is the state that left homelab#64 unmergeable. This
+    # was a regex over the raw string until a flag placed between `pr`
+    # and `edit` was found to defeat it.
+    if key == ("pr", "edit") and _base_values(argv, "-B"):
+        return Decision(False, "retargeting a PR's base")
+
     spec = BASE_FLAGS.get(key)
     if spec is None:
         return None
-    short, label, noun = spec
+    short, noun = spec
+    label = "gh " + " ".join(key)
 
     # Collect every occurrence rather than stopping at the first with a
     # value: gh takes the last spelling to appear, so `-B <good>
@@ -261,18 +384,7 @@ def _base_ok(argv: list[str]) -> Decision | None:
     # gate that reads only one. Any value that is not the integration
     # branch refuses, whichever position it is in -- stricter than gh's
     # last-wins, and the pod has no reason to pass the flag twice.
-    values: list[str | None] = []
-    for i, arg in enumerate(argv):
-        if arg in ("--base", short):
-            values.append(argv[i + 1] if i + 1 < len(argv) else None)
-        elif arg.startswith("--base="):
-            values.append(arg.split("=", 1)[1])
-        elif arg.startswith(f"{short}=") and len(arg) > len(short) + 1:
-            values.append(arg[len(short) + 1:])
-        elif arg.startswith(short) and len(arg) > len(short):
-            # The glued POSIX short form, `-Bmain`.
-            values.append(arg[len(short):])
-
+    values = _base_values(argv, short)
     seen = bool(values)
     for value in values:
         if value != INTEGRATION_BRANCH:
@@ -375,15 +487,20 @@ def check_bash(command: str) -> Decision:
     if not subcommands:
         return Decision(True, f"{binary} allowed")
 
-    # Index the subcommand by position rather than by searching for its
-    # string later, which found the wrong element whenever a flag's
-    # value equalled it. A flag that consumes the next argument can
-    # still make that value look like the subcommand (`gh --title stack
-    # stack add`); the checks below then read the wrong word and refuse,
-    # which is the safe direction and is why this is not special-cased.
-    sub_at = next((i for i, a in enumerate(rest)
-                   if not a.startswith("-")), None)
-    sub = rest[sub_at] if sub_at is not None else None
+    # gh's subcommand comes from the shared parse, which knows which
+    # flags carry a value: taking the first non-flag argument read
+    # `gh pr --repo <repo> merge` as the subcommand `<repo>`, so the
+    # verb was never inspected and a squash-merge reached the allow
+    # path. Other binaries keep the simple positional reading --
+    # VALUE_FLAGS describes gh's surface, not theirs.
+    if binary == "gh":
+        words = _positionals(rest)
+        sub = words[0] if words else None
+        sub_at = rest.index(sub) if sub in rest else None
+    else:
+        sub_at = next((i for i, a in enumerate(rest)
+                       if not a.startswith("-")), None)
+        sub = rest[sub_at] if sub_at is not None else None
     if sub is None:
         return Decision(True, f"{binary} with no subcommand")
     if sub not in subcommands:
@@ -394,10 +511,11 @@ def check_bash(command: str) -> Decision:
     # everything under it.
     nested = ALLOWED_SUB.get(f"{binary} {sub}")
     if nested is not None:
-        tail = rest[sub_at + 1:]
-        verb = next((a for a in tail if not a.startswith("-")), None)
+        tail = rest[sub_at + 1:] if sub_at is not None else []
+        verb = (_positionals(tail)[0:1] or [None])[0]
         if verb is None:
             return Decision(False, f"{binary} {sub} needs a subcommand")
+        verb = _canonical_verb(binary, sub, verb)
         if verb not in nested:
             why = SUB_REASONS.get((f"{binary} {sub}", verb))
             if why:

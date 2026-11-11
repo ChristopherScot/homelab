@@ -34,6 +34,12 @@ ALLOW = [
     "gh pr create --repo schoolhouse-world/app --base chris-agentic-looping "
     "--title t --body b",
     "gh pr view 12 --repo schoolhouse-world/app --json body",
+    # The flag-before-verb form is legal gh and the pod may read with it.
+    "gh pr --repo schoolhouse-world/app list --state open",
+    "gh pr --repo schoolhouse-world/app view 12 --json body",
+    "gh pr new --base chris-agentic-looping --title t --body b",
+    "gh pr edit 12 --title x",
+    "gh pr checks 12",
     "gh pr list --repo schoolhouse-world/app --state open",
     "gh pr comment 12 --repo schoolhouse-world/app --body hi",
     "gh api repos/schoolhouse-world/app/pulls/12",
@@ -130,6 +136,29 @@ DENY = [
      "-B is --base's short form"),
     ("gh stack init desloppify/webapp-x --base=main",
      "--base=main is still main"),
+    # A flag placed BEFORE its verb. gh accepts this (`gh pr --repo X
+    # list` is the form its own docs show), and it defeated every gate
+    # that read the command as text: the merge and edit refusals needed
+    # `pr` adjacent to the verb, and the word filter read --repo's value
+    # as the subcommand. A squash-merge and a PR against main were both
+    # allowed, unpinned across five rounds of review.
+    ("gh pr --repo schoolhouse-world/app merge 5 --squash",
+     "merging, with the repo flag before the verb"),
+    ("gh pr -R schoolhouse-world/app merge 5", "the same, short flag"),
+    ("gh pr --repo schoolhouse-world/app create --base main --title t",
+     "a PR against main, with the flag before the verb"),
+    ("gh pr --repo schoolhouse-world/app edit 5 --base main",
+     "retargeting, with the flag before the verb"),
+    ("gh pr --title x merge 5", "any value-taking flag does it, not just --repo"),
+    # gh pr new is gh's own alias for create, so the base gate must see
+    # through it; it did not, and `gh pr new --base main` was allowed.
+    ("gh pr new --base main --title t --body b",
+     "the create alias, against main"),
+    ("gh pr new -B main --title t", "the same, short flag"),
+    # Same capability as `gh stack submit --open`, which is refused.
+    ("gh pr ready 7", "marks a draft reviewable"),
+    ("gh pr review 7 --approve", "approves its own PR"),
+    ("gh pr close 7", "orphans the PRs above it in the stack"),
     # A repeated base flag: gh takes the last to appear, so a good value
     # followed by a bad one creates against the bad one. The walker used
     # to stop at the first flag that had a value and approve these.
@@ -245,6 +274,18 @@ REASON = [
     ("gh stack modify", "unstack's authority"),
     ("gh stack rebase", "gh stack sync` is the sanctioned path"),
     ("gh stack submit --open", "open as drafts"),
+    # A flag before the verb must be parsed, not stumbled over: these
+    # deny either because the verb was correctly identified (right) or
+    # because a repo name read as an unknown verb (luck). Pinning the
+    # reason tells the two apart.
+    ("gh pr --repo schoolhouse-world/app merge 5", "merging is done by the runner"),
+    ("gh pr --title x merge 5", "merging is done by the runner"),
+    ("gh pr --repo schoolhouse-world/app create --base main --title t",
+     "only permitted PR base"),
+    ("gh pr --repo schoolhouse-world/app edit 5 --base main",
+     "retargeting a PR's base"),
+    ("gh pr new --base main --title t", "only permitted PR base"),
+    ("gh pr ready 7", "marking a draft ready"),
 ]
 
 
@@ -252,6 +293,8 @@ REASON = [
 # leave the suite green because a parallel denylist caught it; with the
 # denylist gone, this assertion is what fails.
 EXPECTED_STACK_SUBS = {"init", "add", "submit", "sync", "checkout", "view"}
+EXPECTED_PR_SUBS = {"create", "view", "list", "comment", "edit", "checks",
+                    "diff", "status"}
 
 
 def main() -> int:
@@ -277,6 +320,16 @@ def main() -> int:
         if policy.check_tool(name, {}).allow:
             failures.append(f"SHOULD DENY tool: {name}")
 
+    got_pr = policy.ALLOWED_SUB.get("gh pr", set())
+    if got_pr != EXPECTED_PR_SUBS:
+        extra = ", ".join(sorted(got_pr - EXPECTED_PR_SUBS)) or "none"
+        missing = ", ".join(sorted(EXPECTED_PR_SUBS - got_pr)) or "none"
+        failures.append(
+            f"ALLOWED_SUB['gh pr'] changed: added [{extra}], removed "
+            f"[{missing}]. Adding a verb grants it outright -- `ready` "
+            f"and `review` defeat the drafts guarantee, `merge` and "
+            f"`create` the main guarantee")
+
     got = policy.ALLOWED_SUB.get("gh stack", set())
     if got != EXPECTED_STACK_SUBS:
         extra = ", ".join(sorted(got - EXPECTED_STACK_SUBS)) or "none"
@@ -295,7 +348,7 @@ def main() -> int:
                 f"WRONG REASON: {cmd}\n      got: {d.reason}\n"
                 f"      want substring: {expected}")
 
-    total = len(ALLOW) + len(DENY) + len(REASON) + 10
+    total = len(ALLOW) + len(DENY) + len(REASON) + 11
     if failures:
         print(f"FAIL - {len(failures)} of {total}\n")
         for f in failures:
