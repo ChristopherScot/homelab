@@ -36,7 +36,7 @@ spec:
             fsGroup: 1000
           containers:
           - name: codex
-            image: ghcr.io/christopherscot/claude-pod:latest
+            image: ghcr.io/christopherscot/codex-pod@sha256:a11a2d0a5773c154fad868ea471906815c5ce702c43dccc84e96e19d9aeadaad
             imagePullPolicy: Always
             command:
             - bash
@@ -48,7 +48,7 @@ spec:
             - name: CODEX_HOME
               value: "/home/node/.codex"
             - name: PATH
-              value: "/home/node/.codex/tools/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/node/go/bin"
+              value: "/opt/codex/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/node/go/bin"
             # Node's 250 ms address-family switching abandons healthy IPv4
             # connects on this route. Keep npm/Yarn on the IPv4-only pod network.
             - name: NODE_OPTIONS
