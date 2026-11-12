@@ -118,8 +118,11 @@ and the number of Longhorn/NFS mounts it holds — which should be zero.
   `pod0-author` naming that tells you which agent is doing what would
   be lost. Either name the session after the card it picked up, or keep
   one long-lived pod for attaching that never does stage work.
-- **The go-build cache.** 1.4GB per session pod today, regenerable but
-  not free. An ephemeral worker starts cold.
+- **Interactive work in a worker.** The go-build cache above is the
+  symptom: these pods are also where hand work happens, and an
+  ephemeral worker is a bad place for that. Whether the pool keeps one
+  long-lived pod for interactive use is a separate decision from how
+  stages run.
 
   Note the repo clones are NOT a concern, which was not obvious: a
   session pod carries 32 full clones (153MB), but a worker only needs
@@ -135,11 +138,16 @@ Verified against the live cluster and the scripts, so the design does
 not rest on assumption:
 
 - **The stage scripts do not touch $HOME.** No reference to `$HOME`,
-  `~/` or `.claude/` in nightly-author.sh, nightly-merge.sh or
-  nightly-test.sh. They need their lib (in the image) and
+  `~/` or `.claude/` in stage-author.sh, stage-merge.sh or
+  stage-test.sh. They need their lib (in the image) and
   `/workspace/<repo>` (which a worker clones). So an ephemeral worker
   with no persistent home can run them unchanged - this was the last
   structural unknown.
+- **The go-build cache is not a cost of this change.** Listed below as
+  a loss; it is not. None of the three stage scripts invokes go at all,
+  so the 1.4GB in a session pod's ~/.cache/go-build comes from
+  interactive work, not from the automated stages. An ephemeral worker
+  running a stage never needed it.
 - **Workers can be interchangeable.** See the podWorksRepo note above.
 - **Cloning on demand beats carrying clones.** 1s and 3.2MB shallow,
   against 153MB of warm clones per pod.
