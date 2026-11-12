@@ -43,6 +43,29 @@ worth doing until something needs the space.
 - **Two keys**: `claude-worker` (read, for pods) and `claude-seed`
   (read-write, for seeding). Verified distinct in `garage bucket info`.
 
+## The PoC ran, and it works
+
+Measured on the live cluster 2026-11-12, not inferred:
+
+```
+seed-reference:  1801 objects, 71.4 MB uploaded (books 48M,
+                 skills 6.1M, plugins 21M)
+
+poc-worker:      pulled 74M in 7s, 1801 files
+                 books: 609  skills: 476  plugins: 716
+                 local write OK (own copy)
+                 longhorn/nfs mounts: 0
+```
+
+Every claim the design rests on is now demonstrated: a worker with **no
+PersistentVolumeClaim** obtained the full reference set in 7 seconds -
+free against a pod startup that already takes ~70s - using only the
+read-only key, got its own writable copy rather than a shared mount,
+and left nothing attached when it exited.
+
+The remaining steps below are about moving the credentials into Vault.
+The storage model itself no longer needs proving.
+
 ## The remaining step
 
 Garage mints the S3 key, so it cannot be generated ahead of time:
