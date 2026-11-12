@@ -68,20 +68,34 @@ vault kv put kv/garage/s3-reference \
   access-key-id=<Key ID> secret-access-key=<Secret key>
 vault kv put kv/garage/rpc rpc-secret="$(openssl rand -hex 32)"
 
-# 4. VERIFY before deleting anything. This must say Valid/True:
-kubectl get secretstore vault-garage -n garage
+# 4. VERIFY before deleting anything - and check the ExternalSecret,
+#    NOT the SecretStore. A Valid store proves only that ESO can log in
+#    to Vault with that role; it says nothing about whether the role can
+#    read the path. Both states coexist on this cluster right now:
+#    vault-claude-pods is Valid/True while its garage-s3-reference
+#    ExternalSecret fails with a 403. Checking the store would green-
+#    light step 5 with the path still unreadable.
+#
+#    This must say SecretSynced/True:
+kubectl get externalsecret garage-rpc -n garage
 
 # 5. only now hand the RPC secret over. External Secrets will not adopt
 #    a Secret it did not create, so the hand-made one has to go first -
-#    which is safe only because step 4 proved the replacement works.
+#    which is safe only because step 4 proved ESO has actually read the
+#    path, not merely authenticated.
 kubectl delete secret garage-rpc -n garage
-kubectl get secret garage-rpc -n garage   # ESO should recreate it
+# refreshInterval is 1h, so recreation is not instant - nudge it rather
+# than wondering whether it is broken:
+kubectl annotate externalsecret garage-rpc -n garage \
+  force-sync=$(date +%s) --overwrite
+kubectl get secret garage-rpc -n garage
 
-# 6. grant the claude-pods vault role read on kv/garage/s3-reference.
-#    Seeding alone is not enough: that ExternalSecret currently fails
-#    with a 403, not a 404, so it will keep failing after step 3 until
-#    the policy is widened. That role is not managed by
-#    bootstrap/vault-policies.sh.
+# 6. grant the claude-pods vault role read on BOTH kv/garage/s3-reference
+#    and kv/garage/s3-seed. Seeding alone is not enough: those
+#    ExternalSecrets fail with a 403, not a 404, so they keep failing
+#    after step 3 until the policy is widened - and widening it for one
+#    path leaves the seed job failing for the reason you just fixed for
+#    the other. That role is not managed by bootstrap/vault-policies.sh.
 ```
 
 ## Then the PoC proves the model
@@ -138,8 +152,8 @@ Verified against the live cluster and the scripts, so the design does
 not rest on assumption:
 
 - **The stage scripts do not touch $HOME.** No reference to `$HOME`,
-  `~/` or `.claude/` in stage-author.sh, stage-merge.sh or
-  stage-test.sh. They need their lib (in the image) and
+  `~/` or `.claude/` in claude-pods/stage-author.sh,
+  stage-merge.sh or stage-test.sh. They need their lib (in the image) and
   `/workspace/<repo>` (which a worker clones). So an ephemeral worker
   with no persistent home can run them unchanged - this was the last
   structural unknown.

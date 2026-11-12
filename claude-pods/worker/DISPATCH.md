@@ -33,13 +33,19 @@ already takes the pod as a parameter, so the change is in *who supplies
 it*: a new `claimIdleWorker()` scales the set up if needed, then returns
 the first ordinal whose `/tmp/nightly.lock` is free.
 
-Three call sites move:
+About six edit points, across **two independent dispatch paths** -
+the webhook handler and the hourly reconcile sweep. Patching only the
+webhook leaves reconcile dispatching to fixed pods, which works until a
+card goes stale.
 
-| Site | Today | After |
-|---|---|---|
-| `ROUTES[col.slug]` destructure | `[pod, script]` | `script` |
-| `ensureAwake()` | scale to `WAKE_REPLICAS` (3) | scale to `claimed + 1` |
-| `runStage(...)` | fixed pod | claimed worker |
+| Site | Line | Today | After |
+|---|---|---|---|
+| `ROUTES` destructure (reconcile) | `:418` | `[pod, script]` | `script` |
+| `ROUTES` destructure (webhook) | `:558` | `[pod, script]` | `script` |
+| `podWorksRepo(route[0], ...)` | `:444`, `:574` | fixed pod | claimed worker |
+| `runStage(...)` (reconcile) | `:464` | fixed pod | claimed worker |
+| `runStage(...)` (webhook) | `:580` | fixed pod | claimed worker |
+| `WAKE_REPLICAS` destructure | `:126` | `([pod])` | derive from pool size |
 
 ## What already works and needs no change
 
@@ -63,10 +69,19 @@ Three call sites move:
   glance which agent is doing what. Anonymous workers lose that. Either
   rename the session when a worker claims a card, or keep one
   long-lived pod purely for attaching that never runs stage work.
-- **A claim race.** Two webhooks arriving together could both see the
-  same worker idle. `flock` is the arbiter — the loser's `runStage`
-  hits BUSY and the card stays put, which is the existing behaviour for
-  a busy pod, so the race degrades into something already handled.
+- **A claim race.** Two webhooks arriving together can both see the
+  same worker idle: `podIsBusy` and the launching exec are separate
+  calls, so the gap is real and both can spawn. The arbiter is not the
+  dispatcher - it is `take_pod_lock` in `lib/pod-common.sh:224-230`,
+  which takes `flock -n 9` and returns 1, so the second stage exits
+  in-pod. No double-dispatch.
+
+  But be precise about what that looks like, because it is not the
+  BUSY path: `podIsBusy` already returned idle, so the dispatcher logs
+  `START` then `LAUNCHED rc=0` for both - the exec that launches a
+  detached run exits 0 regardless. The loser is visible only in the
+  pod's own log. Someone debugging a dropped card would grep for BUSY,
+  find nothing, and wrongly conclude the race did not happen.
 
 ## What this does not solve
 
