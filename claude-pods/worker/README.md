@@ -192,7 +192,6 @@ not rest on assumption:
   `/workspace/<repo>` (which a worker clones). So an ephemeral worker
   with no persistent home can run them unchanged - this was the last
   structural unknown.
-
 - **Workers can be interchangeable.** See the podWorksRepo note above.
 - **Cloning on demand beats carrying clones.** 1s and 3.2MB shallow,
   against 153MB of warm clones per pod.
