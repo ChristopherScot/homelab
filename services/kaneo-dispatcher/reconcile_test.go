@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -269,6 +270,23 @@ func TestEveryRouteHasAWorkCheck(t *testing.T) {
 	if _, err := f.d.workExists(t.Context(), "not-a-route", "TestOwner/testrepo", "t1"); err == nil {
 		t.Error("an unknown column was answered instead of refused")
 	}
+}
+
+// The Node sweep put a failed wake in errors, because it threw inside
+// the per-card try. "redispatched" over a card that never started is
+// worse than silence: the summary line is what a morning reads.
+func TestFailedWakeDuringASweepIsAnErrorNotARedispatch(t *testing.T) {
+	f := newFixture(t)
+	f.stale("to-do")
+	f.pods.wakeErr = errors.New("cannot scale claude-session to 3: forbidden")
+	s := f.reconcile(false)
+	if len(s.errors) != 1 || !strings.Contains(s.errors[0], "T-1: wake: cannot scale") {
+		t.Errorf("errors = %v, want the wake failure under T-1", s.errors)
+	}
+	if len(s.redispatched) != 0 {
+		t.Errorf("redispatched = %v, want nothing: no stage was started", s.redispatched)
+	}
+	f.wantNoLaunch()
 }
 
 // An error must not read as "nothing to do".

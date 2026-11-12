@@ -132,13 +132,13 @@ func TestSessionPodsAreWokenBeforeTheBusyProbe(t *testing.T) {
 // never came up.
 func TestFailedWakeIsLoggedAndNothingIsExecd(t *testing.T) {
 	f := newFixture(t)
-	f.pods.wakeErr = errors.New("claude-session not ready after 10m0s of waking: 1 of 3 ready")
+	f.pods.wakeErr = errors.New("claude-session not ready after 10m0s of waking (1 of 3 ready)")
 	f.kaneo.labels["t2"] = []string{"repo:testrepo"}
 	f.signed("/", move("t2", "to-do"))
 	if calls := f.pods.all(); len(calls) != 0 {
 		t.Errorf("exec'd into a set that did not wake: %v", calls)
 	}
-	f.wantLog(`msg="wake failed" task=t2 repo=TestOwner/testrepo err="claude-session not ready after 10m0s of waking: 1 of 3 ready"`)
+	f.wantLog(`msg="dispatch failed" task=t2 column=to-do repo=TestOwner/testrepo err="wake: claude-session not ready after 10m0s of waking (1 of 3 ready)"`)
 }
 
 // Stages are pinned to pods by ordinal, so the wake must cover the

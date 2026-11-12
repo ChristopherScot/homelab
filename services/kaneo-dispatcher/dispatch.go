@@ -306,7 +306,9 @@ func (d *dispatcher) dispatch(ctx context.Context, column string, st stage, c ca
 		slog.Warn("skip", "task", c.name(), "column", column, "reason", skip)
 		return
 	}
-	d.runStage(ctx, repo, st, c)
+	if err := d.runStage(ctx, repo, st, c); err != nil {
+		slog.Error("dispatch failed", "task", c.name(), "column", column, "repo", repo, "err", err)
+	}
 }
 
 // repoFor is the repo a card's stage should run against, or the one-line
@@ -331,20 +333,20 @@ func (d *dispatcher) repoFor(ctx context.Context, id string, st stage) (repo, sk
 }
 
 // runStage wakes the session pods and launches the stage in its pod,
-// unless a run is already there.
-func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card) {
+// unless a run is already there. The error is a wake or a launch that
+// could not be done, which the caller reports in its own way: a busy pod
+// is not one, because the card is simply waiting its turn.
+func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card) error {
 	// The set sleeps at 0 replicas when idle; the session-sleep CronJob in
 	// claude-pods/ puts it there and this is the matching wake. Always
 	// every pod, never just the stage's: see wakeReplicas. Not remembered
 	// between calls: scaling an awake set to its own size is a no-op, so
 	// asking every time costs one read and can never disagree with the
-	// cluster. A wake that fails is logged per card and the card stays
-	// where it is; the sweep is the retry, priced honestly - hourly, and
-	// only once the card is RECONCILE_STALE old - so a dropped wake costs
-	// hours, not forever.
+	// cluster. A wake that fails leaves the card where it is; the sweep is
+	// the retry, priced honestly - hourly, and only once the card is
+	// RECONCILE_STALE old - so a dropped wake costs hours, not forever.
 	if err := d.wake(ctx); err != nil {
-		slog.Error("wake failed", "task", c.name(), "repo", repo, "err", err)
-		return
+		return fmt.Errorf("wake: %w", err)
 	}
 	pod := st.pod()
 	if d.podIsBusy(ctx, pod) {
@@ -352,7 +354,7 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 		// moving it again once the current run finishes is the retry. A
 		// queue here would silently stack up work nobody asked for twice.
 		slog.Warn("busy", "task", c.name(), "repo", repo, "pod", pod, "hint", "move the card again later")
-		return
+		return nil
 	}
 	slog.Info("start", "task", c.name(), "repo", repo, "pod", pod, "script", path.Base(st.script))
 	// Bounded like the busy probe. The shell returns as soon as the run is
@@ -362,12 +364,12 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 	defer cancel()
 	rc, err := d.exec(ctx, pod, []string{"sh", "-c", launchLine, st.script, c.ID, repo})
 	if err != nil {
-		slog.Error("launch failed", "task", c.name(), "repo", repo, "err", err)
-		return
+		return fmt.Errorf("launch in %s: %w", pod, err)
 	}
 	// "launched", not "finished": the run is detached and outlives this.
 	// The log in the pod and the card are where the outcome lives.
 	slog.Info("launched", "task", c.name(), "repo", repo, "rc", rc)
+	return nil
 }
 
 // podIsBusy reports whether a stage is already running in this pod, or

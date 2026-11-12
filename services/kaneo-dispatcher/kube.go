@@ -80,6 +80,11 @@ const (
 	// - three pods pulling a 1.4 GB image - but one that cannot finish
 	// must become a logged failure for the card, not a goroutine held
 	// forever.
+	//
+	// The session-sleep CronJob's age guard is derived from this: a pod
+	// younger than the guard may belong to a wake that has not reached
+	// its first flock yet, so the guard must outlast the wait here plus
+	// the exec. TestSleepCronOutwaitsTheWake holds the two together.
 	wakeTimeout = 10 * time.Minute
 	// wakePoll is how often a wake re-reads the set while waiting.
 	wakePoll = 5 * time.Second

@@ -11,9 +11,9 @@
 # It runs hourly rather than nightly because the window it closes is the
 # gap between "the webhook was dropped" and "somebody notices", and a
 # nightly sweep leaves that gap up to a day wide. The sweep itself is
-# cheap: it only looks at the three columns that dispatch, only at cards
-# older than RECONCILE_STALE, and asks GitHub whether the work already
-# exists before restarting anything.
+# cheap: it only looks at the three columns that dispatch and the one the
+# author strands cards in, only at cards older than RECONCILE_STALE, and
+# asks GitHub whether the work already exists before restarting anything.
 apiVersion: batch/v1
 kind: CronJob
 metadata:

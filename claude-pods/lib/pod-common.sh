@@ -214,13 +214,15 @@ revert_pr() {
 # would be lost entirely on a restart. The lock lives with the thing it
 # protects.
 #
-# TWO readers probe it with `flock -n <path> true`, both hardcoding
-# /tmp/nightly.lock: the dispatcher before launching a stage
-# (podIsBusy in services/kaneo-dispatcher) and the session-sleep cron before scaling the
-# pods to 0. The stakes differ: a dispatcher misread starts a duplicate
-# agent; a reaper misread TERMINATES a live run as "idle". So the
-# NIGHTLY_LOCK override below must never be set in a session pod — a run
-# holding a different path is invisible to both readers.
+# TWO readers probe it with `flock -n <path> true`: the dispatcher before
+# launching a stage (podIsBusy in services/kaneo-dispatcher, which uses
+# the same expression as below, override included, and has a test
+# holding the two together) and the session-sleep cron before scaling
+# the pods to 0, which hardcodes /tmp/nightly.lock. The stakes differ: a
+# dispatcher misread starts a duplicate agent; a reaper misread
+# TERMINATES a live run as "idle". So the NIGHTLY_LOCK override below
+# must never be set in a session pod — a run holding a different path is
+# invisible to the reaper.
 take_pod_lock() {
   exec 9>"${NIGHTLY_LOCK:-/tmp/nightly.lock}"
   if ! flock -n 9; then

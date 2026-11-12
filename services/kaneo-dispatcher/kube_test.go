@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -47,6 +50,45 @@ func TestSettledMatchesRolloutStatus(t *testing.T) {
 				t.Errorf("settled(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// The sleep cron leaves a pod younger than its age guard alone, because
+// a fresh set may belong to a wake that has not taken its lock yet. That
+// guard is derived from wakeTimeout, in a different file in a different
+// language; this is the one place the derivation is checked.
+func TestSleepCronOutwaitsTheWake(t *testing.T) {
+	src, err := os.ReadFile("../../claude-pods/session-sleep-cron.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`\[ "\$age" -lt (\d+) \]`).FindSubmatch(src)
+	if m == nil {
+		t.Fatal(`session-sleep-cron.yaml no longer guards on [ "$age" -lt <seconds> ]; this test must change with it`)
+	}
+	guard, _ := strconv.Atoi(string(m[1]))
+	// Strictly more: the wait plus the exec that follows it.
+	if float64(guard) <= wakeTimeout.Seconds() {
+		t.Errorf("the sleep cron's age guard is %ds, but a wake may take %s before its exec; a mid-wake set would be scaled away", guard, wakeTimeout)
+	}
+}
+
+// The Role scopes the scale grant by name. A rename of the set here
+// that missed rbac.yaml would fail at runtime as a 403, hours later via
+// the sweep, so the name in the Role is held to the one in the code.
+func TestRoleNamesTheSetTheWakeScales(t *testing.T) {
+	src, err := os.ReadFile("rbac.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := regexp.MustCompile(`resourceNames: \["([^"]*)"\]`).FindAllSubmatch(src, -1)
+	if len(names) == 0 {
+		t.Fatal("rbac.yaml scopes nothing by name; the scale grant must be scoped to " + sessionSet)
+	}
+	for _, n := range names {
+		if got := string(n[1]); got != sessionSet {
+			t.Errorf("rbac.yaml scopes a grant to %q, want %q", got, sessionSet)
+		}
 	}
 }
 

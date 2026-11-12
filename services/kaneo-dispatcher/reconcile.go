@@ -157,7 +157,13 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, d
 		return
 	}
 	slog.Info("reconcile: stuck card, re-dispatching", "task", c.name(), "column", column, "since", since)
-	d.runStage(ctx, repo, st, c)
+	// A wake or launch that failed is an error, not a redispatch: the
+	// summary line is what a morning reads, and "redispatched 1" over a
+	// card that never started is worse than silence.
+	if err := d.runStage(ctx, repo, st, c); err != nil {
+		fail(err)
+		return
+	}
 	out.redispatched = append(out.redispatched, line)
 }
 
