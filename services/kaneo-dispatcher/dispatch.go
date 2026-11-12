@@ -33,22 +33,32 @@ import (
 )
 
 // A stage is which pod runs which script when a card lands in a column.
+// The pod is named by ordinal, as the StatefulSet counts them, so a
+// route cannot name a pod the wake would not cover.
 type stage struct {
-	pod    string
-	script string
+	ordinal int
+	script  string
 }
+
+// pod is the session pod this stage runs in.
+func (s stage) pod() string { return sessionSet + "-" + strconv.Itoa(s.ordinal) }
+
+// authorColumn is the column the author stage starts from. Named because
+// the sweep hands stranded cards back to this route by key.
+const authorColumn = "to-do"
 
 // routes maps a column slug to its stage. Anything not here is inert.
 //
-// The column set is known in three other places, and a new route has to
+// The column set is known in four other places, and a new route has to
 // reach all of them: workExists in reconcile.go says what finished work
-// looks like for the column, the graph in claude-pods/lib/pod-common.sh
-// says which columns the scripts may move a card to, and the README
-// describes the pipeline.
+// looks like for the column, sweeps in the same file says which columns
+// a card can strand in, the graph in claude-pods/lib/pod-common.sh says
+// which columns the scripts may move a card to, and the README describes
+// the pipeline.
 var routes = map[string]stage{
-	"to-do":     {"claude-session-0", "/usr/local/bin/stage-author"},
-	"in-review": {"claude-session-2", "/usr/local/bin/stage-test"},
-	"mergeable": {"claude-session-1", "/usr/local/bin/stage-merge"},
+	authorColumn: {0, "/usr/local/bin/stage-author"},
+	"in-review":  {2, "/usr/local/bin/stage-test"},
+	"mergeable":  {1, "/usr/local/bin/stage-merge"},
 }
 
 // wakeReplicas is one past the highest ordinal routes names: stages are
@@ -57,14 +67,8 @@ var routes = map[string]stage{
 func wakeReplicas() int {
 	n := 0
 	for _, st := range routes {
-		n = max(n, ordinal(st.pod)+1)
+		n = max(n, st.ordinal+1)
 	}
-	return n
-}
-
-// ordinal is the <n> in claude-session-<n>, as the StatefulSet counts.
-func ordinal(pod string) int {
-	n, _ := strconv.Atoi(pod[strings.LastIndex(pod, "-")+1:])
 	return n
 }
 
@@ -94,11 +98,6 @@ const (
 	launchLine = `setsid nohup "$0" "$1" "$2" >/dev/null 2>&1 </dev/null &`
 )
 
-// wakeTimeout bounds a wake. A cold start legitimately takes minutes -
-// three pods pulling a 1.4 GB image - but one that cannot finish must
-// become a logged failure for the card, not a goroutine held forever.
-const wakeTimeout = 10 * time.Minute
-
 // execer runs argv in a session pod and reports its exit code. An error
 // means the command could not be run at all - the API server was
 // unreachable, the pod is gone - which is a different thing from it
@@ -107,7 +106,8 @@ const wakeTimeout = 10 * time.Minute
 type execer func(ctx context.Context, pod string, argv []string) (int, error)
 
 // waker scales the session StatefulSet up to wakeReplicas and returns
-// once every pod is ready, or with the reason it could not.
+// once every pod is ready, or with the reason it could not. It bounds
+// itself: see wakeTimeout in kube.go.
 type waker func(ctx context.Context) error
 
 // A dispatcher holds what one deployment of this service was configured
@@ -297,7 +297,7 @@ func (d *dispatcher) detach(r *http.Request, work func(ctx context.Context)) {
 // dispatch runs the stage a column implies for one card, or logs one line
 // saying why not.
 func (d *dispatcher) dispatch(ctx context.Context, column string, st stage, c card) {
-	repo, skip, err := d.repoFor(ctx, c.ID, st.pod)
+	repo, skip, err := d.repoFor(ctx, c.ID, st)
 	if err != nil {
 		slog.Error("cannot read labels", "task", c.name(), "column", column, "err", err)
 		return
@@ -316,7 +316,7 @@ func (d *dispatcher) dispatch(ctx context.Context, column string, st stage, c ca
 // An error is a Kaneo lookup that failed, which must not read as "no
 // label": saying so keeps a Kaneo outage from looking like a board full
 // of unlabelled cards.
-func (d *dispatcher) repoFor(ctx context.Context, id, pod string) (repo, skip string, err error) {
+func (d *dispatcher) repoFor(ctx context.Context, id string, st stage) (repo, skip string, err error) {
 	repo, ok, err := d.repoForTask(ctx, id)
 	if err != nil {
 		return "", "", err
@@ -324,8 +324,8 @@ func (d *dispatcher) repoFor(ctx context.Context, id, pod string) (repo, skip st
 	if !ok {
 		return "", "card needs exactly one repo: label", nil
 	}
-	if !d.podWorksRepo(pod, repo) {
-		return "", pod + " does not work " + repo, nil
+	if !d.podWorksRepo(st, repo) {
+		return "", st.pod() + " does not work " + repo, nil
 	}
 	return repo, "", nil
 }
@@ -335,29 +335,32 @@ func (d *dispatcher) repoFor(ctx context.Context, id, pod string) (repo, skip st
 func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card) {
 	// The set sleeps at 0 replicas when idle; the session-sleep CronJob in
 	// claude-pods/ puts it there and this is the matching wake. Always
-	// every pod, never just the stage's: a StatefulSet cannot run ordinal
-	// 2 without 0 and 1. A wake that fails is logged per card and the
-	// card stays where it is; the sweep is the retry, priced honestly -
-	// hourly, and only once the card is RECONCILE_STALE old - so a dropped
-	// wake costs hours, not forever.
-	if err := d.ensureAwake(ctx); err != nil {
+	// every pod, never just the stage's: see wakeReplicas. Not remembered
+	// between calls: scaling an awake set to its own size is a no-op, so
+	// asking every time costs one read and can never disagree with the
+	// cluster. A wake that fails is logged per card and the card stays
+	// where it is; the sweep is the retry, priced honestly - hourly, and
+	// only once the card is RECONCILE_STALE old - so a dropped wake costs
+	// hours, not forever.
+	if err := d.wake(ctx); err != nil {
 		slog.Error("wake failed", "task", c.name(), "repo", repo, "err", err)
 		return
 	}
-	if d.podIsBusy(ctx, st.pod) {
+	pod := st.pod()
+	if d.podIsBusy(ctx, pod) {
 		// Dropped rather than queued: the card stays where it is, so
 		// moving it again once the current run finishes is the retry. A
 		// queue here would silently stack up work nobody asked for twice.
-		slog.Warn("busy", "task", c.name(), "repo", repo, "pod", st.pod, "hint", "move the card again later")
+		slog.Warn("busy", "task", c.name(), "repo", repo, "pod", pod, "hint", "move the card again later")
 		return
 	}
-	slog.Info("start", "task", c.name(), "repo", repo, "pod", st.pod, "script", path.Base(st.script))
+	slog.Info("start", "task", c.name(), "repo", repo, "pod", pod, "script", path.Base(st.script))
 	// Bounded like the busy probe. The shell returns as soon as the run is
 	// backgrounded, so a launch that takes this long is a stream that
 	// hung, and cancelling it cannot reach the detached run anyway.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	rc, err := d.exec(ctx, st.pod, []string{"sh", "-c", launchLine, st.script, c.ID, repo})
+	rc, err := d.exec(ctx, pod, []string{"sh", "-c", launchLine, st.script, c.ID, repo})
 	if err != nil {
 		slog.Error("launch failed", "task", c.name(), "repo", repo, "err", err)
 		return
@@ -365,15 +368,6 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 	// "launched", not "finished": the run is detached and outlives this.
 	// The log in the pod and the card are where the outcome lives.
 	slog.Info("launched", "task", c.name(), "repo", repo, "rc", rc)
-}
-
-// ensureAwake is the wake, bounded. Not held in memory between calls:
-// scaling an awake set to its own size is a no-op, so asking every time
-// costs one read and can never disagree with the cluster.
-func (d *dispatcher) ensureAwake(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, wakeTimeout)
-	defer cancel()
-	return d.wake(ctx)
 }
 
 // podIsBusy reports whether a stage is already running in this pod, or
@@ -410,9 +404,8 @@ func (d *dispatcher) podIsBusy(ctx context.Context, pod string) bool {
 // missing entry says the operator has not opted that pod in rather than
 // that it works nothing. An entry that is present but empty does mean
 // "works nothing", and refuses everything.
-func (d *dispatcher) podWorksRepo(pod, repo string) bool {
-	n := pod[strings.LastIndex(pod, "-")+1:]
-	list, ok := d.repos[n]
+func (d *dispatcher) podWorksRepo(st stage, repo string) bool {
+	list, ok := d.repos[strconv.Itoa(st.ordinal)]
 	if !ok {
 		return true
 	}

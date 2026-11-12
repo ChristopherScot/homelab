@@ -69,7 +69,7 @@ const strandedColumn = "in-progress"
 // exists to judge, and it must see the card to judge it.
 func sweeps(column string) (st stage, stranded, ok bool) {
 	if column == strandedColumn {
-		return routes["to-do"], true, true
+		return routes[authorColumn], true, true
 	}
 	st, ok = routes[column]
 	return st, false, ok
@@ -86,13 +86,12 @@ func (d *dispatcher) reconcile(ctx context.Context, dryRun bool) (sweep, error) 
 		return out, err
 	}
 	for _, col := range b.Data.Columns {
-		st, stranded, ok := sweeps(col.Slug)
-		if !ok {
+		if _, _, ok := sweeps(col.Slug); !ok {
 			continue // inert column: nothing was ever owed here
 		}
 		for _, c := range col.Tasks {
 			out.checked++
-			d.reconcileCard(ctx, col.Slug, st, stranded, c, dryRun, &out)
+			d.reconcileCard(ctx, col.Slug, c, dryRun, &out)
 		}
 	}
 	return out, nil
@@ -103,7 +102,8 @@ func (d *dispatcher) reconcile(ctx context.Context, dryRun bool) (sweep, error) 
 // find out lands in errors, never in silence: an error here must not
 // read as "nothing to do", because a card nobody can see is the failure
 // this sweep exists for.
-func (d *dispatcher) reconcileCard(ctx context.Context, column string, st stage, stranded bool, c card, dryRun bool, out *sweep) {
+func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, dryRun bool, out *sweep) {
+	st, stranded, _ := sweeps(column) // the caller only passes swept columns
 	fail := func(err error) { out.errors = append(out.errors, c.name()+": "+err.Error()) }
 
 	since, err := d.enteredColumnAt(ctx, c.ID)
@@ -129,7 +129,7 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, st stage,
 	if age < d.stale {
 		return // still within the window a real run could take
 	}
-	repo, skip, err := d.repoFor(ctx, c.ID, st.pod)
+	repo, skip, err := d.repoFor(ctx, c.ID, st)
 	if err != nil {
 		fail(err)
 		return
@@ -225,7 +225,7 @@ func (d *dispatcher) workExists(ctx context.Context, column, repo, id string) (b
 		return true, nil
 	}
 	switch column {
-	case "to-do":
+	case authorColumn:
 		// The author's job is to open a pull request. One exists -> it ran.
 		return true, nil
 	case "in-review":

@@ -13,13 +13,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	typedappsv1 "k8s.io/client-go/kubernetes/typed/apps/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	utilexec "k8s.io/client-go/util/exec"
+	"k8s.io/client-go/util/retry"
 )
 
 // sessionSet is the StatefulSet the session pods belong to. Not an env
-// knob like DISPATCH_NS: routes hardcodes claude-session-<n> pod names,
+// knob like DISPATCH_NS: routes names pods by ordinal under this name,
 // so a different name here would wake one workload and exec into
 // another. One fact, one place.
 const sessionSet = "claude-session"
@@ -67,44 +69,82 @@ func newPodClient(ns string) (execer, waker, error) {
 		return 0, err
 	}
 
-	// wake is `kubectl scale` followed by `kubectl rollout status`, which
-	// is what the Node dispatcher ran. The scale is skipped when the set
-	// is already the right size, so an awake set costs one read.
 	wake := func(ctx context.Context) error {
-		sets := cs.AppsV1().StatefulSets(ns)
-		want := int32(wakeReplicas())
+		return wakeSet(ctx, cs.AppsV1().StatefulSets(ns), int32(wakeReplicas()))
+	}
+	return exec, wake, nil
+}
+
+const (
+	// wakeTimeout bounds a wake. A cold start legitimately takes minutes
+	// - three pods pulling a 1.4 GB image - but one that cannot finish
+	// must become a logged failure for the card, not a goroutine held
+	// forever.
+	wakeTimeout = 10 * time.Minute
+	// wakePoll is how often a wake re-reads the set while waiting.
+	wakePoll = 5 * time.Second
+)
+
+// wakeSet is `kubectl scale` followed by `kubectl rollout status`, which
+// is what the Node dispatcher ran: scale the set up to want and return
+// once it has settled there, or with the reason it did not within
+// wakeTimeout.
+//
+// The scale is a read followed by a conditional write, retried on a
+// conflict: two deliveries in one poll interval both read 0 and both
+// write 3, and without the retry the loser would report "cannot scale"
+// and drop its card for hours over an ordinary double move. A set that
+// is already big enough is not written at all, so an awake set costs one
+// read per dispatch.
+func wakeSet(ctx context.Context, sets typedappsv1.StatefulSetInterface, want int32) error {
+	ctx, cancel := context.WithTimeout(ctx, wakeTimeout)
+	defer cancel()
+	start := time.Now()
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		scale, err := sets.GetScale(ctx, sessionSet, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("cannot read the scale of %s: %w", sessionSet, err)
 		}
-		if scale.Spec.Replicas < want {
-			scale.Spec.Replicas = want
-			if _, err := sets.UpdateScale(ctx, sessionSet, scale, metav1.UpdateOptions{}); err != nil {
-				return fmt.Errorf("cannot scale %s to %d: %w", sessionSet, want, err)
-			}
+		if scale.Spec.Replicas >= want {
+			return nil
 		}
-		tick := time.NewTicker(5 * time.Second)
-		defer tick.Stop()
-		for {
-			s, err := sets.Get(ctx, sessionSet, metav1.GetOptions{})
-			if err != nil {
-				return fmt.Errorf("cannot read %s: %w", sessionSet, err)
+		scale.Spec.Replicas = want
+		_, err = sets.UpdateScale(ctx, sessionSet, scale, metav1.UpdateOptions{})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("cannot scale %s to %d: %w", sessionSet, want, err)
+	}
+	// The count is what a morning needs: an RBAC denial failed above with
+	// its own message, so running out of time here is a pod that did not
+	// start - an image pull against an unreachable ghcr, a node gone.
+	// Whether the clock runs out inside the read or between two reads is
+	// a timer race, so both end with this one line.
+	var ready int32
+	gaveUp := func() error {
+		return fmt.Errorf("%s not ready after %s of waking (%d of %d ready): %w",
+			sessionSet, time.Since(start).Round(time.Second), ready, want, ctx.Err())
+	}
+	tick := time.NewTicker(wakePoll)
+	defer tick.Stop()
+	for {
+		s, err := sets.Get(ctx, sessionSet, metav1.GetOptions{})
+		if err != nil {
+			if ctx.Err() != nil {
+				return gaveUp()
 			}
-			if settled(s, want) {
-				return nil
-			}
-			select {
-			case <-ctx.Done():
-				// The count is what a morning needs: an RBAC denial
-				// failed above with its own message, so this is a pod
-				// that did not start - an image pull against an
-				// unreachable ghcr, a node gone.
-				return fmt.Errorf("%s not ready after %s of waking: %d of %d ready", sessionSet, wakeTimeout, s.Status.ReadyReplicas, want)
-			case <-tick.C:
-			}
+			return fmt.Errorf("cannot read %s: %w", sessionSet, err)
+		}
+		if settled(s, want) {
+			return nil
+		}
+		ready = s.Status.ReadyReplicas
+		select {
+		case <-ctx.Done():
+			return gaveUp()
+		case <-tick.C:
 		}
 	}
-	return exec, wake, nil
 }
 
 // settled is kubectl rollout status's test for a StatefulSet, minus the

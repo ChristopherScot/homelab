@@ -118,8 +118,9 @@ func TestSessionPodsAreWokenBeforeTheBusyProbe(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.labels["t2"] = []string{"repo:testrepo"}
 	f.signed("/", move("t2", "to-do"))
-	if n, first := f.pods.woken(); n != 1 || first != "wake" {
-		t.Errorf("woken %d times, first action %q; want one wake before any exec", n, first)
+	want := []string{"wake", "exec", "exec"} // the wake, the probe, the launch
+	if got := f.pods.actions(); !slices.Equal(got, want) {
+		t.Errorf("actions = %q, want %q", got, want)
 	}
 	if len(f.pods.launches()) != 1 {
 		t.Error("the stage was not launched after the wake")
@@ -147,10 +148,8 @@ func TestWakeCoversEveryRoutedPod(t *testing.T) {
 	if got := wakeReplicas(); got != 3 {
 		t.Errorf("wakeReplicas() = %d, want 3 for claude-session-0..2", got)
 	}
-	for pod, want := range map[string]int{"claude-session-0": 0, "claude-session-2": 2, "claude-session-10": 10} {
-		if got := ordinal(pod); got != want {
-			t.Errorf("ordinal(%s) = %d, want %d", pod, got, want)
-		}
+	if got := (stage{ordinal: 2}).pod(); got != "claude-session-2" {
+		t.Errorf("stage 2 runs in %q, want claude-session-2", got)
 	}
 }
 
@@ -256,21 +255,22 @@ func TestRepoListIsMatchedByFullName(t *testing.T) {
 		"0": {"TestOwner/alpha", "TestOwner/beta", "Other/gamma"},
 		"1": {},
 	}}
+	pod := func(n int) stage { return stage{ordinal: n} }
 	for repo, want := range map[string]bool{
 		"TestOwner/alpha": true,
 		"TestOwner/beta":  true,
 		"Other/gamma":     true,
 		"TestOwner/delta": false,
 	} {
-		if got := d.podWorksRepo("claude-session-0", repo); got != want {
+		if got := d.podWorksRepo(pod(0), repo); got != want {
 			t.Errorf("podWorksRepo(pod0, %q) = %v, want %v", repo, got, want)
 		}
 	}
 	// No list for this ordinal is not a reason to refuse; an empty one is.
-	if !d.podWorksRepo("claude-session-2", "TestOwner/alpha") {
+	if !d.podWorksRepo(pod(2), "TestOwner/alpha") {
 		t.Error("a pod with no list refused work")
 	}
-	if d.podWorksRepo("claude-session-1", "TestOwner/alpha") {
+	if d.podWorksRepo(pod(1), "TestOwner/alpha") {
 		t.Error("a pod with an empty list accepted work")
 	}
 }

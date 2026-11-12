@@ -47,7 +47,6 @@ func (c execCall) script() string {
 type recorder struct {
 	mu      sync.Mutex
 	calls   []execCall
-	wakes   int
 	order   []string // "wake" and "exec", in the order they happened
 	busy    bool
 	fail    error // returned from every exec when set: the API is unreachable
@@ -72,7 +71,6 @@ func (r *recorder) exec(_ context.Context, pod string, argv []string) (int, erro
 func (r *recorder) wake(context.Context) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.wakes++
 	r.order = append(r.order, "wake")
 	return r.wakeErr
 }
@@ -84,14 +82,22 @@ func (r *recorder) all() []execCall {
 	return append([]execCall(nil), r.calls...)
 }
 
-// woken is how many times the set was woken, and what happened first.
-func (r *recorder) woken() (n int, first string) {
+// actions is everything asked of the cluster, wakes and execs, in order.
+func (r *recorder) actions() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.order) > 0 {
-		first = r.order[0]
+	return append([]string(nil), r.order...)
+}
+
+// wakes is how many times the set was woken.
+func (r *recorder) wakes() int {
+	n := 0
+	for _, a := range r.actions() {
+		if a == "wake" {
+			n++
+		}
 	}
-	return r.wakes, first
+	return n
 }
 
 // launches are the exec calls that started a stage, as opposed to the
@@ -317,7 +323,7 @@ func (f *fixture) wantNoLaunch() {
 func (f *fixture) wantUntouched() {
 	f.t.Helper()
 	f.wantNoLaunch()
-	if n, _ := f.pods.woken(); n != 0 {
+	if n := f.pods.wakes(); n != 0 {
 		f.t.Errorf("the session pods were woken %d times", n)
 	}
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -87,7 +88,8 @@ func TestStrandedInProgressCardIsHandedBackToTheAuthor(t *testing.T) {
 		t.Errorf("sweep = %+v, want T-1 handed back after 5h in in-progress", s)
 	}
 	l := f.pods.launches()
-	if len(l) != 1 || l[0].pod != "claude-session-0" || l[0].argv[3] != "/usr/local/bin/stage-author" || l[0].argv[4] != "t1" || l[0].argv[5] != "TestOwner/testrepo" {
+	want := []string{"sh", "-c", launchLine, "/usr/local/bin/stage-author", "t1", "TestOwner/testrepo"}
+	if len(l) != 1 || l[0].pod != "claude-session-0" || !slices.Equal(l[0].argv, want) {
 		t.Errorf("launches = %v, want the author stage in claude-session-0 with t1 and its repo", l)
 	}
 	if hits := f.github.calls(); len(hits) != 0 {

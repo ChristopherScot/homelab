@@ -73,9 +73,10 @@ func main() {
 			slog.Error("shutdown", "err", err)
 		}
 		// Shutdown waits for handlers, which answer in microseconds; the
-		// work they accepted is still running. Every step of it is
-		// bounded, so it fits inside the grace period - and if it does
-		// not, the sweep finds the card.
+		// work they accepted is still running. A lookup, probe or launch
+		// is bounded in seconds and fits inside the grace period. A cold
+		// wake is bounded in minutes and does not: it is abandoned here,
+		// deliberately, and the sweep finds the card.
 		drained := make(chan struct{})
 		go func() { drain(); close(drained) }()
 		select {

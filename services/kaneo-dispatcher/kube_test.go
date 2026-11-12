@@ -1,9 +1,19 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // settled is what the wake polls for. Each case is one way kubectl
@@ -37,5 +47,114 @@ func TestSettledMatchesRolloutStatus(t *testing.T) {
 				t.Errorf("settled(%s) = %v, want %v", tc.name, got, tc.want)
 			}
 		})
+	}
+}
+
+// fakeSet is a claude-session StatefulSet in a fake clientset, with the
+// scale subresource wired up: the fake's object tracker knows nothing
+// of subresources, so GetScale and UpdateScale are answered here from
+// the tracked object. An UpdateScale also plays the controller, moving
+// the spec and status at once so the wake's first poll sees it settled.
+type fakeSet struct {
+	cs        *fake.Clientset
+	scaledTo  []int32
+	conflicts int // UpdateScale answers 409 this many times first
+}
+
+func newFakeSet(t *testing.T, replicas, ready int32) *fakeSet {
+	t.Helper()
+	s := &appsv1.StatefulSet{ObjectMeta: metav1.ObjectMeta{Name: sessionSet, Namespace: "ns"}}
+	s.Spec.Replicas = &replicas
+	s.Generation = 1
+	s.Status.ObservedGeneration = 1
+	s.Status.ReadyReplicas = ready
+	f := &fakeSet{cs: fake.NewSimpleClientset(s)}
+	gvr := appsv1.SchemeGroupVersion.WithResource("statefulsets")
+	current := func() *appsv1.StatefulSet {
+		obj, err := f.cs.Tracker().Get(gvr, "ns", sessionSet)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return obj.(*appsv1.StatefulSet)
+	}
+	f.cs.PrependReactor("get", "statefulsets", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		if a.GetSubresource() != "scale" {
+			return false, nil, nil
+		}
+		return true, &autoscalingv1.Scale{Spec: autoscalingv1.ScaleSpec{Replicas: *current().Spec.Replicas}}, nil
+	})
+	f.cs.PrependReactor("update", "statefulsets", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		if a.GetSubresource() != "scale" {
+			return false, nil, nil
+		}
+		if f.conflicts > 0 {
+			f.conflicts--
+			return true, nil, apierrors.NewConflict(gvr.GroupResource(), sessionSet, errors.New("the object has been modified"))
+		}
+		scale := a.(k8stesting.UpdateAction).GetObject().(*autoscalingv1.Scale)
+		f.scaledTo = append(f.scaledTo, scale.Spec.Replicas)
+		s := current().DeepCopy()
+		s.Spec.Replicas = &scale.Spec.Replicas
+		s.Generation++
+		s.Status.ObservedGeneration = s.Generation
+		s.Status.ReadyReplicas = scale.Spec.Replicas
+		if err := f.cs.Tracker().Update(gvr, s, "ns"); err != nil {
+			t.Fatal(err)
+		}
+		return true, scale, nil
+	})
+	return f
+}
+
+func (f *fakeSet) wake(t *testing.T, timeout time.Duration) error {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), timeout)
+	defer cancel()
+	return wakeSet(ctx, f.cs.AppsV1().StatefulSets("ns"), 3)
+}
+
+func TestWakeScalesASleepingSetAndWaitsForIt(t *testing.T) {
+	f := newFakeSet(t, 0, 0)
+	if err := f.wake(t, time.Minute); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	if len(f.scaledTo) != 1 || f.scaledTo[0] != 3 {
+		t.Errorf("scaled to %v, want one scale to 3", f.scaledTo)
+	}
+}
+
+func TestWakeLeavesAnAwakeSetAlone(t *testing.T) {
+	f := newFakeSet(t, 3, 3)
+	if err := f.wake(t, time.Minute); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	if len(f.scaledTo) != 0 {
+		t.Errorf("an awake set was scaled: %v", f.scaledTo)
+	}
+}
+
+// Two deliveries in one poll interval both read 0 and both write 3. The
+// loser's write is a 409; it must re-read and go on, not drop its card.
+func TestWakeRetriesAScaleConflict(t *testing.T) {
+	f := newFakeSet(t, 0, 0)
+	f.conflicts = 1
+	if err := f.wake(t, time.Minute); err != nil {
+		t.Fatalf("wake after one conflict: %v", err)
+	}
+	if len(f.scaledTo) != 1 {
+		t.Errorf("scaled %v, want exactly one successful scale", f.scaledTo)
+	}
+}
+
+// A set that scales but never becomes ready - an image that will not
+// pull, a node gone - is reported with the count, inside the deadline.
+func TestWakeReportsASetThatNeverComesUp(t *testing.T) {
+	f := newFakeSet(t, 3, 1) // scaled already, so no reactor marks it ready
+	err := f.wake(t, 50*time.Millisecond)
+	if err == nil {
+		t.Fatal("a set with 1 of 3 ready was reported awake")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "(1 of 3 ready)") {
+		t.Errorf("err = %v, want a deadline error naming 1 of 3 ready", err)
 	}
 }
