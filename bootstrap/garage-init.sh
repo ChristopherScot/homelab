@@ -67,6 +67,10 @@ g_try() { kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>/dev/null; }
 g() {
   local err rc
   err="$(mktemp)"
+  # RETURN rather than a bare rm at the end: this also fires on the
+  # set -e abort path, so an interrupted run does not leave the temp
+  # file behind. SIGKILL still leaks it; nothing can catch that.
+  trap 'rm -f "$err"' RETURN
   # `|| rc=$?` and not a bare call: under set -e a failing command
   # inside a function aborts the script immediately, so the handler
   # below would never run and the error would be discarded - which is
@@ -77,7 +81,6 @@ g() {
     echo "FATAL: garage $* failed (exit $rc):" >&2
     cat "$err" >&2
   fi
-  rm -f "$err"
   return "$rc"
 }
 
