@@ -124,7 +124,9 @@ spec:
             # Claude subscription tokens, shared with the desloppify pod
             # from kv/claude-pods/claude. preflight_credential prefers
             # these over ~/.claude/.credentials.json, which is the file
-            # that keeps arriving blanked with expiresAt=0.
+            # that keeps arriving blanked with expiresAt=0. entrypoint.sh
+            # is what calls it; it did not until 2026-11-12, so this
+            # mount sat unread and every RC session said "Not logged in".
             - name: claude-oauth
               mountPath: /run/secrets/claude
               readOnly: true
