@@ -81,3 +81,27 @@ and the number of Longhorn/NFS mounts it holds — which should be zero.
   not free. An ephemeral worker starts cold.
 - **Transcripts.** `.claude/projects` is ~79MB of session history. A
   resumed card currently has it; an ephemeral worker would not.
+
+## Remote Control naming, resolved
+
+Listed above as undecided; it is not. `claude --remote-control` has a
+second flag the current entrypoint does not use:
+
+```
+--remote-control-session-name-prefix <prefix>
+    Prefix for auto-generated Remote Control session names
+    (default: hostname)
+```
+
+The default prefix is the **hostname**, which in a StatefulSet is the
+pod name. So a worker's session self-labels as `claude-worker-0`
+without anyone maintaining a role table, and the ordinal is enough to
+tell two live sessions apart.
+
+What this does *not* give you is which card a worker is working. The
+name is fixed when the RC process starts, and that process runs under
+`while true; do claude --remote-control ...; done`, so changing it
+means killing the loop and dropping any attached connection. Naming a
+session after its current card is therefore not free, and is probably
+not worth it: the card is visible on the Kaneo board, and the session
+list only needs to answer "which worker is this".
