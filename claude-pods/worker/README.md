@@ -96,6 +96,12 @@ kubectl get secret garage-rpc -n garage
 #    after step 3 until the policy is widened - and widening it for one
 #    path leaves the seed job failing for the reason you just fixed for
 #    the other. That role is not managed by bootstrap/vault-policies.sh.
+#
+#    Widen the POLICY's contents, not the role's allowed_policies.
+#    Policy contents are evaluated per request and take effect on the
+#    next reconcile; a role property change is frozen at token-creation
+#    time and silently does nothing for up to the 1h ttl - which looks
+#    exactly like "the policy did not work".
 ```
 
 ## Then the PoC proves the model
@@ -154,11 +160,18 @@ being a StatefulSet.
   `pod0-author` naming that tells you which agent is doing what would
   be lost. Either name the session after the card it picked up, or keep
   one long-lived pod for attaching that never does stage work.
-- **Interactive work in a worker.** The go-build cache above is the
-  symptom: these pods are also where hand work happens, and an
-  ephemeral worker is a bad place for that. Whether the pool keeps one
-  long-lived pod for interactive use is a separate decision from how
-  stages run.
+- **The go-build cache.** 1.4GB per session pod, and a real cost. The
+  stage scripts do not invoke `go` themselves, which is why an earlier
+  version of this file wrongly concluded the cache was only from
+  interactive use - but the prompts they render do: `author.md` and
+  `review.md` both say `go test ./...`, `test.md` says to build and run
+  it, and `prompts/nightly-settings.json` allow-lists `Bash(go:*)`
+  precisely so those calls do not stop for an approval nobody is there
+  to give. An ephemeral worker on a Go repo starts cold.
+- **Interactive work in a worker.** Separately from the cache: these
+  pods are also where hand work happens, and an ephemeral worker is a
+  bad place for that. Whether the pool keeps one long-lived pod for
+  interactive use is a different decision from how stages run.
 
   Note the repo clones are NOT a concern, which was not obvious: a
   session pod carries 32 full clones (153MB), but a worker only needs
@@ -179,11 +192,7 @@ not rest on assumption:
   `/workspace/<repo>` (which a worker clones). So an ephemeral worker
   with no persistent home can run them unchanged - this was the last
   structural unknown.
-- **The go-build cache is not a cost of this change.** Listed below as
-  a loss; it is not. None of the three stage scripts invokes go at all,
-  so the 1.4GB in a session pod's ~/.cache/go-build comes from
-  interactive work, not from the automated stages. An ephemeral worker
-  running a stage never needed it.
+
 - **Workers can be interchangeable.** See the podWorksRepo note above.
 - **Cloning on demand beats carrying clones.** 1s and 3.2MB shallow,
   against 153MB of warm clones per pod.
