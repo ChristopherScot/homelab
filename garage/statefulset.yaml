@@ -14,9 +14,22 @@
 # Single node, replication_factor 1. Garage's docs warn that this gives
 # no redundancy and is not for production data, which is the right
 # trade here: everything in it is reference material seeded by hand and
-# re-seedable in seconds. Longhorn replicates the underlying volume
-# anyway (numberOfReplicas 2), so a disk loss is survivable even though
-# Garage itself keeps one copy.
+# re-seedable in seconds.
+#
+# Be precise about what survives a disk loss, because the two volumes
+# differ and the weaker one is the one that matters. data-garage-0 is
+# on longhorn (numberOfReplicas 2). meta-garage-0 is on
+# longhorn-single-ssd, which is numberOfReplicas 1 - a single replica,
+# on the same node the pod runs on. Meta holds the bucket, the alias,
+# the access key and its grant, and the object-to-block mappings, so
+# the replicated data volume is unreadable without it.
+#
+# Recovery from a meta loss is therefore not "Longhorn has a copy": it
+# is re-run bootstrap/garage-init.sh and re-upload. That mints a NEW
+# access key, which makes kv/garage/s3-reference stale - every worker
+# fails to authenticate until Vault is re-seeded. Both volumes are in
+# Longhorn's default recurring-job group, so there are daily snapshots
+# and weekly backups to fall back on first.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:

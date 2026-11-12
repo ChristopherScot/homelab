@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time Garage bootstrap: cluster layout, bucket, access key.
+# One-time Garage bootstrap: cluster layout, bucket, access keys.
 #
 # Garage starts with NO ROLE ASSIGNED and stays that way until a layout
 # is applied. Nothing in the manifests can do this - it is a cluster
@@ -25,7 +25,12 @@ set -euo pipefail
 NS="${GARAGE_NS:-garage}"
 POD="${GARAGE_POD:-garage-0}"
 BUCKET="${GARAGE_BUCKET:-claude-reference}"
-KEY="${GARAGE_KEY:-claude-worker}"
+# Two keys, deliberately. Workers get read-only: they all share one
+# bucket, so an RW credential would let a buggy or compromised worker
+# overwrite the books every other worker boots from. Object storage
+# gives read isolation structurally; write isolation needs this.
+KEY_RO="${GARAGE_KEY_RO:-claude-worker}"
+KEY_RW="${GARAGE_KEY_RW:-claude-seed}"
 ZONE="${GARAGE_ZONE:-home}"
 # Gi, not G: this must track the data PVC in garage/statefulset.yaml,
 # and 10G (decimal) against a 10Gi (binary) volume made garage advertise
@@ -75,19 +80,33 @@ else
   echo "bucket: $BUCKET created"
 fi
 
-# 3. Key, and its grant on the bucket.
-if g key info "$KEY" >/dev/null 2>&1; then
-  echo "key: $KEY exists"
-else
-  g key create "$KEY" >/dev/null
-  echo "key: $KEY created"
-fi
-g bucket allow --read --write "$BUCKET" --key "$KEY" >/dev/null
-echo "grant: $KEY has RW on $BUCKET"
+# 3. Keys, and their grants on the bucket. The grants are declarative,
+#    so re-applying repairs one that drifted.
+for k in "$KEY_RO" "$KEY_RW"; do
+  if g key info "$k" >/dev/null 2>&1; then
+    echo "key: $k exists"
+  else
+    g key create "$k" >/dev/null
+    echo "key: $k created"
+  fi
+done
+# deny --write then allow --read, because allow only ADDS: running
+# `allow --read` against a key that already had RW leaves it RW while
+# the script cheerfully reports "has R". Asserting both directions
+# makes the grant declarative, so this also downgrades a key that was
+# created RW by an earlier version of this script.
+g bucket deny --write "$BUCKET" --key "$KEY_RO" >/dev/null 2>&1 || true
+g bucket allow --read "$BUCKET" --key "$KEY_RO" >/dev/null
+echo "grant: $KEY_RO has R on $BUCKET"
+g bucket allow --read --write "$BUCKET" --key "$KEY_RW" >/dev/null
+echo "grant: $KEY_RW has RW on $BUCKET"
 
 echo
 echo "=== credentials - put these in Vault, then delete this output ==="
-g key info "$KEY" --show-secret | grep -iE '^(Key ID|Secret key):'
-echo
+echo "--- $KEY_RO (read-only; this is the one workers get) ---"
+g key info "$KEY_RO" --show-secret | grep -iE '^(Key ID|Secret key):'
 echo "  vault kv put kv/garage/s3-reference \\"
 echo "    access-key-id=<Key ID> secret-access-key=<Secret key>"
+echo
+echo "--- $KEY_RW (read-write; for seeding only, keep it out of the pods) ---"
+g key info "$KEY_RW" --show-secret | grep -iE '^(Key ID|Secret key):'
