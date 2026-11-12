@@ -66,6 +66,27 @@ and left nothing attached when it exited.
 The remaining steps below are about moving the credentials into Vault.
 The storage model itself no longer needs proving.
 
+### Startup, measured
+
+Dropping the PVCs is also the startup win, which was not an expected
+benefit:
+
+| | session pod (2 PVCs) | worker (none) |
+|---|---|---|
+| scheduled -> volumes attached | ~10s | - |
+| volumes attached -> container started | **~28s** | - |
+| scheduled -> container started | 41s total | **same second** |
+| reference pull | - | 7s |
+
+A session pod spends roughly 28 seconds attaching two Longhorn volumes
+before its container starts. The PoC worker, with no
+PersistentVolumeClaims, was scheduled and started in the same second.
+Both volumes are already single-replica and node-local, so this is
+Longhorn engine startup rather than a remote attach - which is why it
+cannot be tuned away, only avoided.
+
+Net: about 41s of startup becomes about 8s, pull included.
+
 ## The remaining step
 
 Garage mints the S3 key, so it cannot be generated ahead of time:
