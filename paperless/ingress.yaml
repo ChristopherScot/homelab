@@ -44,8 +44,11 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: paperless-web
-                port: {number: 80}
+                # KEDA HTTP interceptor (scale-to-zero), not the app's
+                # own Service — see scale-to-zero.yaml. 8080 is the
+                # interceptor's port; paperless-web still serves 80.
+                name: keda-http-interceptor
+                port: {number: 8080}
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -69,5 +72,8 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: paperless-web
-                port: {number: 80}
+                # Through the interceptor too — the auth-exempt API path
+                # must be able to wake the app; /api is listed on the
+                # route's paths (scale-to-zero.yaml).
+                name: keda-http-interceptor
+                port: {number: 8080}

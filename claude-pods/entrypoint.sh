@@ -27,7 +27,8 @@ chmod 600 "$HOME/.git-credentials" 2>/dev/null || true
 # Authenticate the gh CLI into its own store (~/.config/gh/hosts.yml).
 #
 # Exporting GH_TOKEN from a $ZSH_CUSTOM drop-in only works in an
-# INTERACTIVE shell. The nightly CronJobs invoke scripts via `sh -c`, and
+# INTERACTIVE shell. The dispatcher's kubectl exec (and the retired
+# nightly CronJobs before it) invokes scripts via `sh -c`, and
 # Claude itself shells out non-interactively, so neither saw the token and
 # every `gh` call came back "not logged into any GitHub hosts" — while a
 # human attaching to the pod saw it working fine.

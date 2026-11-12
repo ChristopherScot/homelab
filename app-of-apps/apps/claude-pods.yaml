@@ -5,6 +5,31 @@ metadata:
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # Track :latest by DIGEST, not by tag string. Kubernetes only
+    # re-pulls when the image ref changes, so a bare :latest never
+    # rolled on its own: a pod that started seconds before a build
+    # finished ran pre-merge code until someone bounced it by hand.
+    # The updater resolves :latest to its digest and writes it to this
+    # Application's spec.source.kustomize.images; the pod template
+    # changes, the workloads roll, and the kubelet pulls because the
+    # ref is new. Every other start is a node-cache hit: the refs are
+    # IfNotPresent rather than Always because Always went to ghcr on
+    # every start, and one dispatcher wake hung 31 minutes on a stalled
+    # pull.
+    argocd-image-updater.argoproj.io/image-list: claude-pod=ghcr.io/christopherscot/claude-pod:latest
+    argocd-image-updater.argoproj.io/claude-pod.update-strategy: digest
+    # The image is private. Without this the updater's registry poll
+    # 401s and nothing ever updates; apps with public images need no
+    # pull-secret annotation. The updater's own RBAC only reaches
+    # secrets in the argocd namespace, so claude-pods/rbac.yaml grants
+    # it get on this one secret.
+    argocd-image-updater.argoproj.io/claude-pod.pull-secret: pullsecret:claude-pods/ghcr-pull
+    # The digest lives on the live Application, not in git - the house
+    # pattern from apps/_homelabctl-services.yaml, kept for the same
+    # reasons. The root app-of-apps ignores this field so selfHeal does
+    # not revert it.
+    argocd-image-updater.argoproj.io/write-back-method: argocd
 spec:
   project: default
   source:

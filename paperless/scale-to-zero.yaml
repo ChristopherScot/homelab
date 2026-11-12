@@ -1,0 +1,230 @@
+# Scale-to-zero for paperless and its sync-trigger via the KEDA HTTP
+# add-on (mechanism: arr-stack/_shared/keda-http-interceptor.yaml;
+# cold-start page pattern: arr-stack/raw/shelfmark/scale-to-zero.yaml).
+#
+# Paperless CAN sleep because its scheduled work is already outside the
+# pod: mail ingestion is the 08:00 CronJob POSTing over HTTP
+# (mail-ingest-script.yaml), and that POST now rides the paperless-wake
+# alias below — the morning ingest IS the wake. What stays inside the
+# pod is celery's housekeeping (classifier training, index
+# optimization); those run while awake and catch up on wake, which is
+# the accepted trade. Redis stays always-on: paperless won't boot
+# without it, and it's 32Mi.
+#
+# The one residual risk: document processing (OCR) runs in this same
+# pod and is NOT traffic, so a doc uploaded right before an idle
+# stretch could be killed mid-OCR by scale-down. cooldownPeriod is an
+# hour — four times shelfmark's — to make that window hard to hit;
+# paperless re-processes an unfinished doc on next wake regardless.
+apiVersion: v1
+kind: Service
+metadata:
+  name: keda-http-interceptor
+  namespace: paperless
+spec:
+  type: ExternalName
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # Dedicated alias for in-cluster callers (the mail-ingest CronJob):
+  # they can't set a Host header, so the hostname they dial is what the
+  # route matches on. Same pattern as jellyseerr-wake in media.
+  name: paperless-wake
+  namespace: paperless
+spec:
+  type: ExternalName
+  externalName: keda-add-ons-http-interceptor-proxy.keda.svc.cluster.local
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: paperless-waking-page
+  namespace: paperless
+  labels:
+    # Without this label the interceptor refuses to serve the ConfigMap
+    # as a response body.
+    http.keda.sh/response-body: "true"
+data:
+  index.html: |
+    <!doctype html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>Paperless</title>
+      <style>
+        :root { color-scheme: light dark; }
+        body {
+          margin: 0; min-height: 100vh; display: grid; place-items: center;
+          font-family: system-ui, sans-serif;
+          background: light-dark(#f4f6f3, #171a16); color: light-dark(#32402e, #d2dccd);
+        }
+        .card { text-align: center; padding: 2rem; }
+        .doc { font-size: 3rem; display: inline-block; animation: shuffle 1.6s ease-in-out infinite; }
+        @keyframes shuffle { 0%,100% { transform: translateX(0); } 50% { transform: translateX(8px); } }
+        h1 { font-size: 1.3rem; font-weight: 600; margin: 1rem 0 0.4rem; }
+        p { margin: 0; opacity: 0.7; font-size: 0.95rem; }
+      </style>
+    </head>
+    <body>
+      <div class="card">
+        <span class="doc">&#128196;</span>
+        <h1>Paperless is waking up</h1>
+        <p>It was asleep to save power. Under a minute &mdash; this page refreshes itself.</p>
+      </div>
+    </body>
+    </html>
+---
+# Hosts and paths are coupled to ingress.yaml (both the gated / and the
+# auth-exempt /api Ingresses route here): an entry missing here never
+# wakes the app. Browser traffic only — the wake alias has its own
+# route below, because the placeholder here is served to EVERY request
+# on the route while the pod starts, and the mail-ingest script must
+# get a held request, not a 503 HTML page its raise_for_status reads
+# as failure.
+apiVersion: http.keda.sh/v1beta1
+kind: InterceptorRoute
+metadata:
+  name: paperless
+  namespace: paperless
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  target:
+    service: paperless-web
+    port: 80
+  rules:
+    - hosts:
+        - paperless.home.chrisscotmartin.com
+      paths:
+        - value: /
+        - value: /api
+  scalingMetric:
+    requestRate:
+      targetValue: 100
+  coldStart:
+    placeholder:
+      response:
+        bodyFromConfigMap:
+          name: paperless-waking-page
+          key: index.html
+        headers:
+          Refresh: "5"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: paperless
+  namespace: paperless
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: paperless
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  # An hour, not shelfmark's 15 minutes: OCR after an upload is in-pod
+  # work the interceptor can't see (header comment).
+  cooldownPeriod: 3600
+  # One trigger per route: KEDA ORs them, so traffic on either the
+  # browser route or the wake-alias route scales the app up and keeps
+  # it awake.
+  triggers:
+    - type: external-push
+      metadata:
+        scalerAddress: keda-add-ons-http-external-scaler.keda:9090
+        interceptorRoute: paperless
+    - type: external-push
+      metadata:
+        scalerAddress: keda-add-ons-http-external-scaler.keda:9090
+        interceptorRoute: paperless-wake
+---
+# The mail-ingest CronJob's route: same target, NO coldStart block, so
+# the 08:00 POST is held until paperless is ready and then answered for
+# real — a 503 waking page would be swallowed by the script's per-key
+# error handling and read as a green run that ingested nothing.
+#
+# The host matches what the script dials. It dials :8080, so the Host
+# header arrives port-suffixed — verified against the live interceptor
+# (curl with "Host: <host>:8080" matched identically to the bare host):
+# the interceptor strips the port before matching.
+apiVersion: http.keda.sh/v1beta1
+kind: InterceptorRoute
+metadata:
+  name: paperless-wake
+  namespace: paperless
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  target:
+    service: paperless-web
+    port: 80
+  rules:
+    - hosts:
+        - paperless-wake.paperless.svc.cluster.local
+      paths:
+        - value: /
+  scalingMetric:
+    requestRate:
+      targetValue: 100
+---
+# The sync-trigger is the simple case: reached only through its own
+# Ingress (a GET fires the import job), calls nothing that minds it
+# sleeping. Tapping its bookmark while asleep shows the waking page,
+# and the refresh re-issues the GET — so the tap still fires the job,
+# just ~30s later. Single-fire: each pre-ready GET is answered by the
+# placeholder and closed (nothing left to forward), so only the first
+# post-ready GET reaches the app — the Refresh loop in front of a
+# side-effecting GET does not double-fire.
+apiVersion: http.keda.sh/v1beta1
+kind: InterceptorRoute
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  target:
+    service: paperless-sync-trigger
+    port: 80
+  rules:
+    - hosts:
+        - paperless-sync.home.chrisscotmartin.com
+      paths:
+        - value: /
+  scalingMetric:
+    requestRate:
+      targetValue: 100
+  coldStart:
+    placeholder:
+      response:
+        bodyFromConfigMap:
+          name: paperless-waking-page
+          key: index.html
+        headers:
+          Refresh: "5"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: paperless-sync-trigger
+  namespace: paperless
+  annotations:
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: paperless-sync-trigger
+  minReplicaCount: 0
+  maxReplicaCount: 1
+  cooldownPeriod: 900
+  triggers:
+    - type: external-push
+      metadata:
+        scalerAddress: keda-add-ons-http-external-scaler.keda:9090
+        interceptorRoute: paperless-sync-trigger

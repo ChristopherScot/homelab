@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# Regression test for issue #59: the three nightly scripts each carried
+# Regression test for issue #59: the three stage scripts each carried
 # their own copy of pick_model, render_prompt, cred_ok,
 # preflight_credential, the GitHub token check and the Loki tee, and the
 # copies drifted — a fix landed in one pod and not the others. They now
-# share lib/nightly-common.sh. This checks that the sharing is real:
+# share lib/pod-common.sh. This checks that the sharing is real:
 #
 #   1. the library sources cleanly and silently, and defines every
 #      function the scripts call;
-#   2. each entry point sources NIGHTLY_LIB before doing anything else,
+#   2. each entry point sources POD_LIB before doing anything else,
 #      so a fix in the library reaches all three pods;
 #   3. no entry point still carries a private copy of a library function
 #      or of the tee block;
 #   4. the image places the library where the scripts' default
-#      NIGHTLY_LIB points.
+#      POD_LIB points.
 #
-# Run: claude-pods/tests/nightly-common.sh
+# Run: claude-pods/tests/pod-common.sh
 set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 pods="$here/.."
-lib="$pods/lib/nightly-common.sh"
-scripts=(nightly-author.sh nightly-test.sh nightly-merge.sh)
+lib="$pods/lib/pod-common.sh"
+scripts=(stage-author.sh stage-test.sh stage-merge.sh)
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
@@ -40,7 +40,8 @@ done
 #    updating the scripts is exactly what should fail.
 out=$(bash -uo pipefail -c '
   source "$1" || exit 1
-  for fn in pick_model render_prompt log_to require_gh_token cred_ok preflight_credential; do
+  for fn in pick_model render_prompt log_to require_gh_token preflight_credential \
+            use_claude_account claude_rate_limited run_with_account_failover; do
     declare -F "$fn" >/dev/null || { echo "missing $fn"; exit 1; }
   done
   [ -n "${MODEL:-}" ] && [ -n "${PROMPT_DIR:-}" ] && [ -n "${STATE_DIR:-}" ] && [ -n "${OWNER:-}" ] \
@@ -63,10 +64,10 @@ out=$(bash -uo pipefail -c '
 #    builtins runs before the library is sourced.
 printf '%s\n' 'echo "sourced by ${0##*/}"' 'exit 0' > "$tmp/stub.sh"
 for s in "${scripts[@]}"; do
-  out=$(env -i NIGHTLY_LIB="$tmp/stub.sh" PATH=/nonexistent "$BASH" "$pods/$s" 2>&1)
+  out=$(env -i POD_LIB="$tmp/stub.sh" PATH=/nonexistent "$BASH" "$pods/$s" 2>&1)
   rc=$?
   [ "$rc" -eq 0 ] && [ "$out" = "sourced by $s" ] \
-    || fail "$s did not source NIGHTLY_LIB before doing anything else (rc=$rc): $out"
+    || fail "$s did not source POD_LIB before doing anything else (rc=$rc): $out"
 done
 
 # 3. No private copies left behind: that is the drift the issue is about.
@@ -79,14 +80,14 @@ for s in "${scripts[@]}"; do
   grep -q '/proc/1/fd/1' "$pods/$s" && fail "$s still carries its own copy of the Loki tee block"
 done
 
-# 4. The default NIGHTLY_LIB in each script is a path the image populates.
+# 4. The default POD_LIB in each script is a path the image populates.
 for s in "${scripts[@]}"; do
-  default=$(sed -nE 's/.*NIGHTLY_LIB:-([^}]+)\}.*/\1/p' "$pods/$s" | head -1)
-  [ -n "$default" ] || fail "$s has no NIGHTLY_LIB default"
+  default=$(sed -nE 's/.*POD_LIB:-([^}]+)\}.*/\1/p' "$pods/$s" | head -1)
+  [ -n "$default" ] || fail "$s has no POD_LIB default"
   [ "$(basename "$default")" = "$(basename "$lib")" ] \
-    || fail "$s defaults NIGHTLY_LIB to $default, not to $(basename "$lib")"
+    || fail "$s defaults POD_LIB to $default, not to $(basename "$lib")"
   grep -qE "^COPY lib/ +$(dirname "$default")/?$" "$pods/Dockerfile" \
     || fail "Dockerfile does not COPY lib/ to $(dirname "$default"), where $s looks for it"
 done
 
-echo "PASS: lib/nightly-common.sh sources cleanly, all three nightly scripts source it first, none keeps a private copy, and the image ships it where they look"
+echo "PASS: lib/pod-common.sh sources cleanly, all three stage scripts source it first, none keeps a private copy, and the image ships it where they look"

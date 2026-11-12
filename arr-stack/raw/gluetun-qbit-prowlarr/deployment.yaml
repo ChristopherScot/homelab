@@ -212,6 +212,16 @@ spec:
               # If gluetun's healthcheck server isn't responding the tunnel is
               # likely dead. Pod gets restarted and qBit/Prowlarr ride along.
               command: ["/gluetun-entrypoint", "healthcheck"]
+            # The probe dials out THROUGH the tunnel, so it cannot pass until
+            # WireGuard is up. Without a delay it starts dialing while gluetun
+            # is still bringing the interface up, and the three failures land
+            # before the tunnel does: gluetun logs "firewall enabled", then
+            # takes SIGTERM ~85s later having never finished connecting, and
+            # the restart begins the same race one container generation later.
+            # That is what the 2026-11-09 node migration triggered. 120s is
+            # past a cold WireGuard handshake while still well under the
+            # 90s-of-failures it takes to call a live tunnel dead.
+            initialDelaySeconds: 120
             periodSeconds: 30
             failureThreshold: 3
             # 5s, not the 1s default. The check is a TCP+TLS dial to
@@ -501,7 +511,7 @@ spec:
       volumes:
         - name: gluetun-config
           persistentVolumeClaim:
-            claimName: gluetun-config
+            claimName: gluetun-config-longhorn
         - name: gluetun-auth-template
           configMap:
             name: gluetun-auth-template
@@ -509,7 +519,7 @@ spec:
           emptyDir: {}
         - name: qbittorrent-config
           persistentVolumeClaim:
-            claimName: qbittorrent-config
+            claimName: qbittorrent-config-longhorn
         - name: prowlarr-config
           persistentVolumeClaim:
             claimName: prowlarr-config-longhorn

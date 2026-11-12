@@ -8,7 +8,9 @@ metadata:
     # qbit/prowlarr config land without manual rollout.
     reloader.stakater.com/auto: "true"
 spec:
-  replicas: 1
+  # No replicas: field — KEDA scales this between 0 and 1 (see
+  # scale-to-zero.yaml), and a value here would make Argo selfHeal
+  # fight it back on every sync.
   strategy:
     type: Recreate
   selector:
@@ -39,30 +41,45 @@ spec:
         # it into the matching /config/plugins/<name>.json. UI-managed
         # keys in those files are preserved — only the keys we explicitly
         # set are overwritten.
+        #
+        # Runs in the app's own image, not alpine + `apk add jq`:
+        # scale-to-zero makes this run on every wake, and apk made waking
+        # depend on the Alpine CDN being reachable. The image ships
+        # python3, and it's the same image the main container needs, so a
+        # wake pulls nothing extra.
         - name: merge-settings
-          image: alpine:3.20
+          image: ghcr.io/calibrain/shelfmark:latest
+          imagePullPolicy: IfNotPresent
           command:
-            - sh
+            - python3
             - -c
             - |
-              set -eu
-              apk add --no-cache jq >/dev/null
-              mkdir -p /config/plugins
-              for src in /managed/*.json; do
-                name=$(basename "$src")
-                # settings.json is shelfmark's top-level config; every
-                # other managed file is a per-tab plugin. METADATA_PROVIDER
-                # lives in the former, and merging it into plugins/ would
-                # write a file the app never reads - which looks exactly
-                # like the setting not working.
-                case "$name" in
-                  settings.json) dst="/config/$name" ;;
-                  *)             dst="/config/plugins/$name" ;;
-                esac
-                [ -f "$dst" ] || echo '{}' > "$dst"
-                jq -s '.[0] * .[1]' "$dst" "$src" > "$dst.new"
-                mv "$dst.new" "$dst"
-              done
+              # merge() is jq's `*`: recurse where both sides are objects,
+              # the managed value wins otherwise.
+              import glob, json, os
+              def merge(a, b):
+                  for k, v in b.items():
+                      a[k] = merge(a[k], v) if isinstance(v, dict) and isinstance(a.get(k), dict) else v
+                  return a
+              os.makedirs('/config/plugins', exist_ok=True)
+              for src in sorted(glob.glob('/managed/*.json')):
+                  name = os.path.basename(src)
+                  # settings.json is shelfmark's top-level config; every
+                  # other managed file is a per-tab plugin. METADATA_PROVIDER
+                  # lives in the former, and merging it into plugins/ would
+                  # write a file the app never reads - which looks exactly
+                  # like the setting not working.
+                  dst = '/config/' + name if name == 'settings.json' else '/config/plugins/' + name
+                  try:
+                      with open(dst) as f:
+                          cur = json.load(f)
+                  except FileNotFoundError:
+                      cur = {}
+                  with open(src) as f:
+                      managed = json.load(f)
+                  with open(dst + '.new', 'w') as f:
+                      json.dump(merge(cur, managed), f)
+                  os.replace(dst + '.new', dst)
           volumeMounts:
             - name: config
               mountPath: /config
@@ -72,6 +89,13 @@ spec:
       containers:
         - name: shelfmark
           image: ghcr.io/calibrain/shelfmark:latest
+          # :latest implies Always, which contacts ghcr on every wake and
+          # won't start from cache when ghcr is unreachable. IfNotPresent
+          # makes waking offline-safe; the cost is that image updates need
+          # an explicit refresh (rollout after clearing the cached image,
+          # or a reschedule to a fresh node) instead of landing on every
+          # pod start.
+          imagePullPolicy: IfNotPresent
           env:
             - name: PUID
               value: "0"

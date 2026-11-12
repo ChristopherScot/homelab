@@ -52,6 +52,22 @@ if ! mkdir -p "$STATE_DIR"; then
   exit 1
 fi
 
+# Probe that the log path actually holds writes before redirecting into
+# it. On a freshly woken pod the volume's first writes can flicker: the
+# 2026-11-10 03:00 run got ENOENT opening this exact path sixteen lines
+# after its mkdir succeeded, and died with the redirection as its only
+# witness. Retrying beats dying - the flicker was gone minutes later.
+_tries=0
+until touch "$LOG" 2>/dev/null; do
+  _tries=$((_tries + 1))
+  if [ "$_tries" -ge 5 ]; then
+    echo "FATAL: cannot write $LOG after $_tries attempts" >&2
+    exit 1
+  fi
+  sleep 3
+  mkdir -p "$STATE_DIR" 2>/dev/null || true
+done
+
 # Write to the file, then copy it to pid 1 on the way out, rather than
 # teeing through a process substitution. `exec > >(tee ...)` leaves the
 # substitution's stdin open with nothing to close it under `kubectl
@@ -78,14 +94,15 @@ GH_TOKEN="$(cat /run/secrets/desloppify/token 2>/dev/null)"
 export GH_TOKEN
 if [ -z "$GH_TOKEN" ]; then echo "FATAL: no GitHub token"; exit 1; fi
 
-CLAUDE_CODE_OAUTH_TOKEN="$(cat /run/secrets/claude/oauth-token 2>/dev/null)"
-export CLAUDE_CODE_OAUTH_TOKEN
-if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
-  echo "FATAL: no Claude OAuth token"; exit 1
-fi
-# Either of these silently outranks the OAuth token and bills the API
-# account per token.
-unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
+# Work account first, personal held in reserve. A rate limit is per
+# account and ends a run in under two seconds with no tool calls and no
+# cost, so retrying on the other one is cheap and the night survives.
+# use_claude_account also clears the API-key variables: either of them
+# silently outranks the OAuth token and bills per token against the API
+# account instead of the subscription.
+# shellcheck source=../claude-pods/lib/claude-account.sh
+. "${CLAUDE_ACCOUNT_LIB:-/usr/local/share/claude-pods/lib/claude-account.sh}"
+preflight_credential || exit 1
 
 # The token must not be able to reach main even if everything else fails.
 # A fine-grained PAT without Administration cannot read protection; an
@@ -132,32 +149,62 @@ if ! git -C "$dir" rev-parse --verify --quiet "origin/$INTEGRATION_BRANCH" >/dev
   git -C "$dir" fetch --quiet origin || exit 1
 fi
 
-# Stack on the last night's work. PRs are left open for review, so
-# cutting each night from the integration branch would hand every run
-# the same base and make the second one conflict with the first.
-base_ref="origin/$INTEGRATION_BRANCH"
-base_pr=""
-prev=$(gh pr list --repo "$REPO" --base "$INTEGRATION_BRANCH" --state open \
-         --json number,headRefName,createdAt \
-         --jq '[.[] | select(.headRefName | startswith("desloppify/"))]
-               | sort_by(.createdAt) | last | "\(.number) \(.headRefName)"' 2>/dev/null)
-if [ -n "$prev" ] && [ "$prev" != "null" ]; then
-  base_pr="${prev%% *}"
-  prev_branch="${prev##* }"
-  if git -C "$dir" rev-parse --verify --quiet "origin/$prev_branch" >/dev/null; then
-    base_ref="origin/$prev_branch"
-    echo "stacking on PR #$base_pr ($prev_branch)"
-  else
-    echo "PR #$base_pr names a branch that is gone; basing on $INTEGRATION_BRANCH"
-  fi
-else
-  echo "no open desloppify PR; basing on $INTEGRATION_BRANCH"
-fi
-
+# Stack on the last night's work with gh-stack. PRs are left open for
+# review, so cutting each night from the integration branch would hand
+# every run the same base and make the second one conflict with the first.
+#
+# This used to hand-roll it: find the newest open desloppify PR, then
+# `git checkout -B new origin/that-branch`. That produced branches shaped
+# like a stack that GitHub did not know were one, so none of the stack
+# commands worked on them. In particular nothing retargeted the PRs above
+# one that merged -- GitHub only retargets on merge, never on close, and
+# a PR left based on a closed branch cannot be merged at all. homelab#64
+# sat unmergeable for ten days for exactly that reason.
+#
+# --base keeps the trunk at the integration branch. main is never the
+# trunk and never a base; the guard above refuses the run if this token
+# can even see main's protection settings.
 branch="desloppify/webapp-$(date +%Y%m%d-%H%M)"
-git -C "$dir" checkout --quiet -B "$branch" "$base_ref" || exit 1
+
+# checkout finds the stack CONTAINING a branch, and the trunk is not a
+# member of its own stack - so look up the newest open desloppify PR and
+# check that out instead. Any member reaches the whole stack.
+prev_pr=$(gh pr list --repo "$REPO" --base "$INTEGRATION_BRANCH" --state open \
+            --json number,headRefName,createdAt \
+            --jq '[.[] | select(.headRefName | startswith("desloppify/"))]
+                  | sort_by(.createdAt) | last | .number' 2>/dev/null)
+
+# gh stack has no -C; it acts on the repo in the current directory, and
+# this script otherwise never leaves its starting cwd (every git call
+# passes -C "$dir"). So each of these runs in a subshell that cd's first.
+if [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
+   && (cd "$dir" && gh stack checkout "$prev_pr" >/dev/null 2>&1); then
+  echo "found the existing stack via PR #$prev_pr"
+  # Not a warning. sync is what rebases the stack onto its trunk, and
+  # building tonight's branch on an unsynced stack is the state #64 sat
+  # in for ten days. Keep the reason: a bare WARNING with no cause is
+  # what the morning log used to say.
+  if ! sync_err=$( (cd "$dir" && gh stack sync) 2>&1 ); then
+    echo "FATAL: gh stack sync failed; refusing to stack on it"
+    echo "$sync_err" | head -5
+    exit 1
+  fi
+  if ! add_err=$( (cd "$dir" && gh stack add "$branch") 2>&1 ); then
+    echo "FATAL: gh stack add $branch failed"
+    echo "$add_err" | head -5
+    exit 1
+  fi
+  echo "work branch: $branch (added to the stack)"
+else
+  if ! init_err=$( (cd "$dir" && gh stack init "$branch" \
+                      --base "$INTEGRATION_BRANCH") 2>&1 ); then
+    echo "FATAL: gh stack init failed"
+    echo "$init_err" | head -5
+    exit 1
+  fi
+  echo "work branch: $branch (new stack on $INTEGRATION_BRANCH)"
+fi
 git -C "$dir" clean -qfd
-echo "work branch: $branch (from origin/$INTEGRATION_BRANCH)"
 
 # desloppify keeps its queue in .desloppify. The clone is reset between
 # runs, so the real directory lives on the PVC and is linked in - that is
@@ -189,15 +236,60 @@ if ! command -v desloppify >/dev/null 2>&1; then
 fi
 
 report="$STATE_DIR/report-$(date +%Y%m%d-%H%M).json"
-"${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
-  --repo "$REPO" --dir "$dir" --branch "$branch" \
-  --integration-branch "$INTEGRATION_BRANCH" \
-  --state-dir "$STATE_DIR/webapp" \
-  --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
-  --max-cost "${DESLOP_MAX_COST_USD:-50}" \
-  --timeout "${DESLOP_TIMEOUT_S:-7200}" \
-  > "$report"
+
+# One attempt on the account currently selected, writing its report.
+# Agent directives fire at desloppify's own lifecycle transitions, which
+# is a better place for these than the prompt: triage fires exactly when
+# clustering happens, and execute fires as work starts, so the rule
+# arrives at the moment it applies rather than as one wall of text read
+# once at the beginning.
+#
+# Set here, not by hand on the pod, so they are version-controlled and a
+# rebuilt pod does not silently lose them. Both are idempotent.
+set_directives() (
+  cd "$dir" || return 0
+  desloppify directives set triage \
+    "Each cluster should be one systemic change that stands on its own as a PR. Merge clusters that are really the same change; split one that is two. A cluster of hundreds of items is not reviewable - carve off a coherent subset and leave the rest queued." \
+    >/dev/null 2>&1 || echo "WARNING: could not set the triage directive"
+  desloppify directives set execute \
+    "One cluster at a time. Finish it, commit it alone, then 'gh stack add' the next branch. One 'gh stack submit' at the end, never 'gh pr create'. Do not pass --open: these open as drafts for a human to read first. Same budget as always - the same work, in reviewable pieces." \
+    >/dev/null 2>&1 || echo "WARNING: could not set the execute directive"
+)
+set_directives
+
+run_once() {
+  "${DESLOPPIFY_VENV:-/opt/desloppify-venv}/bin/python" "$HERE/run.py" \
+    --repo "$REPO" --dir "$dir" --branch "$branch" \
+    --integration-branch "$INTEGRATION_BRANCH" \
+    --state-dir "$STATE_DIR/webapp" \
+    --audit "$STATE_DIR/audit-$(date +%Y%m%d).jsonl" \
+    --max-cost "${DESLOP_MAX_COST_USD:-50}" \
+    --timeout "${DESLOP_TIMEOUT_S:-7200}" \
+    > "$report"
+}
+
+# The signal is stop_reason, read with jq. Not a text match over the
+# whole report: it embeds strings the agent wrote - a denial detail or a
+# summary - and this repo has rate-limiting middleware, so "rate limit"
+# appears there for reasons that have nothing to do with the account.
+# Capturing stderr to look for it would also mix stderr into the JSON
+# this script parses.
+#
+# One retry, because there are two accounts - a loop would be designing
+# for a third that does not exist.
+run_once
 rc=$?
+if [ "$rc" -ne 0 ] \
+   && [ "$(jq -r '.stop_reason // ""' "$report" 2>/dev/null)" = "api_error_429" ]; then
+  if use_claude_account personal; then
+    echo "work account is rate limited; retrying on personal"
+    cp "$report" "${report%.json}-work-attempt.json" 2>/dev/null || true
+    run_once
+    rc=$?
+  else
+    echo "work account is rate limited and no personal token is mounted" >&2
+  fi
+fi
 echo "run rc=$rc report=$report"
 
 # One logfmt line per run. The report reaches Loki either way, but as
@@ -264,7 +356,17 @@ if git -C "$dir" diff --name-only "origin/$INTEGRATION_BRANCH"...HEAD 2>/dev/nul
   fi
 fi
 
-echo "PR #$pr is open against $INTEGRATION_BRANCH and was NOT merged"
-echo "  https://github.com/$REPO/pull/$pr"
+# One PR per cluster, so name every one of them. pr_number alone sent
+# the morning reader after the bottom of the stack while the rest of the
+# night's work sat unmentioned. report.py derives pr_number from
+# pr_numbers, so reaching here with a non-empty $pr means the list is
+# non-empty too -- no fallback branch to get stale.
+prs=$(jq -r '(.pr_numbers // [])[]' "$report" 2>/dev/null)
+echo "open against $INTEGRATION_BRANCH and NOT merged:"
+for n in $prs; do echo "  #$n  https://github.com/$REPO/pull/$n"; done
+# Non-interactive submit implies --auto, which opens new PRs as drafts
+# unless --open is passed -- and the policy refuses --open. Nothing
+# merges from a draft; a reviewer marks each ready.
+echo "  (drafts -- mark ready for review before merging)"
 
 echo "=== nightly-desloppify complete $(date -Is) ==="

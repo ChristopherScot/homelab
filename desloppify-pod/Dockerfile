@@ -7,6 +7,10 @@
 # ghcr.io/christopherscot/desloppify-pod:latest. To build a branch,
 # `gh workflow run desloppify-image.yml --ref <branch>`.
 #
+# Built from the repo root, not desloppify-pod/, so it can take
+# claude-pods/lib/claude-account.sh - one copy of the account
+# failover serving both images rather than two to keep in step.
+#
 # node, not python, as the base: desloppify's TypeScript detectors shell
 # out to npx, tsc, eslint, knip and vitest, and the agent runs `yarn lint`
 # against the code it just changed. Python is the easier of the two to add.
@@ -51,9 +55,13 @@ ENV PATH="/opt/desloppify-venv/bin:${PATH}"
 RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
     && npm cache clean --force
 
-COPY --chmod=755 nightly-desloppify.sh verify-token-scope.sh /usr/local/bin/
-COPY policy.py run.py /usr/local/share/desloppify-pod/
-COPY --chmod=755 git-hooks/ /usr/local/share/desloppify-pod/git-hooks/
+COPY --chmod=755 desloppify-pod/nightly-desloppify.sh desloppify-pod/verify-token-scope.sh /usr/local/bin/
+COPY desloppify-pod/policy.py desloppify-pod/report.py desloppify-pod/run.py /usr/local/share/desloppify-pod/
+# Account selection is shared with the session pods. Only this file, not
+# the rest of claude-pods/lib - the kubectl and Kaneo helpers there have
+# no use here.
+COPY claude-pods/lib/claude-account.sh /usr/local/share/claude-pods/lib/claude-account.sh
+COPY --chmod=755 desloppify-pod/git-hooks/ /usr/local/share/desloppify-pod/git-hooks/
 
 # Runs as the base image's node user. $HOME holds the Claude CLI's state
 # and is persisted on a PVC.

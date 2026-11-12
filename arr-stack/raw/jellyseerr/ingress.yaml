@@ -39,6 +39,9 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: jellyseerr
+                # KEDA HTTP interceptor (scale-to-zero), not the app's
+                # own Service — see scale-to-zero.yaml. 8080 is the
+                # interceptor's port; jellyseerr still serves 5055.
+                name: keda-http-interceptor
                 port:
-                  number: 5055
+                  number: 8080

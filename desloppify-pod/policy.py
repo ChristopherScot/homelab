@@ -53,7 +53,8 @@ ALLOWED: dict[str, set[str]] = {
         "cat-file", "for-each-ref", "config", "clean", "reset", "commit",
         "push", "rm", "mv", "apply", "symbolic-ref",
     },
-    "gh": {"pr", "issue", "label", "repo", "api", "search", "auth", "browse"},
+    "gh": {"pr", "issue", "label", "repo", "api", "search", "auth",
+           "browse", "stack"},
     "desloppify": set(),
     # Shell builtins and keywords. The table models binaries, so without
     # these a bare `cd` or the `for` opening a loop reads as an unknown
@@ -80,6 +81,186 @@ ALLOWED: dict[str, set[str]] = {
     "paste": set(), "tar": set(), "gzip": set(), "unzip": set(),
 }
 
+# A second level, for a namespace whose subcommands are not all safe.
+# Every other entry in ALLOWED names the subcommands it permits; `stack`
+# would otherwise be the one that admits a whole namespace, because
+# check_bash stops at the first level. gh-stack v0.2.0 ships 20
+# subcommands and is still a 0.x: enumerating the ones the runner's
+# prompt actually instructs means a version bump cannot widen this gate
+# without someone adding a line here. The refusals below are kept as
+# well, so a reader greping for `merge` finds the reason and not just
+# an absence.
+# sync is the sanctioned rebase path: it cascade-rebases onto updated
+# parents and force-pushes with --force-with-lease --atomic, which is
+# the capability `gh stack rebase` is refused for. The runner calls it
+# itself, and --force-with-lease bounds it to branches this pod owns; a
+# bare rebase has neither the lease nor the runner's sequencing.
+ALLOWED_SUB: dict[str, set[str]] = {
+    "gh stack": {"init", "add", "submit", "sync", "checkout", "view"},
+    # Same argument for `gh pr`: 18 verbs are exposed and the runner's
+    # prompt instructs a handful. Refusing the dangerous ones by name
+    # left `gh pr new` allowed -- gh's own documented alias for create,
+    # so _base_ok found no spec and skipped the base check entirely --
+    # while the suite reported green. Closing the namespace ends that
+    # class instead of adding one more name to it.
+    #
+    # ready and review are in: opening as drafts is a default the prompt
+    # states, not a boundary. Nothing merges from a draft either way,
+    # and barring the agent from ever marking one reviewable would stop
+    # a normal operation to enforce a preference. Only `submit --open`
+    # is refused, so the default holds without the capability being
+    # taken away.
+    #
+    # The verbs left out divide into two kinds, and only the first is a
+    # boundary: merge, close, reopen and revert change what is merged or
+    # orphan the PRs above them in a stack. checkout, lock, unlock and
+    # update-branch are simply unused -- add them if a run turns out to
+    # need one, rather than reading their absence as a prohibition.
+    "gh pr": {"create", "view", "list", "comment", "edit", "checks",
+              "diff", "status", "ready", "review"},
+}
+
+# gh's own command aliases, resolved to the canonical verb before any
+# per-verb lookup. A gate keyed on spelling is defeated by every synonym
+# the tool ships: `gh pr new` is documented as an alias for create, and
+# because _base_ok keys on ("pr", "create") it found no spec for ("pr",
+# "new") and skipped the base check -- so `gh pr new --base main` opened
+# a PR against main with the suite green. Canonicalising first means the
+# verb lists and BASE_FLAGS are keyed on capability, not on how it was
+# typed.
+VERB_ALIASES: dict[tuple[str, str, str], str] = {
+    ("gh", "pr", "new"): "create",
+}
+
+
+# gh flags that consume the following argument. Without this, every
+# gate guessing at "which word is the subcommand" reads a flag's value
+# as a positional: `gh pr --repo <repo> merge 5` looked like the
+# subcommand was the repo name, so `gh pr merge`'s refusal -- a regex
+# needing `pr` and `merge` adjacent -- never matched, and a squash-merge
+# was allowed. The flags are gh's, not a guess: --repo/-R, the base
+# flags, and the text flags the pod passes.
+VALUE_FLAGS: frozenset[str] = frozenset({
+    "--repo", "-R", "--base", "-B", "-b", "--head", "-H",
+    "--title", "-t", "--body", "--body-file", "-F", "--label", "-l",
+    "--assignee", "-a", "--reviewer", "-r", "--milestone", "-m",
+    "--project", "-p", "--template", "-T", "--json", "-q", "--jq",
+    "--template-file", "--limit", "-L", "--state", "-s", "--search",
+    "--author", "-A", "--comment-body", "--remote", "--stack",
+})
+
+
+def _positionals(argv: list[str]) -> list[str]:
+    """The positional words of a gh command, flag values excluded.
+
+    One parse, so every gate agrees on which word is the subcommand.
+    Three gates used to work this out separately -- a regex over the
+    raw string, a filtered word list, and an index of the first
+    non-flag argument -- and they disagreed: a flag placed before its
+    verb defeated the regex and fooled the word list, which is how
+    `gh pr --repo <repo> merge` reached the allow path.
+    """
+    words: list[str] = []
+    skip = False
+    for arg in argv:
+        if skip:
+            skip = False
+            continue
+        if arg == "--":
+            break
+        if arg.startswith("-"):
+            # `--flag=value` carries its value; a bare value flag eats
+            # the next argument.
+            if "=" not in arg and arg in VALUE_FLAGS:
+                skip = True
+            continue
+        words.append(arg)
+    return words
+
+
+def _canonical_verb(namespace: str, sub: str, verb: str) -> str:
+    """The canonical spelling of a verb, for gating purposes."""
+    return VERB_ALIASES.get((namespace, sub, verb), verb)
+
+# Why a particular refused verb is refused. These are messages, not a
+# second gate: ALLOWED_SUB alone decides, and a verb named here that is
+# also allowlisted is simply allowed. Keeping the reasons as a lookup
+# rather than as parallel FORBIDDEN rules is what stops the two from
+# disagreeing -- the earlier design had both, and a verb added to the
+# allowlist stayed denied by the regex while the suite reported PASS,
+# so neither layer's failure was visible through the other.
+SUB_REASONS: dict[tuple[str, str], str] = {
+    ("gh stack", "merge"):
+        "merging is the runner's after its checks, not the agent's -- and "
+        "`gh stack merge` merges every PR up to the one named, without "
+        "prompting in a non-interactive terminal",
+    ("gh stack", "unstack"):
+        "unstacking drops the stack on GitHub, which is the state that "
+        "left homelab#64 unmergeable for ten days",
+    ("gh stack", "link"):
+        "relinking chains PRs onto an arbitrary base, which is what "
+        "`gh pr edit --base` is refused for",
+    ("gh stack", "modify"):
+        "restructuring drops, folds and reorders branches -- unstack's "
+        "authority through a TUI",
+    ("gh pr", "merge"):
+        "merging is done by the runner after its checks, not by the agent",
+    ("gh pr", "revert"):
+        "reverting opens a PR the runner did not sequence",
+    ("gh pr", "close"):
+        "closing a stacked PR orphans the ones above it, which is the "
+        "state that left homelab#64 unmergeable for ten days",
+    ("gh pr", "update-branch"):
+        "updating a stacked branch is `gh stack sync`'s job",
+    ("gh stack", "rebase"):
+        "a cascading rebase rewrites history across the stack, which is "
+        "what `git rebase` is refused for; `gh stack sync` is the "
+        "sanctioned path and carries --force-with-lease",
+}
+
+
+def _known_verbs(namespace: str) -> frozenset[str]:
+    """Every verb this gate has an opinion about, for one namespace.
+
+    Derived from the tables that hold the opinions, so a verb added to
+    any of them is recognised here without a second edit.
+    """
+    verbs = set(ALLOWED_SUB.get(f"gh {namespace}", ()))
+    verbs |= {v for (ns, v) in SUB_REASONS if ns == f"gh {namespace}"}
+    for key, canonical in VERB_ALIASES.items():
+        if len(key) == 3 and key[1] == namespace:
+            verbs.add(key[2])
+            verbs.add(canonical)
+    return frozenset(verbs)
+
+
+def _verb_of(namespace: str, words: list[str]) -> tuple[str | None, bool]:
+    """The verb among these positionals, and whether they are ambiguous.
+
+    gh resolves the first positional as the verb and validates flags
+    against that verb, so a flag belonging to the verb may legally come
+    before it: `gh pr --match-head-commit view merge 5 --squash` runs a
+    MERGE, with `view` consumed as the flag's value. Taking the first
+    positional read that as a `view`, so the merge refusal never ran --
+    and the three flags that reach it (--match-head-commit,
+    --author-email, --subject) are `gh pr merge`'s own, all three
+    missing from VALUE_FLAGS.
+
+    Enumerating harder is not the fix: VALUE_FLAGS copies another
+    project's flag arity and can only trail its releases. Instead pick
+    the word this gate recognises, and if two are recognised, report it
+    ambiguous so the caller refuses rather than choosing. A permitted
+    verb then cannot launder a refused one, whatever the flag table
+    happens to know.
+    """
+    known = _known_verbs(namespace)
+    found = [w for w in words if w in known]
+    if len(found) > 1:
+        return found[0], True
+    if found:
+        return found[0], False
+    return (words[0] if words else None), False
+
 FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # --- the main guarantee -------------------------------------------
     # Anything that could put a commit on a protected branch, or open a
@@ -95,12 +276,15 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^git\s+push\b.*--delete\b"), "deleting a remote branch"),
     (re.compile(r"^gh\s+pr\s+merge\b"),
      "merging is done by the runner after its checks, not by the agent"),
-    (re.compile(r"^gh\s+pr\s+create\b(?!.*--base\s)"),
-     "gh pr create without --base defaults to main; pass "
-     f"--base {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+pr\s+create\b.*--base\s+(?!" + INTEGRATION_BRANCH + r"\b)"),
-     f"the only permitted PR base is {INTEGRATION_BRANCH}"),
-    (re.compile(r"^gh\s+pr\s+edit\b.*--base\b"), "retargeting a PR's base"),
+    # Overnight PRs open as drafts so a human reads them before they are
+    # reviewable; nothing merges from a draft. Non-interactive `gh stack
+    # submit` implies --auto, which creates drafts unless --open is
+    # passed, so this refuses only that flag. Stated in the prompt and
+    # the execute directive too -- this is the copy that holds when one
+    # of those is edited.
+    (re.compile(r"^gh\s+stack\s+submit\b.*--open\b"),
+     "overnight PRs open as drafts; a reviewer marks them ready"),
+
 
     # --- protection and repository settings ---------------------------
     # The PAT has no Administration scope, so these would fail anyway.
@@ -171,6 +355,99 @@ class Decision:
     reason: str
 
 
+# Which base/trunk flag each command spells, and what to call it in a
+# refusal. `gh pr create` takes -B; `gh stack init` takes -b and rejects
+# -B as an unknown shorthand, so the spelling is per-command data rather
+# than something a reader has to infer.
+# The short base flag and what to call the value, per command. The
+# command name itself is the key, so the refusal message derives from it
+# rather than restating it -- a hand-written label that drifted from its
+# key would name a different command than the one being gated, which is
+# the wrong-advice class these rules keep tripping over.
+BASE_FLAGS: dict[tuple[str, ...], tuple[str, str]] = {
+    ("pr", "create"): ("-B", "PR base"),
+    ("stack", "init"): ("-b", "stack trunk"),
+}
+
+
+def _base_values(argv: list[str], short: str) -> list[str | None]:
+    """Every base value named in argv, in the order it appears.
+
+    All occurrences, not the first: gh takes the last spelling to
+    appear, so `-B <good> --base main` creates against main, and a
+    collector that stopped early approved exactly that.
+    """
+    values: list[str | None] = []
+    for i, arg in enumerate(argv):
+        if arg in ("--base", short):
+            values.append(argv[i + 1] if i + 1 < len(argv) else None)
+        elif arg.startswith("--base="):
+            values.append(arg.split("=", 1)[1])
+        elif arg.startswith(f"{short}=") and len(arg) > len(short) + 1:
+            values.append(arg[len(short) + 1:])
+        elif arg.startswith(short) and len(arg) > len(short):
+            # The glued POSIX short form, `-Bmain`.
+            values.append(arg[len(short):])
+    return values
+
+
+def _base_ok(argv: list[str]) -> Decision | None:
+    """Refuse a gh command that opens a PR or stack on the wrong base.
+
+    Walks argv the way _repo_args_ok does rather than matching the
+    command string. A regex cannot see argument boundaries: `--base  X`
+    with two spaces made the old lookahead test the space instead of X
+    and refuse the correct branch, and `-BX` glued to its value was
+    invisible to the presence check -- both denied with advice the agent
+    had already followed. Spelling out more forms had been the fix three
+    rounds running; walking the arguments ends the class.
+    """
+    # Everything after `--` is positional, so a --base there is not a
+    # flag. Walking past it let `gh pr create -- --base <branch>` look
+    # like it had named a base when gh would have used the repo default.
+    if "--" in argv:
+        argv = argv[:argv.index("--")]
+    words = _positionals(argv)
+    if len(words) >= 2:
+        words[1] = _canonical_verb("gh", words[0], words[1])
+    key = tuple(words[:2])
+
+    # Retargeting an existing PR is refused outright, whatever the
+    # value: the runner owns the stack's shape, and a PR moved onto
+    # another base is the state that left homelab#64 unmergeable. This
+    # was a regex over the raw string until a flag placed between `pr`
+    # and `edit` was found to defeat it.
+    if key == ("pr", "edit") and _base_values(argv, "-B"):
+        return Decision(False, "retargeting a PR's base")
+
+    spec = BASE_FLAGS.get(key)
+    if spec is None:
+        return None
+    short, noun = spec
+    label = "gh " + " ".join(key)
+
+    # Collect every occurrence rather than stopping at the first with a
+    # value: gh takes the last spelling to appear, so `-B <good>
+    # --base main` creates against main. Breaking early approved
+    # exactly that, and a repeated flag is the obvious way to probe a
+    # gate that reads only one. Any value that is not the integration
+    # branch refuses, whichever position it is in -- stricter than gh's
+    # last-wins, and the pod has no reason to pass the flag twice.
+    values = _base_values(argv, short)
+    seen = bool(values)
+    for value in values:
+        if value != INTEGRATION_BRANCH:
+            return Decision(
+                False, f"the only permitted {noun} is {INTEGRATION_BRANCH}")
+
+    if not seen:
+        return Decision(
+            False,
+            f"{label} without --base takes the repo default, which is "
+            f"main; pass --base {INTEGRATION_BRANCH}")
+    return None
+
+
 def _repo_args_ok(argv: list[str]) -> Decision | None:
     """Refuse a gh command naming a repository other than this pod's."""
     for i, arg in enumerate(argv):
@@ -182,6 +459,22 @@ def _repo_args_ok(argv: list[str]) -> Decision | None:
         if value and value not in (ALLOWED_REPO, ALLOWED_REPO.split("/")[1]):
             return Decision(False, f"this pod only works on {ALLOWED_REPO}")
     return None
+
+
+# The shell contract, stated once, next to the code that enforces it.
+# The agent prompt interpolates this rather than paraphrasing it: PR #129's
+# first draft paraphrased, claimed chaining was refused outright (it is
+# not - see check_bash's pipeline branch), and the two representations
+# disagreed at birth.
+SHELL_CONTRACT = (
+    "Command substitution, redirection and grouping are refused outright. "
+    "A pipeline or `&&`/`;` chain passes only if every clause passes on "
+    "its own - a simple pipe of allowed commands (`rg pattern | head`) is "
+    "fine. But the splitter is quote-blind: a quoted argument containing "
+    "`;`, `|`, `&` or `$` makes the whole call fail as unparseable, which "
+    "looks like chaining being refused. One command per Bash call is the "
+    "reliable habit."
+)
 
 
 def _split_commands(command: str) -> list[str]:
@@ -235,16 +528,60 @@ def check_bash(command: str) -> Decision:
         verdict = _repo_args_ok(rest)
         if verdict is not None:
             return verdict
+        verdict = _base_ok(rest)
+        if verdict is not None:
+            return verdict
 
     subcommands = ALLOWED[binary]
     if not subcommands:
         return Decision(True, f"{binary} allowed")
 
-    sub = next((a for a in rest if not a.startswith("-")), None)
+    # gh's subcommand comes from the shared parse, which knows which
+    # flags carry a value: taking the first non-flag argument read
+    # `gh pr --repo <repo> merge` as the subcommand `<repo>`, so the
+    # verb was never inspected and a squash-merge reached the allow
+    # path. Other binaries keep the simple positional reading --
+    # VALUE_FLAGS describes gh's surface, not theirs.
+    if binary == "gh":
+        words = _positionals(rest)
+        sub = words[0] if words else None
+        sub_at = rest.index(sub) if sub in rest else None
+        if sub is not None and f"gh {sub}" in ALLOWED_SUB:
+            verb, ambiguous = _verb_of(sub, words[1:])
+            if ambiguous:
+                return Decision(
+                    False,
+                    f"two subcommands named in `gh {sub}`: a flag's value "
+                    f"and a verb are indistinguishable here, and gh would "
+                    f"run the later one -- put the verb straight after "
+                    f"`gh {sub}`")
+    else:
+        sub_at = next((i for i, a in enumerate(rest)
+                       if not a.startswith("-")), None)
+        sub = rest[sub_at] if sub_at is not None else None
     if sub is None:
         return Decision(True, f"{binary} with no subcommand")
     if sub not in subcommands:
         return Decision(False, f"{binary} {sub} is not allowed for this pod")
+
+    # A namespace that carries its own subcommands (`gh stack`) is
+    # checked one level deeper, or the allowance above would admit
+    # everything under it.
+    nested = ALLOWED_SUB.get(f"{binary} {sub}")
+    if nested is not None:
+        tail = rest[sub_at + 1:] if sub_at is not None else []
+        verb = (_positionals(tail)[0:1] or [None])[0]
+        if verb is None:
+            return Decision(False, f"{binary} {sub} needs a subcommand")
+        verb = _canonical_verb(binary, sub, verb)
+        if verb not in nested:
+            why = SUB_REASONS.get((f"{binary} {sub}", verb))
+            if why:
+                return Decision(False, why)
+            return Decision(
+                False, f"{binary} {sub} {verb} is not allowed for this pod")
+        return Decision(True, f"{binary} {sub} {verb} allowed")
+
     return Decision(True, f"{binary} {sub} allowed")
 
 

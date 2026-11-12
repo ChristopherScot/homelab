@@ -8,8 +8,11 @@
 # Rebuilt by .github/workflows/claude-pod-image.yml: pushing to main with
 # changes under claude-pods/ builds and pushes ghcr.io/christopherscot/
 # claude-pod:latest. To build a branch, `gh workflow run
-# claude-pod-image.yml --ref <branch>`. Then `kubectl rollout restart` the
-# claude-pods StatefulSet to pick it up.
+# claude-pod-image.yml --ref <branch>`. argocd-image-updater sees the new
+# :latest digest within its poll interval and rolls the StatefulSet and
+# the dispatcher Deployment itself; the CronJobs pick the new digest up
+# on their next run. There is nothing to restart by hand (see
+# kustomization.yaml).
 FROM node:22-trixie-slim
 
 ARG CLAUDE_CODE_VERSION=2.1.310
@@ -322,22 +325,24 @@ COPY kbrowser.sh /usr/local/bin/kbrowser
 # that owns that stage. pod 0 authors, pod 2 hunts for bugs, pod 1 gives
 # an independent merge verdict.
 #
-# The CronJobs in nightly-cronjobs.yaml are suspended, kept as a fallback.
+# The CronJobs that used to run these on a clock were removed 2026-11-10;
+# the dispatcher is the only caller now.
 # The prompts ship as their own files (prompts/) rather than heredocs inside
 # the scripts, so they can be edited and diffed without touching shell code.
-COPY nightly-author.sh /usr/local/bin/nightly-author
-COPY nightly-merge.sh /usr/local/bin/nightly-merge
-COPY nightly-test.sh /usr/local/bin/nightly-test
+COPY --chmod=0755 stage-author.sh /usr/local/bin/stage-author
+COPY --chmod=0755 stage-merge.sh /usr/local/bin/stage-merge
+COPY --chmod=0755 stage-test.sh  /usr/local/bin/stage-test
 # The preamble all three share is one sourced file, at the path the
-# scripts default NIGHTLY_LIB to.
+# scripts default POD_LIB to.
 COPY lib/ /usr/local/share/claude-pods/lib/
 COPY prompts/ /usr/local/share/claude-pods/prompts/
 # The scoped Bash allow-list ships inside prompts/ (copied above). It
-# lives there rather than beside the manifests because Argo parses every
-# .json under claude-pods/ as a Kubernetes manifest — a settings file
-# there has no 'kind' and breaks the whole Application's sync.
+# lives there rather than beside the manifests because Argo, in the
+# directory mode this app used before kustomization.yaml, parsed every
+# top-level .json in claude-pods/ as a Kubernetes manifest — a settings file
+# there has no 'kind' and broke the whole Application's sync.
 
-RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser /usr/local/bin/nightly-author /usr/local/bin/nightly-merge /usr/local/bin/nightly-test
+RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser
 
 # Run as the base image's existing UID-1000 user (node). Its HOME (/home/node)
 # is where Claude login/session state lives — we persist that on a PVC so the

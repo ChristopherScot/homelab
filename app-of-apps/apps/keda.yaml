@@ -1,0 +1,64 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keda
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://kedacore.github.io/charts
+    chart: keda
+    targetRevision: 2.21.0
+    helm:
+      releaseName: keda
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keda
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # KEDA's CRDs exceed the client-side apply annotation size limit.
+      - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: keda-http-addon
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://kedacore.github.io/charts
+    chart: keda-add-ons-http
+    # The add-on charts version independently of KEDA core (0.x while
+    # core is 2.x) — don't "fix" this to match the core version above.
+    targetRevision: 0.16.0
+    helm:
+      # The interceptor proxy Service is named <releaseName>-interceptor-proxy;
+      # the ExternalName Services that route Ingresses to it depend on this
+      # name (see arr-stack/_shared/keda-http-interceptor.yaml).
+      releaseName: keda-add-ons-http
+      values: |
+        # Chart defaults to 3 replicas of each component for HA.
+        scaler:
+          replicas: 1
+        interceptor:
+          replicas:
+            min: 1
+            max: 2
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: keda
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true

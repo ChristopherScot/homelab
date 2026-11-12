@@ -6,19 +6,24 @@
 # bound to a specific service account in a specific namespace. Compromise
 # of one pod does not expose other apps' secrets.
 #
-# Usage (from a host that can reach the vault pod):
-#   export VAULT_ADDR="http://127.0.0.1:8200"
-#   export VAULT_TOKEN="<root or admin token>"
-#   kubectl port-forward -n default svc/vault 8200:8200 &
+# Usage, from a host that can reach Vault:
+#   vault login              # OIDC via Authelia; writes ~/.vault-token
 #   ./bootstrap/vault-policies.sh
 #
-# Or exec inside the vault pod:
-#   kubectl exec -n default vault-0 -- sh < bootstrap/vault-policies.sh
+# Nothing else to export. VAULT_ADDR defaults to the port-forward address,
+# and the token is read from ~/.vault-token the same way every other vault
+# command reads it. Set VAULT_TOKEN explicitly to override (CI, or the
+# break-glass root token).
+#
+# This cannot be piped into the vault pod -- `kubectl exec ... -- sh <
+# this-file` runs it where there is no token and no ~/.vault-token, so it
+# exits on the check below.
 
 set -euo pipefail
 
 : "${VAULT_ADDR:=http://127.0.0.1:8200}"
-: "${VAULT_TOKEN:?VAULT_TOKEN must be set}"
+: "${VAULT_TOKEN:=$(cat "${HOME}/.vault-token" 2>/dev/null || true)}"
+: "${VAULT_TOKEN:?no token - run 'vault login' first, or set VAULT_TOKEN}"
 export VAULT_ADDR VAULT_TOKEN
 
 vault auth list 2>/dev/null | grep -q '^kubernetes/' || \
@@ -82,12 +87,27 @@ EOF
 done
 
 # ddns updates the ntfy WAN A record and reuses cert-manager's Route 53
-# credential rather than a second AWS key, so its policy points at
-# cert-manager's kv path instead of a kv/ddns/* of its own. Read-only, one
-# path, bound to the ddns namespace's SA.
+# credential rather than a second AWS key, so it reads from other apps'
+# kv paths instead of a kv/ddns/* of its own: route53 for the DNS update,
+# ntfy/config for the token it notifies with. Read-only, bound to the ddns
+# namespace's SA.
+#
+# The ntfy grant was missing until 2026-11-10. ddns-secrets pulls four
+# keys, three from cert-manager/route53 and grafana_token from ntfy/config,
+# and Vault denied the whole read for the one ungranted path -- a 403 that
+# reads as an auth failure rather than a missing grant.
+#
+# The other half of this pair is the ExternalSecret in
+# ChristopherScot/ddns (deploy/ddns/externalsecret.yaml), which declares
+# the paths ddns reads. Nothing compares the two, so adding a path there
+# without adding it here fails exactly this way. ddns is hand-written
+# rather than homelabctl-scaffolded, so it has no config.yaml to derive
+# this from.
 vault policy write ddns - <<EOF
 path "kv/data/cert-manager/route53"     { capabilities = ["read"] }
 path "kv/metadata/cert-manager/route53" { capabilities = ["read", "list"] }
+path "kv/data/ntfy/config"              { capabilities = ["read"] }
+path "kv/metadata/ntfy/config"          { capabilities = ["read", "list"] }
 EOF
 
 # Binds "ddns", not the "external-secrets-sa" every other app role uses.
@@ -339,5 +359,8 @@ if [ -n "$OIDC_CLIENT_SECRET" ]; then
 }
 JSON
 fi
+
+# Separate entrypoint also permits reconciling just this role during rollout.
+bash "$(dirname -- "${BASH_SOURCE[0]}")/codex-vault.sh"
 
 echo "done"

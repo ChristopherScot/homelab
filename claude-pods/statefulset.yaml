@@ -4,6 +4,16 @@
 #
 # Usage: kubectl exec -it -n claude-pods claude-session-0 -- bash
 #        then `claude`, then `/remote-control` to drive from phone/web.
+#
+# Asleep (0 replicas) when idle — see session-sleep-cron.yaml. The
+# dispatcher wakes the set before an exec; to attach interactively, wake
+# it yourself first:
+#   kubectl scale sts claude-session -n claude-pods --replicas=3
+# It stays awake while any pod holds the run lock, has a non-rc tmux
+# session, or saw phone remote-control activity in the last 30 minutes.
+# Interactive work must live in tmux (rclaude's layout does): a bare
+# `kubectl exec -it ... bash` emits none of those signals and the sleep
+# cron will scale the set away under it.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -11,7 +21,10 @@ metadata:
   namespace: claude-pods
 spec:
   serviceName: claude-session
-  replicas: 3
+  # No replicas: field — the dispatcher scales this to 3 before an exec
+  # and the session-sleep cron scales it to 0 when idle; a value here
+  # would make Argo selfHeal fight both. Initial creation defaults to 1;
+  # the first dispatch or sleep cycle settles it.
   selector:
     matchLabels:
       app: claude-session
@@ -29,10 +42,8 @@ spec:
       containers:
         - name: claude
           image: ghcr.io/christopherscot/claude-pod:latest
-          # Mutable :latest, re-pulled every rollout. Single maintainer who
-          # controls all image builds — the immutable-tag ceremony isn't worth
-          # it here; rebuild + rollout restart to update.
-          imagePullPolicy: Always
+          # Digest-pinned by argocd-image-updater on the live Application (see kustomization.yaml); pull-on-change, cache otherwise.
+          imagePullPolicy: IfNotPresent
           # Wire git HTTPS push creds, pre-clone any repos listed in
           # CLONE_REPOS, then idle. You exec in, start `claude`, then
           # /remote-control.
@@ -110,6 +121,13 @@ spec:
             - name: kaneo-api
               mountPath: /run/secrets/kaneo
               readOnly: true
+            # Claude subscription tokens, shared with the desloppify pod
+            # from kv/claude-pods/claude. preflight_credential prefers
+            # these over ~/.claude/.credentials.json, which is the file
+            # that keeps arriving blanked with expiresAt=0.
+            - name: claude-oauth
+              mountPath: /run/secrets/claude
+              readOnly: true
           # Requests are a SCHEDULING RESERVATION, not a quota: 500m CPU
           # was held against ~5m actual use, so three pods parked 1.5
           # cores the scheduler could not give anything else. There is
@@ -147,6 +165,12 @@ spec:
             # preflight with a clear message, not sit in
             # CreateContainerConfigError where the reason is three kubectl
             # commands away.
+            optional: true
+        - name: claude-oauth
+          secret:
+            secretName: claude-oauth
+            # Same reasoning: a pod without it falls back to
+            # ~/.claude/.credentials.json rather than failing to start.
             optional: true
   volumeClaimTemplates:
     # $HOME — SSD (1 replica). Small + latency-sensitive; the interactive

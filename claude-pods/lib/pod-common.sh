@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The preamble the three nightly scripts share: nightly-author (pod 0),
-# nightly-test (pod 2) and nightly-merge (pod 1) each source this before
+# The preamble the three stage scripts share: stage-author (pod 0),
+# stage-test (pod 2) and stage-merge (pod 1) each source this before
 # doing anything of their own.
 #
 # One copy, because three copies held in step by hand did not stay in
@@ -12,7 +12,7 @@
 # Sourced, never run. Sourcing it defines defaults and functions and does
 # nothing else — no output, no exec, no exit — so a test can source it
 # too. The image ships it at /usr/local/share/claude-pods/lib/ and the
-# scripts find it through NIGHTLY_LIB.
+# scripts find it through POD_LIB.
 #
 # The scripts then call, in this order: log_to (before anything prints,
 # or it is lost to Loki), require_gh_token, preflight_credential, and
@@ -180,7 +180,7 @@ merge_pr() {
 revert_pr() {
   local repo="$1" pr="$2" url
   url=$(gh pr revert "$pr" --repo "$repo" \
-          --body "Reverts #$pr. Opened by nightly-merge because main's CI went red after it landed.") \
+          --body "Reverts #$pr. Opened by stage-merge because main's CI went red after it landed.") \
     || return 1
   echo "$url"
   # GitHub works out a new PR's mergeability in the background, and a
@@ -197,57 +197,10 @@ revert_pr() {
 }
 
 # --- Claude credential -----------------------------------------------------
-# Refuse to start on a credential that cannot work.
-#
-# ~/.claude/.credentials.json is periodically found with accessToken and
-# refreshToken as EMPTY STRINGS and expiresAt=0. Valid JSON, right shape,
-# no tokens. Claude Code reads it as expired-in-1970 and cannot renew,
-# because the refresh token it would renew with was blanked too.
-#
-# Cause unknown. It has hit different pods on different nights, and never
-# all three at once — so a healthy peer is normally available to copy
-# from. Without this check the run burns its whole window failing every
-# ticket on "OAuth session expired".
-#
-# cred_ok POD: 0 if POD's ~/.claude/.credentials.json holds non-empty
-# access and refresh tokens and an expiry still in the future; 1
-# otherwise, including when kubectl cannot reach POD.
-cred_ok() {
-  kubectl exec -n "$NIGHTLY_NS" "$1" -- node -e '
-    const f = process.env.HOME + "/.claude/.credentials.json";
-    let d; try { d = require(f).claudeAiOauth; } catch (e) { process.exit(1); }
-    if (!d || !d.accessToken || !d.refreshToken) process.exit(1);
-    if (!(d.expiresAt > Date.now())) process.exit(1);
-  ' >/dev/null 2>&1
-}
-
-# Returns 0 once this pod has a usable credential — repairing it from a
-# healthy peer if it must, which overwrites ~/.claude/.credentials.json —
-# or 1 if none could be found, or found but not copied.
-preflight_credential() {
-  local me="${HOSTNAME:-unknown}"
-  if cred_ok "$me"; then
-    echo "credential: ok"
-    return 0
-  fi
-  echo "credential: INVALID on $me — looking for a healthy peer" >&2
-  local peer
-  for peer in $(kubectl get pods -n "$NIGHTLY_NS" -l app=claude-session \
-                  --field-selector status.phase=Running \
-                  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-    [ "$peer" = "$me" ] && continue
-    if cred_ok "$peer"; then
-      kubectl exec -n "$NIGHTLY_NS" "$peer" -- cat /home/node/.claude/.credentials.json 2>/dev/null \
-        | kubectl exec -i -n "$NIGHTLY_NS" "$me" -- sh -c 'umask 077; cat > "$HOME/.claude/.credentials.json"' 2>/dev/null
-      if cred_ok "$me"; then
-        echo "credential: repaired from $peer" >&2
-        return 0
-      fi
-    fi
-  done
-  echo "FATAL: no pod has a usable credential; run scripts/claude-pods-login.sh" >&2
-  return 1
-}
+# In its own file so the desloppify image can take the account helpers
+# without the kubectl and Kaneo machinery below.
+# shellcheck source=claude-account.sh
+. "$(dirname "${BASH_SOURCE[0]}")/claude-account.sh"
 
 # One stage at a time in this pod.
 #
@@ -259,8 +212,15 @@ preflight_credential() {
 # detached and outlives the exec that launched it — anything the dispatcher
 # held in memory would be released the moment the launch returned, and
 # would be lost entirely on a restart. The lock lives with the thing it
-# protects. The dispatcher reads it with `flock -n ... true` before
-# launching.
+# protects.
+#
+# TWO readers probe it with `flock -n <path> true`, both hardcoding
+# /tmp/nightly.lock: the dispatcher before launching a stage
+# (podIsBusy in services/kaneo-dispatcher) and the session-sleep cron before scaling the
+# pods to 0. The stakes differ: a dispatcher misread starts a duplicate
+# agent; a reaper misread TERMINATES a live run as "idle". So the
+# NIGHTLY_LOCK override below must never be set in a session pod — a run
+# holding a different path is invisible to both readers.
 take_pod_lock() {
   exec 9>"${NIGHTLY_LOCK:-/tmp/nightly.lock}"
   if ! flock -n 9; then
@@ -323,6 +283,11 @@ kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
 #   to-do        -> author  -> in-progress -> {in-review, backlog*, needs-human-review}
 #   in-review    -> test    -> {mergeable, to-do(+), needs-human-review}
 #   mergeable    -> merge   -> {done, needs-human-review, to-do(+)}
+#   in-progress  no column dispatches FROM it, but the hourly reconcile
+#       re-dispatches the author for any card STALE there (the author
+#       moves the card first and works second, so a death in between
+#       strands it — CLA-15, 2026-11-10). The author's own mode logic
+#       then decides: advance an unreviewed PR, rework, resume, or redo.
 #   needs-human-review  inert — waiting on a person
 #   done                inert — terminal, except a revert reopens to to-do(+)
 #
@@ -473,6 +438,28 @@ kaneo_task_repo() {
     1) printf '%s' "$repos" ;;
     0) return 1 ;;
     *) return 2 ;;
+  esac
+}
+
+# Work pushed for this card that never reached a pull request.
+#
+# A run can stop between its first commit and `gh pr create` — a usage
+# limit, a timeout, a node going away — and then the branch exists on the
+# remote with real work on it while the card looks untouched. Without
+# this the next run checks out main, resets hard, and starts the ticket
+# over, abandoning what was already done.
+#
+# Prints the number of commits the branch is ahead of the default branch,
+# or returns 1 when there is no such branch.
+kaneo_unfinished_branch() {
+  local repo="$1" task="$2" branch ahead
+  branch="$(kaneo_branch_for_task "$task")"
+  git ls-remote --exit-code --heads "https://github.com/$repo" "$branch" >/dev/null 2>&1 || return 1
+  ahead="$(gh api "repos/$repo/compare/HEAD...$branch" --jq .ahead_by 2>/dev/null)"
+  case "$ahead" in
+    ''|*[!0-9]*) return 1 ;;
+    0) return 1 ;;
+    *) printf '%s' "$ahead" ;;
   esac
 }
 

@@ -1,0 +1,37 @@
+# The desloppify pod was the one directory in this repo Argo did not
+# watch, so merging a manifest changed nothing until someone ran
+# kubectl apply by hand. Twice that went unnoticed: the pod ran without
+# its test sidecars for a day, and the reserve Claude token sat in Vault
+# while the live ExternalSecret still asked for one key - in both cases
+# git said the change had landed and the cluster disagreed.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: desloppify-pod
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # Digest-pinned the same way as claude-pods; see that Application
+    # for the reasoning. The image is private, so the pull secret is
+    # named here too - it lives in claude-pods, the namespace this
+    # Application deploys into.
+    argocd-image-updater.argoproj.io/image-list: desloppify-pod=ghcr.io/christopherscot/desloppify-pod:latest
+    argocd-image-updater.argoproj.io/desloppify-pod.update-strategy: digest
+    argocd-image-updater.argoproj.io/desloppify-pod.pull-secret: pullsecret:claude-pods/ghcr-pull
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: desloppify-pod
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: claude-pods
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

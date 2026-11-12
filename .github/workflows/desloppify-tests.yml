@@ -9,11 +9,13 @@ on:
   pull_request:
     paths:
       - 'desloppify-pod/**'
+      - 'app-of-apps/apps/desloppify-pod.yaml'
       - '.github/workflows/desloppify-tests.yml'
   push:
     branches: [main]
     paths:
       - 'desloppify-pod/**'
+      - 'app-of-apps/apps/desloppify-pod.yaml'
       - '.github/workflows/desloppify-tests.yml'
 
 permissions:
@@ -36,6 +38,10 @@ jobs:
         working-directory: desloppify-pod
         run: python3 test_timeout.py
 
+      - name: PR verification epilogue
+        working-directory: desloppify-pod
+        run: python3 test_report.py
+
       - name: Workspace mount check
         run: desloppify-pod/test-mount-check.sh
 
@@ -47,6 +53,25 @@ jobs:
 
       - name: CronJob manifest
         run: desloppify-pod/test-cronjob.sh
+
+      # Skips without a checkout of the app repo, which CI does not
+      # have; it is here so a local run before changing the sidecars
+      # catches drift against the compose file.
+      - name: Test sidecars
+        run: desloppify-pod/test-sidecars.sh
+
+      - name: Credential scope
+        run: desloppify-pod/test-secret-scope.sh
+
+      - name: Account failover
+        run: claude-pods/tests/test-account-failover.sh
+
+      # Shared with claude-pods: the two images follow one digest-pinning
+      # story and the check covers both directories. It is wired here too
+      # because a change under desloppify-pod/ does not run the
+      # claude-pods workflow.
+      - name: Image pinning
+        run: claude-pods/tests/image-pinning.sh
 
       # Feeding the hook stdin by hand tests its parsing but not its
       # wiring, and a hook git never invokes passes that test. This one

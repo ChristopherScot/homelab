@@ -9,7 +9,7 @@ metadata:
   name: default
   namespace: longhorn-system
 spec:
-  backupTargetURL: nfs://192.168.50.77:/media/chris/node2-hdd
+  backupTargetURL: nfs://192.168.50.3:/media/chris/node2-hdd
   pollInterval: 5m0s
 ---
 apiVersion: longhorn.io/v1beta2

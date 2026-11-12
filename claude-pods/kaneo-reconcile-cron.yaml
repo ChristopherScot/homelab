@@ -20,11 +20,15 @@ metadata:
   name: kaneo-reconcile
   namespace: claude-pods
 spec:
-  # Suspended until a dry run has been seen on the real board. The sweep
-  # starts agent runs unattended on a clock, so it gets the same treatment
-  # the pipeline itself got: prove it reports the right thing before it is
-  # allowed to act on it.
-  suspend: true
+  # Unsuspended after a dry run on the real board reported correctly:
+  #
+  #   RECONCILE done checked=1 redispatched=0 skipped=1 errors=0
+  #     skip d3kgbsty...: work already exists
+  #
+  # That card was 27.5h stale in In Review, well past the window, so a
+  # sweep that only looked at the clock would have re-dispatched it. It
+  # found the merged pull request instead and left it alone, which is the
+  # behaviour that makes an hourly sweep safe to run unattended.
   schedule: "17 * * * *"
   timeZone: America/New_York
   # Forbid, not Replace: a sweep that overruns is talking to GitHub about
@@ -36,10 +40,22 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 0
-      activeDeadlineSeconds: 900
+      # 120s, not 900. The request returns 202 as soon as the sweep is
+      # accepted — the sweep itself runs in the dispatcher and logs there,
+      # so this job only ever waits on one HTTP round trip. The old 900
+      # meant a pod that could not start took fifteen minutes to report
+      # DeadlineExceeded with no logs, which says nothing about what was
+      # wrong. A short deadline turns that into a prompt failure.
+      activeDeadlineSeconds: 120
       template:
         spec:
           restartPolicy: Never
+          # The image is private. Without this the pod cannot pull it and
+          # sits in ImagePullBackOff until activeDeadlineSeconds kills the
+          # job — which is how the first two hourly sweeps "failed" with
+          # DeadlineExceeded and no logs, while the sweep itself was fine.
+          imagePullSecrets:
+            - name: ghcr-pull
           volumes:
             - name: kaneo-webhook
               secret:
@@ -47,6 +63,8 @@ spec:
           containers:
             - name: trigger
               image: ghcr.io/christopherscot/claude-pod:latest
+              # Digest-pinned by argocd-image-updater on the live Application (see kustomization.yaml); pull-on-change, cache otherwise.
+              imagePullPolicy: IfNotPresent
               volumeMounts:
                 - name: kaneo-webhook
                   mountPath: /run/secrets/kaneo

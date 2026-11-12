@@ -4,7 +4,9 @@ metadata:
   name: jellyseerr
   namespace: media
 spec:
-  replicas: 1
+  # No replicas: field — KEDA scales this between 0 and 1 (see
+  # scale-to-zero.yaml), and a value here would make Argo selfHeal
+  # fight it back on every sync.
   strategy:
     type: Recreate
   selector:
@@ -41,6 +43,12 @@ spec:
       containers:
         - name: jellyseerr
           image: ghcr.io/seerr-team/seerr:latest
+          # :latest implies Always, which contacts ghcr on every wake and
+          # won't start from cache when ghcr is unreachable. IfNotPresent
+          # makes waking offline-safe; image updates need an explicit
+          # refresh instead of landing on every pod start. Same trade as
+          # shelfmark.
+          imagePullPolicy: IfNotPresent
           env:
             - name: TZ
               value: America/New_York

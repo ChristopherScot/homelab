@@ -1,0 +1,111 @@
+# Scheduled and manual runs use this same finite worker Job template.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: codex-dependabot
+  namespace: codex-pods
+spec:
+  schedule: 0 6 * * *
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app: codex-runner
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 23400
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app: codex-runner
+        spec:
+          serviceAccountName: codex-worker
+          automountServiceAccountToken: false
+          imagePullSecrets:
+          - name: codex-ghcr-pull
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            fsGroup: 1000
+          containers:
+          - name: codex
+            image: ghcr.io/christopherscot/codex-pod@sha256:a11a2d0a5773c154fad868ea471906815c5ce702c43dccc84e96e19d9aeadaad
+            imagePullPolicy: Always
+            command:
+            - bash
+            - "/etc/codex-pod/entrypoint.sh"
+            workingDir: "/workspace"
+            env:
+            - name: HOME
+              value: "/home/node"
+            - name: CODEX_HOME
+              value: "/home/node/.codex"
+            - name: CODEX_ACCESS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codex-access-token
+                  key: access-token
+            - name: PATH
+              value: "/opt/codex/node_modules/.bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin:/home/node/go/bin"
+            # Node's 250 ms address-family switching abandons healthy IPv4
+            # connects on this route. Keep npm/Yarn on the IPv4-only pod network.
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=1024 --dns-result-order=ipv4first --no-network-family-autoselection"
+            - name: GIT_AUTHOR_NAME
+              value: Chris (codex-pod)
+            - name: GIT_COMMITTER_NAME
+              value: Chris (codex-pod)
+            - name: GIT_AUTHOR_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: codex-git
+                  key: email
+            - name: GIT_COMMITTER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: codex-git
+                  key: email
+            - name: CODEX_VERSION
+              value: 0.167.0
+            resources:
+              requests:
+                cpu: 100m
+                memory: 512Mi
+              limits:
+                memory: 4Gi
+            volumeMounts:
+            - name: home
+              mountPath: "/home/node"
+            - name: workspace
+              mountPath: "/workspace"
+            - name: config
+              mountPath: "/etc/codex-pod"
+              readOnly: true
+            - name: git-creds
+              mountPath: "/run/secrets/git"
+              readOnly: true
+            args:
+            - bash
+            - "/etc/codex-pod/daily-dependabot.sh"
+          volumes:
+          - name: config
+            configMap:
+              name: codex-pod-config
+          - name: git-creds
+            secret:
+              secretName: codex-git
+          - name: home
+            persistentVolumeClaim:
+              claimName: home-codex-session-0
+          - name: workspace
+            persistentVolumeClaim:
+              claimName: workspace-codex-session-0
+          restartPolicy: Never
+          terminationGracePeriodSeconds: 30

@@ -108,7 +108,8 @@ metadata:
   name: paperless-sync-trigger
   namespace: paperless
 spec:
-  replicas: 1
+  # No replicas: field — KEDA scales this between 0 and 1 (see
+  # scale-to-zero.yaml); a value here would make Argo selfHeal fight it.
   selector:
     matchLabels: { app: paperless-sync-trigger }
   template:
@@ -186,5 +187,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: paperless-sync-trigger
-                port: { number: 80 }
+                # KEDA HTTP interceptor (scale-to-zero), not the app's
+                # own Service — see scale-to-zero.yaml.
+                name: keda-http-interceptor
+                port: { number: 8080 }

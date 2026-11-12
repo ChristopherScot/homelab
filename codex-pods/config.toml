@@ -1,0 +1,8 @@
+# Subscription authentication only; do not fall back to API billing.
+forced_login_method = "chatgpt"
+cli_auth_credentials_store = "file"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+
+[projects."/workspace/homelab"]
+trust_level = "trusted"

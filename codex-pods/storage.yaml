@@ -1,0 +1,31 @@
+# Adopt and retain the existing login/workspace claims when retiring the StatefulSet.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: home-codex-session-0
+  namespace: codex-pods
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: longhorn-single-ssd
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-codex-session-0
+  namespace: codex-pods
+  annotations:
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: longhorn-hdd-single
+  resources:
+    requests:
+      storage: 10Gi

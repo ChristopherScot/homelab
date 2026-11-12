@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: codex-pods
+resources:
+  - secrets.yaml
+  - worker.yaml
+  - storage.yaml
+  - daily-cronjob.yaml
+configMapGenerator:
+  - name: codex-pod-config
+    files:
+      - entrypoint.sh
+      - config.toml
+      - daily-dependabot.sh
+      - dependabot.mjs
+      - dependabot-prompt.txt
+      - repair.schema.json
+      - review.schema.json
+      - startup-check.jq
