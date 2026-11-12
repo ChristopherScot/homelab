@@ -46,22 +46,39 @@ CAPACITY="${GARAGE_CAPACITY:-10Gi}"
 # stderr, because garage logs an RPC handshake on every call and that
 # noise buries this script's own output.
 #
-# g is for commands that must work. It discards the handshake too, but
-# on failure re-runs with stderr attached so garage can say WHY, then
-# exits. Without this a failing `bucket allow` died under set -e with no
-# message at all: the caller saw a bare non-zero and the one line that
-# would have explained it had gone to /dev/null. The first fix for that
-# was a hand-rolled handler on one call site, which left its sibling two
-# lines below still silent - hence doing it in the wrapper instead.
+# g is for commands that must work. It captures stderr to a temp file on
+# the FIRST call and prints it only on failure, so the handshake stays
+# out of the way while a real error still gets through. Without this a
+# failing `bucket allow` died under set -e with no message at all: the
+# caller saw a bare non-zero and the line that would have explained it
+# had gone to /dev/null. The first fix was a hand-rolled handler on one
+# call site, which left its sibling two lines below still silent.
+#
+# Capturing rather than re-running on failure, which an earlier draft
+# did: `garage key create` mints a NEW key every call - name is not a
+# unique index - so re-running it after a timeout that had already
+# succeeded server-side would leave two keys sharing one name, and the
+# grants and the secret printed for Vault could then refer to different
+# ones. It also returns rather than exits: `exit` inside a function only
+# leaves the subshell when g is in a pipeline or $(...), which it is at
+# three call sites, so the abort there was really coming from pipefail.
 g_try() { kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>/dev/null; }
 
 g() {
-  if kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>/dev/null; then
-    return 0
+  local err rc
+  err="$(mktemp)"
+  # `|| rc=$?` and not a bare call: under set -e a failing command
+  # inside a function aborts the script immediately, so the handler
+  # below would never run and the error would be discarded - which is
+  # the exact defect this wrapper exists to fix.
+  rc=0
+  kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>"$err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "FATAL: garage $* failed (exit $rc):" >&2
+    cat "$err" >&2
   fi
-  echo "FATAL: garage $* failed; re-running to capture the error:" >&2
-  kubectl exec -n "$NS" "$POD" -- /garage "$@" >&2 || true
-  exit 1
+  rm -f "$err"
+  return "$rc"
 }
 
 echo "=== garage-init: ns=$NS pod=$POD ==="
@@ -70,7 +87,7 @@ echo "=== garage-init: ns=$NS pod=$POD ==="
 #    a layout version is applied; assigning twice is harmless but noisy,
 #    so only do it when the role is genuinely missing.
 if g_try status | grep -q 'NO ROLE ASSIGNED'; then
-  node="$(g node id -q 2>/dev/null | tail -1 | cut -d@ -f1)"
+  node="$(g node id -q | tail -1 | cut -d@ -f1)"
   [ -n "$node" ] || { echo "FATAL: could not read node id" >&2; exit 1; }
   echo "assigning layout to ${node:0:16}... zone=$ZONE capacity=$CAPACITY"
   g layout assign -z "$ZONE" -c "$CAPACITY" "$node" >/dev/null
