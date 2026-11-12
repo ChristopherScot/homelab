@@ -14,9 +14,17 @@
 # then: kubectl logs -n claude-pods job/poc-worker
 #
 # Requires the garage-s3-reference secret, which External Secrets
-# projects from kv/garage/s3-reference. Until that Vault path is seeded
-# the job stays Pending on the missing secret - which is itself the
-# correct behaviour, not a failure to debug.
+# projects from kv/garage/s3-reference.
+#
+# That secret does not exist yet, and the reason is not only that the
+# Vault path is unseeded: the ExternalSecret authenticates through the
+# claude-pods Vault role, which has no read on kv/garage/s3-reference
+# and fails with a 403. Seeding the path will not fix it on its own.
+#
+# Until the secret exists this pod sits in CreateContainerConfigError
+# rather than failing - envFrom on a missing secret produces no Job
+# error, so `kubectl logs -f` hangs with nothing to show. Check
+# `kubectl describe pod` if it seems to do nothing.
 apiVersion: batch/v1
 kind: Job
 metadata:

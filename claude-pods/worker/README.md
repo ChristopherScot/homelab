@@ -47,21 +47,41 @@ worth doing until something needs the space.
 
 Garage mints the S3 key, so it cannot be generated ahead of time:
 
+**Order matters here.** An earlier version of this file told you to
+delete `garage-rpc` before the Vault side could serve a replacement.
+Doing that today takes garage down at its next restart, because the
+`garage` Vault role does not exist yet and External Secrets cannot
+create the secret. Delete nothing until step 4 proves the store works.
+
 ```sh
-# 1. print the credentials
+# 1. create the vault role and policy. The garage block exists in this
+#    script but has not been run, so the SecretStore currently fails
+#    with: invalid role name "garage"
+./bootstrap/vault-policies.sh
+
+# 2. print the credentials
 ./bootstrap/garage-init.sh
 
-# 2. seed Vault with the READ-ONLY key (claude-worker)
+# 3. seed both paths. s3-reference takes the READ-ONLY key
+#    (claude-worker), never claude-seed.
 vault kv put kv/garage/s3-reference \
   access-key-id=<Key ID> secret-access-key=<Secret key>
-
-# 3. and the RPC secret, deleting the hand-made one first -- External
-#    Secrets will not adopt a Secret it did not create
-kubectl delete secret garage-rpc -n garage
 vault kv put kv/garage/rpc rpc-secret="$(openssl rand -hex 32)"
 
-# 4. grant the claude-pods vault role read on kv/garage/s3-reference
-#    (that role is not managed by bootstrap/vault-policies.sh)
+# 4. VERIFY before deleting anything. This must say Valid/True:
+kubectl get secretstore vault-garage -n garage
+
+# 5. only now hand the RPC secret over. External Secrets will not adopt
+#    a Secret it did not create, so the hand-made one has to go first -
+#    which is safe only because step 4 proved the replacement works.
+kubectl delete secret garage-rpc -n garage
+kubectl get secret garage-rpc -n garage   # ESO should recreate it
+
+# 6. grant the claude-pods vault role read on kv/garage/s3-reference.
+#    Seeding alone is not enough: that ExternalSecret currently fails
+#    with a 403, not a 404, so it will keep failing after step 3 until
+#    the policy is widened. That role is not managed by
+#    bootstrap/vault-policies.sh.
 ```
 
 ## Then the PoC proves the model
