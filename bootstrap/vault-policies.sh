@@ -171,9 +171,11 @@ vault write auth/kubernetes/role/monitoring \
   policies="monitoring" \
   ttl=1h
 
-# garage: in-cluster S3. Reads only its own RPC secret; the S3 access
-# keys it mints for clients are read by those clients' policies, not
-# this one.
+# garage: in-cluster S3. Reads only its own RPC secret. The S3 access
+# key it mints for the worker pods is read by the claude-pods role, not
+# this one - that role and policy are not managed by this script (the
+# vault-claude-pods SecretStore names it), so granting it read on
+# kv/garage/s3-reference is a manual step until it moves here.
 vault policy write garage - <<EOF
 path "kv/data/garage/*"     { capabilities = ["read"] }
 path "kv/metadata/garage/*" { capabilities = ["read", "list"] }
