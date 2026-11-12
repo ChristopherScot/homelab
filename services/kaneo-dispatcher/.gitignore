@@ -1,0 +1,12 @@
+bin/
+
+# `go build` with no -o writes a binary named for the last element of the
+# MODULE PATH - not the service name, which can differ. Without this it
+# gets committed on the first `git add -A`, and a multi-megabyte binary
+# in git history is not removable by a later .gitignore.
+/kaneo-dispatcher
+
+# The TypeScript client compiles to dist/ on `npm run build`, and again
+# on prepack before publish. Committing it would be a second copy of
+# the sources beside it, stale the first time nobody reruns the build.
+clients/ts/dist/

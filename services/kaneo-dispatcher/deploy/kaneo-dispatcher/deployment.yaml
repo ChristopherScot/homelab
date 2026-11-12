@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kaneo-dispatcher
+  namespace: claude-pods
+  labels:
+    app: kaneo-dispatcher
+    team: me-myself-and-i
+spec:
+  replicas: 1
+  # At one replica the default rolling update takes the only pod down
+  # first; surging instead keeps the service up across a deploy.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app: kaneo-dispatcher
+  template:
+    metadata:
+      annotations:
+        k8s.grafana.com/scrape: "true"
+        k8s.grafana.com/metrics.path: "/metrics"
+        k8s.grafana.com/metrics.portNumber: "8080"
+        reloader.stakater.com/secret-reload-on-change: "kaneo-dispatcher-secrets"
+      labels:
+        app: kaneo-dispatcher
+        team: me-myself-and-i
+    spec:
+      # Required by the restricted Pod Security Standard, and the cheapest
+      # hardening available.
+      serviceAccountName: kaneo-dispatcher
+      # Longer than the server's 20s drain so shutdown finishes before
+      # SIGKILL.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: kaneo-dispatcher
+          image: ghcr.io/christopherscot/homelab-kaneo-dispatcher:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: DISPATCH_NS
+              value: "claude-pods"
+            - name: KANEO_API_URL
+              value: "http://kaneo.kaneo.svc.cluster.local:5173"
+            - name: KANEO_PROJECT_ID
+              value: "pwz0urubiajnchag39tcbjkl"
+          envFrom:
+            - secretRef:
+                name: kaneo-dispatcher-secrets
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 5
+      volumes:
+        - name: tmp
+          emptyDir: {}

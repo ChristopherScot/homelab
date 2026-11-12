@@ -19,7 +19,7 @@ discovered by probing (2026-11-10) and this script is their one home:
   POST /api/label                    attach a label; workspaceId required
   GET  /api/label/task/{taskId}      a task's labels
 
-Column semantics (dispatch.mjs ROUTES): moving a card to `to-do`,
+Column semantics (routes in services/kaneo-dispatcher): moving a card to `to-do`,
 `in-review` or `mergeable` DISPATCHES WORK to a session pod - waking the
 StatefulSet if asleep. `backlog`, `needs-human-review` and `done` are
 inert. `in-progress` is inert for moves, but the hourly reconcile

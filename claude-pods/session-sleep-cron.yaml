@@ -2,7 +2,7 @@
 #
 # Not KEDA: these pods wake on Kaneo card moves, not on a clock (no cron
 # window fits) and receive no HTTP (nothing for the interceptor to see).
-# The dispatcher is the wake (ensureAwake in dispatcher/dispatch.mjs:
+# The dispatcher is the wake (ensureAwake in services/kaneo-dispatcher:
 # scale to 3, wait ready, exec); this cron is the matching sleep.
 #
 # "In use" is four different things, checked per existing pod:
@@ -31,7 +31,7 @@
 # between this job's last idle probe and its scale-to-0 dies with the
 # pods. Deliberate: that window is seconds wide per half-hour tick, and
 # the kaneo reconcile sweep re-dispatches the card — hourly sweep, cards
-# picked up once ~4h stale (RECONCILE_STALE_MS), so recovery is slow but
+# picked up once ~4h stale (RECONCILE_STALE), so recovery is slow but
 # certain. Don't add a lock here to "fix" it, and don't widen the age
 # guard for it — the guard covers a different window (wake to first
 # flock).

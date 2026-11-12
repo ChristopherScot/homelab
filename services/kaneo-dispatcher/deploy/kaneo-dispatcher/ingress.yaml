@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: kaneo-dispatcher
+  namespace: claude-pods
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: external
+  tls:
+    - hosts: [dispatch.home.chrisscotmartin.com]
+      secretName: kaneo-dispatcher-tls
+  rules:
+    - host: dispatch.home.chrisscotmartin.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kaneo-dispatcher
+                port:
+                  number: 80

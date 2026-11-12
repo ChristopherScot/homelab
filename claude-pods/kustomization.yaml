@@ -9,12 +9,13 @@
 # top-level *.yaml here; kustomize applies only what is listed under
 # resources. A new manifest that is not added here is silently not
 # deployed - claude-pods/tests/image-pinning.sh fails on exactly that.
-# Subdirectories (dispatcher/, lib/, prompts/, skills/, tests/) hold
-# source, not manifests, and were never applied.
+# Subdirectories (lib/, prompts/, skills/, tests/) hold source, not
+# manifests, and were never applied. The dispatcher is not here at all:
+# it is its own service (services/kaneo-dispatcher) with its own image
+# and Application.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - kaneo-dispatcher.yaml
   - kaneo-reconcile-cron.yaml
   - kaneo-secrets.yaml
   - nightly-cronjobs.yaml
@@ -29,7 +30,7 @@ resources:
 # says which image is managed, and so the test can check that name
 # against the Application's annotation. Whatever the entry resolves to
 # applies to every reference across the resources above: the session
-# StatefulSet, the dispatcher Deployment and the CronJobs move together.
+# StatefulSet and the CronJobs move together.
 images:
   - name: ghcr.io/christopherscot/claude-pod
     newTag: latest

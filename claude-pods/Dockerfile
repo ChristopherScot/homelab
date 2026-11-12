@@ -320,9 +320,10 @@ COPY entrypoint.sh /usr/local/bin/entrypoint
 COPY kbrowser.sh /usr/local/bin/kbrowser
 
 # Ticket->PR pipeline. Work starts when a card moves on the Kaneo board,
-# not on a clock: the dispatcher (below) receives the webhook and execs one
-# of these three in the pod that owns that stage. pod 0 authors, pod 2
-# hunts for bugs, pod 1 gives an independent merge verdict.
+# not on a clock: the dispatcher (services/kaneo-dispatcher, its own
+# image) receives the webhook and execs one of these three in the pod
+# that owns that stage. pod 0 authors, pod 2 hunts for bugs, pod 1 gives
+# an independent merge verdict.
 #
 # The CronJobs that used to run these on a clock were removed 2026-11-10;
 # the dispatcher is the only caller now.
@@ -340,11 +341,6 @@ COPY prompts/ /usr/local/share/claude-pods/prompts/
 # directory mode this app used before kustomization.yaml, parsed every
 # top-level .json in claude-pods/ as a Kubernetes manifest — a settings file
 # there has no 'kind' and broke the whole Application's sync.
-# The dispatcher, which turns a card move into one of the runs above. It
-# ships in this image rather than one of its own because it needs node (it
-# is a node script) and kubectl (it execs with it), and both are already
-# here at known versions. Only the dispatcher Deployment runs it.
-COPY dispatcher/dispatch.mjs /usr/local/share/claude-pods/dispatcher/dispatch.mjs
 
 RUN chmod +x /usr/local/bin/rclaude-layout /usr/local/bin/tmux-sessionizer /usr/local/bin/dp /usr/local/bin/entrypoint /usr/local/bin/kbrowser
 
