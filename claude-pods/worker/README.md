@@ -112,6 +112,28 @@ kubectl logs -n claude-pods job/poc-worker -f
 The worker job prints its pull duration, the file counts it received,
 and the number of Longhorn/NFS mounts it holds — which should be zero.
 
+## A trap found while reviewing this
+
+`entrypoint.sh:58` derives the pod's identity from its hostname:
+
+```sh
+ORD="${HOSTNAME##*-}"
+```
+
+Under a StatefulSet that yields `0`, `1`, `2`. Under a **Job** - which
+is what `poc-worker-job.yaml` is - a pod's hostname is
+`poc-worker-<random>`, so `ORD` becomes the random suffix. Everything
+keyed on it then misses silently:
+
+- `/run/secrets/repos/pod${ORD}` does not exist, so the repo list falls
+  back to `CLONE_REPOS` and the worker may clone nothing
+- the `case "$ORD"` role lookup falls through to `agent`
+
+Neither errors. A Job-based worker would come up looking fine and
+quietly working the wrong set. Whatever replaces the ordinal has to be
+passed in explicitly - the hostname cannot carry it once workers stop
+being a StatefulSet.
+
 ## What is NOT designed yet
 
 - **The dispatcher change.** Today `ROUTES` maps a column to a fixed
