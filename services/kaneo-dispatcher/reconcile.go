@@ -47,9 +47,38 @@ type board struct {
 	} `json:"data"`
 }
 
-// reconcile is one sweep over the columns that dispatch. The error is a
-// board that could not be read at all; everything per card lands in the
-// sweep's errors instead, so one bad card does not hide the rest.
+// strandedColumn is where the author leaves a card while it works. It
+// moves the card first and works second, deliberately, so a death
+// mid-ticket reads as attempted - which means an author that dies in
+// between leaves In Progress holding a card that no column-watcher
+// retries, because nothing dispatches FROM here. CLA-15 sat there for
+// hours after a four-second crash.
+//
+// The remedy is a hand-back, not a decision: the author's own mode logic
+// is the one authoritative copy of what a card in any state is owed
+// (advance an unreviewed PR, rework a declined one, resume pushed-but-
+// unPRed work, or start fresh), so a stale card here goes back to the
+// author and nothing is decided in this file. An earlier draft advanced
+// PR-carrying cards from here and got the policy wrong for rework and
+// closed-PR cards within one review.
+const strandedColumn = "in-progress"
+
+// sweeps is the stage a swept column is owed, or ok false for an inert
+// one. stranded marks the hand-back, whose work-exists check is skipped
+// on purpose: existing work is exactly what the author's mode logic
+// exists to judge, and it must see the card to judge it.
+func sweeps(column string) (st stage, stranded, ok bool) {
+	if column == strandedColumn {
+		return routes["to-do"], true, true
+	}
+	st, ok = routes[column]
+	return st, false, ok
+}
+
+// reconcile is one sweep over the columns that dispatch, plus the one
+// the author strands cards in. The error is a board that could not be
+// read at all; everything per card lands in the sweep's errors instead,
+// so one bad card does not hide the rest.
 func (d *dispatcher) reconcile(ctx context.Context, dryRun bool) (sweep, error) {
 	var out sweep
 	var b board
@@ -57,24 +86,24 @@ func (d *dispatcher) reconcile(ctx context.Context, dryRun bool) (sweep, error) 
 		return out, err
 	}
 	for _, col := range b.Data.Columns {
-		if _, ok := routes[col.Slug]; !ok {
+		st, stranded, ok := sweeps(col.Slug)
+		if !ok {
 			continue // inert column: nothing was ever owed here
 		}
 		for _, c := range col.Tasks {
 			out.checked++
-			d.reconcileCard(ctx, col.Slug, c, dryRun, &out)
+			d.reconcileCard(ctx, col.Slug, st, stranded, c, dryRun, &out)
 		}
 	}
 	return out, nil
 }
 
-// reconcileCard decides one card in a dispatching column: leave it, say
-// why it was skipped, or start the work it is owed. Anything the sweep
-// could not find out lands in errors, never in silence: an error here
-// must not read as "nothing to do", because a card nobody can see is the
-// failure this sweep exists for.
-func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, dryRun bool, out *sweep) {
-	st := routes[column]
+// reconcileCard decides one card in a swept column: leave it, say why it
+// was skipped, or start the work it is owed. Anything the sweep could not
+// find out lands in errors, never in silence: an error here must not
+// read as "nothing to do", because a card nobody can see is the failure
+// this sweep exists for.
+func (d *dispatcher) reconcileCard(ctx context.Context, column string, st stage, stranded bool, c card, dryRun bool, out *sweep) {
 	fail := func(err error) { out.errors = append(out.errors, c.name()+": "+err.Error()) }
 
 	since, err := d.enteredColumnAt(ctx, c.ID)
@@ -109,16 +138,18 @@ func (d *dispatcher) reconcileCard(ctx context.Context, column string, c card, d
 		out.skipped = append(out.skipped, c.name()+": "+skip)
 		return
 	}
-	exists, err := d.workExists(ctx, column, repo, c.ID)
-	if err != nil {
-		fail(err)
-		return
-	}
-	if exists {
-		// The work ran; the card is simply waiting on the next stage, or
-		// on a human. Not ours to restart.
-		out.skipped = append(out.skipped, c.name()+": work already exists")
-		return
+	if !stranded {
+		exists, err := d.workExists(ctx, column, repo, c.ID)
+		if err != nil {
+			fail(err)
+			return
+		}
+		if exists {
+			// The work ran; the card is simply waiting on the next
+			// stage, or on a human. Not ours to restart.
+			out.skipped = append(out.skipped, c.name()+": work already exists")
+			return
+		}
 	}
 	line := fmt.Sprintf("%s (%s, %dh)", c.name(), column, int(age.Hours()))
 	if dryRun {

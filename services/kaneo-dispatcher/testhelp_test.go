@@ -41,13 +41,17 @@ func (c execCall) script() string {
 	return ""
 }
 
-// recorder stands in for the session pods. The busy probe answers idle
-// unless busy is set; everything else exits 0.
+// recorder stands in for the session pods and their StatefulSet. The
+// busy probe answers idle unless busy is set; every other exec exits 0;
+// a wake succeeds unless wakeErr is set.
 type recorder struct {
-	mu    sync.Mutex
-	calls []execCall
-	busy  bool
-	fail  error // returned from every exec when set: the API is unreachable
+	mu      sync.Mutex
+	calls   []execCall
+	wakes   int
+	order   []string // "wake" and "exec", in the order they happened
+	busy    bool
+	fail    error // returned from every exec when set: the API is unreachable
+	wakeErr error // returned from every wake when set
 }
 
 func (r *recorder) exec(_ context.Context, pod string, argv []string) (int, error) {
@@ -55,6 +59,7 @@ func (r *recorder) exec(_ context.Context, pod string, argv []string) (int, erro
 	defer r.mu.Unlock()
 	c := execCall{pod, argv}
 	r.calls = append(r.calls, c)
+	r.order = append(r.order, "exec")
 	if r.fail != nil {
 		return 0, r.fail
 	}
@@ -64,11 +69,29 @@ func (r *recorder) exec(_ context.Context, pod string, argv []string) (int, erro
 	return 0, nil
 }
 
+func (r *recorder) wake(context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.wakes++
+	r.order = append(r.order, "wake")
+	return r.wakeErr
+}
+
 // all is every exec call so far.
 func (r *recorder) all() []execCall {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]execCall(nil), r.calls...)
+}
+
+// woken is how many times the set was woken, and what happened first.
+func (r *recorder) woken() (n int, first string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.order) > 0 {
+		first = r.order[0]
+	}
+	return r.wakes, first
 }
 
 // launches are the exec calls that started a stage, as opposed to the
@@ -238,6 +261,7 @@ func newFixture(t *testing.T) *fixture {
 		repos:        map[string][]string{"0": {"TestOwner/testrepo", "TestOwner/other"}, "2": {"TestOwner/testrepo"}},
 		stale:        4 * time.Hour,
 		exec:         f.pods.exec,
+		wake:         f.pods.wake,
 		client:       &http.Client{Timeout: 5 * time.Second},
 	}
 	return f
@@ -285,6 +309,16 @@ func (f *fixture) wantNoLaunch() {
 	f.t.Helper()
 	if l := f.pods.launches(); len(l) != 0 {
 		f.t.Errorf("a stage was launched: %v", l)
+	}
+}
+
+// wantUntouched is wantNoLaunch and no wake either: nothing about the
+// cluster was changed.
+func (f *fixture) wantUntouched() {
+	f.t.Helper()
+	f.wantNoLaunch()
+	if n, _ := f.pods.woken(); n != 0 {
+		f.t.Errorf("the session pods were woken %d times", n)
 	}
 }
 

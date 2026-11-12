@@ -66,9 +66,9 @@ ingress:
     hosts:
         - dispatch.home.chrisscotmartin.com
 
-# What the tool does not generate: the Role that lets this pod exec into
-# the session pods, bound to the ServiceAccount the secrets block
-# creates.
+# What the tool does not generate: the Role that lets this pod wake the
+# session StatefulSet and exec into its pods, bound to the ServiceAccount
+# the secrets block creates.
 manifests:
     - rbac.yaml
 

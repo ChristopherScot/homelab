@@ -9,9 +9,9 @@
 // which is a deliberate "do it again".
 //
 // Work starts when a card moves rather than at 00:00, and each stage hands
-// to the next by moving the card. The suspended CronJobs in
-// claude-pods/nightly-cronjobs.yaml are the fallback clock; the sweep in
-// reconcile.go is the safety net under the events.
+// to the next by moving the card. The CronJobs that ran the stages on a
+// clock were removed 2026-11-10; there is no fallback clock, and the sweep
+// in reconcile.go is the safety net under the events.
 package main
 
 import (
@@ -25,6 +25,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -41,13 +42,30 @@ type stage struct {
 //
 // The column set is known in three other places, and a new route has to
 // reach all of them: workExists in reconcile.go says what finished work
-// looks like for the column, the graph in claude-pods/lib/nightly-common.sh
+// looks like for the column, the graph in claude-pods/lib/pod-common.sh
 // says which columns the scripts may move a card to, and the README
 // describes the pipeline.
 var routes = map[string]stage{
-	"to-do":     {"claude-session-0", "/usr/local/bin/nightly-author"},
-	"in-review": {"claude-session-2", "/usr/local/bin/nightly-test"},
-	"mergeable": {"claude-session-1", "/usr/local/bin/nightly-merge"},
+	"to-do":     {"claude-session-0", "/usr/local/bin/stage-author"},
+	"in-review": {"claude-session-2", "/usr/local/bin/stage-test"},
+	"mergeable": {"claude-session-1", "/usr/local/bin/stage-merge"},
+}
+
+// wakeReplicas is one past the highest ordinal routes names: stages are
+// pinned to pods by ordinal and a StatefulSet cannot run ordinal 2
+// without 0 and 1. Derived so a fourth stage is one edit, not two.
+func wakeReplicas() int {
+	n := 0
+	for _, st := range routes {
+		n = max(n, ordinal(st.pod)+1)
+	}
+	return n
+}
+
+// ordinal is the <n> in claude-session-<n>, as the StatefulSet counts.
+func ordinal(pod string) int {
+	n, _ := strconv.Atoi(pod[strings.LastIndex(pod, "-")+1:])
+	return n
 }
 
 // The two commands this service ever runs in a session pod, both through
@@ -55,24 +73,31 @@ var routes = map[string]stage{
 // receives rather than retyping them.
 const (
 	// busyProbe asks whether a stage is already running. The scripts take
-	// a lock themselves (take_pod_lock in nightly-common.sh), so what is
+	// a lock themselves (take_pod_lock in pod-common.sh), so what is
 	// probed is what a run actually holds: flock -n succeeds only if
 	// nothing holds it, so exit 0 means idle and anything else means busy.
 	// The path expression is the scripts' own, NIGHTLY_LOCK override
 	// included, so the two sides cannot lock different files.
 	busyProbe = `flock -n "${NIGHTLY_LOCK:-/tmp/nightly.lock}" true`
 
-	// launchLine starts a stage and returns at once. $0 is the script and
-	// $1 the task id, passed as positional arguments rather than spliced
-	// into the command text.
+	// launchLine starts a stage and returns at once. $0 is the script, $1
+	// the task id and $2 the repo, passed as positional arguments rather
+	// than spliced into the command text. The repo rides along so a named
+	// task is workable from ANY column without the stage re-resolving
+	// labels - stage-author refuses a task without it.
 	//
 	// setsid + nohup because a plain exec ties the run's life to the
 	// connection: the API server, a dispatcher restart, a rollout, or a
 	// network blip kills the agent mid-ticket. An author run takes up to
 	// an hour, so that window is most of the run. The first real dispatch
 	// died this way within seconds of starting.
-	launchLine = `setsid nohup "$0" "$1" >/dev/null 2>&1 </dev/null &`
+	launchLine = `setsid nohup "$0" "$1" "$2" >/dev/null 2>&1 </dev/null &`
 )
+
+// wakeTimeout bounds a wake. A cold start legitimately takes minutes -
+// three pods pulling a 1.4 GB image - but one that cannot finish must
+// become a logged failure for the card, not a goroutine held forever.
+const wakeTimeout = 10 * time.Minute
 
 // execer runs argv in a session pod and reports its exit code. An error
 // means the command could not be run at all - the API server was
@@ -80,6 +105,10 @@ const (
 // running and exiting non-zero, and the callers treat the two
 // differently.
 type execer func(ctx context.Context, pod string, argv []string) (int, error)
+
+// waker scales the session StatefulSet up to wakeReplicas and returns
+// once every pod is ready, or with the reason it could not.
+type waker func(ctx context.Context) error
 
 // A dispatcher holds what one deployment of this service was configured
 // with. Everything is read once at startup: the secrets arrive as
@@ -98,6 +127,7 @@ type dispatcher struct {
 	repos        map[string][]string // pod ordinal -> the owner/name repos it works
 	stale        time.Duration       // how long a card may sit before the sweep asks why
 	exec         execer
+	wake         waker
 	client       *http.Client
 
 	// inflight counts work started after a 202 was already sent, which
@@ -136,14 +166,14 @@ func fromEnv() (*dispatcher, error) {
 			return nil, fmt.Errorf("RECONCILE_STALE: %w", err)
 		}
 	}
-	exec, err := newPodExec(envOr("DISPATCH_NS", "claude-pods"))
+	exec, wake, err := newPodClient(envOr("DISPATCH_NS", "claude-pods"))
 	if err != nil {
 		return nil, err
 	}
 	return &dispatcher{
-		// Same defaults and same variables as nightly-common.sh, so a
-		// short repo: label and a branch name resolve the same way here
-		// as in the scripts.
+		// Same defaults and same variables as pod-common.sh, so a short
+		// repo: label and a branch name resolve the same way here as in
+		// the scripts.
 		owner:        envOr("NIGHTLY_OWNER", "ChristopherScot"),
 		branchPrefix: envOr("KANEO_BRANCH_PREFIX", "fix/"),
 		project:      project,
@@ -157,6 +187,7 @@ func fromEnv() (*dispatcher, error) {
 		repos:   reposFromEnv(os.Environ()),
 		stale:   stale,
 		exec:    exec,
+		wake:    wake,
 		client:  &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }
@@ -299,8 +330,20 @@ func (d *dispatcher) repoFor(ctx context.Context, id, pod string) (repo, skip st
 	return repo, "", nil
 }
 
-// runStage launches the stage in its pod unless a run is already there.
+// runStage wakes the session pods and launches the stage in its pod,
+// unless a run is already there.
 func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card) {
+	// The set sleeps at 0 replicas when idle; the session-sleep CronJob in
+	// claude-pods/ puts it there and this is the matching wake. Always
+	// every pod, never just the stage's: a StatefulSet cannot run ordinal
+	// 2 without 0 and 1. A wake that fails is logged per card and the
+	// card stays where it is; the sweep is the retry, priced honestly -
+	// hourly, and only once the card is RECONCILE_STALE old - so a dropped
+	// wake costs hours, not forever.
+	if err := d.ensureAwake(ctx); err != nil {
+		slog.Error("wake failed", "task", c.name(), "repo", repo, "err", err)
+		return
+	}
 	if d.podIsBusy(ctx, st.pod) {
 		// Dropped rather than queued: the card stays where it is, so
 		// moving it again once the current run finishes is the retry. A
@@ -314,7 +357,7 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 	// hung, and cancelling it cannot reach the detached run anyway.
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	rc, err := d.exec(ctx, st.pod, []string{"sh", "-c", launchLine, st.script, c.ID})
+	rc, err := d.exec(ctx, st.pod, []string{"sh", "-c", launchLine, st.script, c.ID, repo})
 	if err != nil {
 		slog.Error("launch failed", "task", c.name(), "repo", repo, "err", err)
 		return
@@ -322,6 +365,15 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 	// "launched", not "finished": the run is detached and outlives this.
 	// The log in the pod and the card are where the outcome lives.
 	slog.Info("launched", "task", c.name(), "repo", repo, "rc", rc)
+}
+
+// ensureAwake is the wake, bounded. Not held in memory between calls:
+// scaling an awake set to its own size is a no-op, so asking every time
+// costs one read and can never disagree with the cluster.
+func (d *dispatcher) ensureAwake(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, wakeTimeout)
+	defer cancel()
+	return d.wake(ctx)
 }
 
 // podIsBusy reports whether a stage is already running in this pod, or

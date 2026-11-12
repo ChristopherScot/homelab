@@ -1,4 +1,5 @@
-# Only what the dispatcher needs: exec one command in a session pod.
+# Only what the dispatcher needs: wake the session StatefulSet, and exec
+# one command in a session pod.
 #
 # Hand-written because homelabctl generates no RBAC, and listed under
 # manifests: in config.yaml so render copies it beside the generated
@@ -6,10 +7,13 @@
 # generated - the secrets block creates one named after the service and
 # runs the pod as it - so this only binds a Role to that name.
 #
-# No pods get/list, unlike the nightly-runner Role the CronJobs use:
-# kubectl reads the pod to choose a container before it execs, and this
-# service names the pod and posts straight to the exec subresource, which
-# the API server authorises as `create` on pods/exec alone.
+# No pods get/list, unlike the nightly-runner Role the session-sleep
+# CronJob uses: kubectl reads the pod to choose a container before it
+# execs, and this service names the pod and posts straight to the exec
+# subresource, which the API server authorises as `create` on pods/exec
+# alone. The scale grant is name-scoped so the dispatcher cannot scale
+# desloppify, which shares the namespace. `patch` is not granted: the
+# wake reads the scale and PUTs it back, which is `update`.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -19,6 +23,14 @@ rules:
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    resourceNames: ["claude-session"]
+    verbs: ["get"]
+  - apiGroups: ["apps"]
+    resources: ["statefulsets/scale"]
+    resourceNames: ["claude-session"]
+    verbs: ["get", "update"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

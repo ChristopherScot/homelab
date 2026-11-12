@@ -10,7 +10,7 @@ a `noop`, which is the audit trail of every card movement. That table is
 the safety property: a pod moving a card to `in-progress` cannot
 re-trigger the author, because `in-progress` triggers nothing. Keep it in
 step with the column graph written down in
-`claude-pods/lib/nightly-common.sh`.
+`claude-pods/lib/pod-common.sh`.
 
 ## What a delivery goes through
 
@@ -22,30 +22,40 @@ step with the column graph written down in
 3. The card's `repo:<name>` label is read back from the Kaneo API - the
    payload carries no labels - resolved to `owner/name`, and checked
    against the list of repos the target pod works (`REPOS_POD<n>`).
-4. The pod's lock file is probed with `flock -n`, the same file the
+4. The `claude-session` StatefulSet is woken: scaled to one past the
+   highest ordinal `routes` names and waited on until every pod is
+   ready, bounded at ten minutes. The `session-sleep` CronJob in
+   `claude-pods/` is the matching sleep. A wake that fails is logged for
+   the card and nothing is exec'd; the sweep below is the retry.
+5. The pod's lock file is probed with `flock -n`, the same file the
    scripts lock. A pod that is already running a stage is left alone and
    the card stays where it is: moving it again later is the retry.
-5. The stage is launched detached (`setsid nohup ... &`) through the
+6. The stage is launched detached (`setsid nohup ... &`) through the
    Kubernetes exec API, so it outlives this process, a rollout and any
-   network blip.
+   network blip. It is handed the task id and the repo, since
+   `stage-author` refuses a named task without one.
 
 `POST /reconcile`, behind the same signature, sweeps the three dispatching
 columns for cards that sat there longer than `RECONCILE_STALE` (4h) and
 whose work does not exist on GitHub - no pull request, no
-`nightly/integration` status, no merge - and re-dispatches them.
-`POST /reconcile?dry` reports without launching. The `kaneo-reconcile`
-CronJob in `claude-pods/` is the caller; it is declared hourly and is
-suspended until a dry run has been seen on the real board.
+`nightly/integration` status, no merge - and re-dispatches them. It also
+sweeps `in-progress`, where the author parks a card before working it: a
+card stale there was stranded by an author that died, and goes back to
+the author without the GitHub check, because judging whatever work exists
+is the author's own job. `POST /reconcile?dry` reports without launching
+or waking. The hourly `kaneo-reconcile` CronJob in `claude-pods/` is the
+caller.
 
 ## Layout
 
 ```
 main.go        process lifecycle: logging, timeouts, shutdown
 server.go      routes, metrics middleware, the bounded signed read
-dispatch.go    the column table, label lookup, busy probe, launch
+dispatch.go    the column table, label lookup, wake, busy probe, launch
 reconcile.go   the sweep, and the GitHub questions it asks
-kube.go        exec through the API server with the pod's own identity
-rbac.yaml      the Role that allows that exec; listed in config.yaml
+kube.go        exec and the StatefulSet wake through the API server,
+               with the pod's own identity
+rbac.yaml      the Role that allows both; listed in config.yaml
 config.yaml    what this service is, for homelabctl
 deploy/        Kubernetes manifests, rendered from config.yaml
 ```

@@ -66,7 +66,7 @@ func TestInertColumnIsLoggedNotDispatched(t *testing.T) {
 		t.Fatalf("inert column = %d, want 202", w.Code)
 	}
 	f.wantLog(`msg=noop task=T-1 column=in-progress`)
-	f.wantNoLaunch()
+	f.wantUntouched()
 	if n := f.kaneo.calls(); n != 0 {
 		t.Errorf("an inert column looked up labels (%d Kaneo calls)", n)
 	}
@@ -100,23 +100,67 @@ func TestDispatchingColumnLaunchesTheStageInItsPod(t *testing.T) {
 	if l[0].pod != "claude-session-0" {
 		t.Errorf("launched in %s, want claude-session-0 for to-do", l[0].pod)
 	}
-	// The script and the raw task id arrive as positional arguments, so
-	// neither is spliced into shell text.
-	want := []string{"sh", "-c", launchLine, "/usr/local/bin/nightly-author", "t2"}
+	// The script, the raw task id and the resolved repo arrive as
+	// positional arguments, so none is spliced into shell text. The repo
+	// is there because stage-author refuses a named task without one.
+	want := []string{"sh", "-c", launchLine, "/usr/local/bin/stage-author", "t2", "TestOwner/testrepo"}
 	if !slices.Equal(l[0].argv, want) {
 		t.Errorf("argv = %q, want %q", l[0].argv, want)
 	}
-	f.wantLog("msg=start task=t2 repo=TestOwner/testrepo pod=claude-session-0 script=nightly-author")
+	f.wantLog("msg=start task=t2 repo=TestOwner/testrepo pod=claude-session-0 script=stage-author")
 	f.wantLog("msg=launched task=t2 repo=TestOwner/testrepo rc=0")
+}
+
+// The set sleeps at 0 replicas when idle, so the busy probe would fail
+// against a pod that does not exist and read as busy forever. The wake
+// comes first, once, and only when there is something to launch.
+func TestSessionPodsAreWokenBeforeTheBusyProbe(t *testing.T) {
+	f := newFixture(t)
+	f.kaneo.labels["t2"] = []string{"repo:testrepo"}
+	f.signed("/", move("t2", "to-do"))
+	if n, first := f.pods.woken(); n != 1 || first != "wake" {
+		t.Errorf("woken %d times, first action %q; want one wake before any exec", n, first)
+	}
+	if len(f.pods.launches()) != 1 {
+		t.Error("the stage was not launched after the wake")
+	}
+}
+
+// A wake that fails must be reported as such, not as "cannot read
+// labels" or as a busy pod, and nothing may be exec'd into a set that
+// never came up.
+func TestFailedWakeIsLoggedAndNothingIsExecd(t *testing.T) {
+	f := newFixture(t)
+	f.pods.wakeErr = errors.New("claude-session not ready after 10m0s of waking: 1 of 3 ready")
+	f.kaneo.labels["t2"] = []string{"repo:testrepo"}
+	f.signed("/", move("t2", "to-do"))
+	if calls := f.pods.all(); len(calls) != 0 {
+		t.Errorf("exec'd into a set that did not wake: %v", calls)
+	}
+	f.wantLog(`msg="wake failed" task=t2 repo=TestOwner/testrepo err="claude-session not ready after 10m0s of waking: 1 of 3 ready"`)
+}
+
+// Stages are pinned to pods by ordinal, so the wake must cover the
+// highest ordinal any route names, and it is derived from routes so a
+// fourth stage cannot be added without being woken.
+func TestWakeCoversEveryRoutedPod(t *testing.T) {
+	if got := wakeReplicas(); got != 3 {
+		t.Errorf("wakeReplicas() = %d, want 3 for claude-session-0..2", got)
+	}
+	for pod, want := range map[string]int{"claude-session-0": 0, "claude-session-2": 2, "claude-session-10": 10} {
+		if got := ordinal(pod); got != want {
+			t.Errorf("ordinal(%s) = %d, want %d", pod, got, want)
+		}
+	}
 }
 
 func TestEachColumnRoutesToItsOwnPod(t *testing.T) {
 	for _, tc := range []struct {
 		column, pod, script string
 	}{
-		{"to-do", "claude-session-0", "/usr/local/bin/nightly-author"},
-		{"in-review", "claude-session-2", "/usr/local/bin/nightly-test"},
-		{"mergeable", "claude-session-1", "/usr/local/bin/nightly-merge"},
+		{"to-do", "claude-session-0", "/usr/local/bin/stage-author"},
+		{"in-review", "claude-session-2", "/usr/local/bin/stage-test"},
+		{"mergeable", "claude-session-1", "/usr/local/bin/stage-merge"},
 	} {
 		t.Run(tc.column, func(t *testing.T) {
 			f := newFixture(t)
@@ -148,13 +192,13 @@ func TestBusyProbeRunsInTheStagePodBeforeTheLaunch(t *testing.T) {
 // The probe must lock the file the scripts lock, override included. Read
 // from the script itself, so a change there fails here.
 func TestBusyProbeLocksWhatTheScriptsLock(t *testing.T) {
-	src, err := os.ReadFile("../../claude-pods/lib/nightly-common.sh")
+	src, err := os.ReadFile("../../claude-pods/lib/pod-common.sh")
 	if err != nil {
 		t.Fatal(err)
 	}
 	const lockExpr = `"${NIGHTLY_LOCK:-/tmp/nightly.lock}"`
 	if !strings.Contains(string(src), lockExpr) {
-		t.Fatalf("nightly-common.sh no longer locks %s; busyProbe must change with it", lockExpr)
+		t.Fatalf("pod-common.sh no longer locks %s; busyProbe must change with it", lockExpr)
 	}
 	if !strings.Contains(busyProbe, lockExpr) {
 		t.Errorf("busyProbe = %q does not lock %s", busyProbe, lockExpr)
@@ -188,7 +232,8 @@ func TestPodThatDoesNotWorkTheRepoIsSkipped(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.labels["t2"] = []string{"repo:elsewhere"}
 	f.signed("/", move("t2", "to-do"))
-	f.wantNoLaunch()
+	// A skipped card must not wake the set either: a skip costs nothing.
+	f.wantUntouched()
 	f.wantLog(`reason="claude-session-0 does not work TestOwner/elsewhere"`)
 }
 

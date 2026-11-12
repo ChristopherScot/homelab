@@ -13,7 +13,7 @@ import (
 func boardWith(column, id, ticket, createdAt string) map[string]any {
 	return map[string]any{"data": map[string]any{"columns": []map[string]any{
 		{"slug": column, "tasks": []map[string]any{{"id": id, "ticketId": ticket, "createdAt": createdAt}}},
-		{"slug": "in-progress", "tasks": []map[string]any{{"id": "busy", "ticketId": "T-9", "createdAt": ago(99 * time.Hour)}}},
+		{"slug": "needs-human-review", "tasks": []map[string]any{{"id": "waiting", "ticketId": "T-9", "createdAt": ago(99 * time.Hour)}}},
 	}}}
 }
 
@@ -65,10 +65,45 @@ func TestInertColumnsAreNotSwept(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
 	f.moved("t1", 1*time.Hour)
-	// boardWith also plants a 99h-old card in in-progress.
+	// boardWith also plants a 99h-old card in needs-human-review.
 	if s := f.reconcile(false); s.checked != 1 {
-		t.Errorf("checked %d cards, want 1: in-progress owes nothing", s.checked)
+		t.Errorf("checked %d cards, want 1: needs-human-review owes nothing", s.checked)
 	}
+}
+
+// The author moves a card to In Progress first and works second, so an
+// author that dies in between strands it where nothing dispatches from.
+// A stale card there goes back to the author - with its work-exists
+// check skipped, because judging existing work is the author's job and
+// it must see the card to do it. CLA-15, 2026-11-10.
+func TestStrandedInProgressCardIsHandedBackToTheAuthor(t *testing.T) {
+	f := newFixture(t)
+	f.stale("in-progress")
+	// Work exists: an open pull request. For any dispatching column that
+	// would mean "skip"; here it is precisely what the author must judge.
+	f.github.prs["TestOwner:fix/t1"] = openPR("abc")
+	s := f.reconcile(false)
+	if len(s.redispatched) != 1 || s.redispatched[0] != "T-1 (in-progress, 5h)" {
+		t.Errorf("sweep = %+v, want T-1 handed back after 5h in in-progress", s)
+	}
+	l := f.pods.launches()
+	if len(l) != 1 || l[0].pod != "claude-session-0" || l[0].argv[3] != "/usr/local/bin/stage-author" || l[0].argv[4] != "t1" || l[0].argv[5] != "TestOwner/testrepo" {
+		t.Errorf("launches = %v, want the author stage in claude-session-0 with t1 and its repo", l)
+	}
+	if hits := f.github.calls(); len(hits) != 0 {
+		t.Errorf("a stranded card was looked up on GitHub: %v; that judgement is the author's", hits)
+	}
+}
+
+func TestFreshInProgressCardIsLeftAlone(t *testing.T) {
+	f := newFixture(t)
+	f.kaneo.board = boardWith("in-progress", "t1", "T-1", ago(10*time.Hour))
+	f.moved("t1", 1*time.Hour)
+	s := f.reconcile(false)
+	if s.checked != 1 || len(s.redispatched)+len(s.skipped)+len(s.errors) != 0 {
+		t.Errorf("sweep = %+v, want the card checked and left alone: the author may still be working it", s)
+	}
+	f.wantUntouched()
 }
 
 func TestStaleCardWhoseWorkExistsIsSkipped(t *testing.T) {
@@ -107,6 +142,9 @@ func TestDryRunReportsWithoutLaunching(t *testing.T) {
 	if calls := f.pods.all(); len(calls) != 0 {
 		t.Errorf("a dry run touched a pod: %v", calls)
 	}
+	// Nor woke the set: a dry run on a sleeping board must leave it
+	// asleep, or the hourly sweep's dry run would be a wake-up call.
+	f.wantUntouched()
 }
 
 // Created straight into the column, never moved: creation is the clock.
