@@ -83,6 +83,15 @@ spec:
           # probe and never let anyone in to run it. Probe the S3 port
           # for liveness of the process instead, and leave "is the
           # cluster laid out" to the init script, which says so plainly.
+          #
+          # What that costs: this reports Ready as soon as the listener
+          # binds, which is before garage can serve an object. A pod
+          # that restarts into an unlaid-out state looks Ready and
+          # fails every client instead of failing itself. Free while
+          # nothing consumes the bucket; once the workers pull their
+          # reference material at boot, switch readiness back to
+          # /health -- by then the layout is a permanent fixture and
+          # the lockout this avoids cannot happen.
           readinessProbe:
             tcpSocket:
               port: s3
@@ -109,6 +118,11 @@ spec:
             storage: 2Gi
     # Object data. 10Gi is far more than the ~74MB of reference material
     # needs, leaving room for anything else that wants a bucket later.
+    #
+    # Growing this means growing garage's advertised capacity too -
+    # GARAGE_CAPACITY in bootstrap/garage-init.sh, re-applied with a new
+    # layout version. Garage refuses writes past the capacity it was
+    # told about, regardless of how much disk is actually free.
     - metadata:
         name: data
       spec:

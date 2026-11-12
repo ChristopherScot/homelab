@@ -1,0 +1,79 @@
+# PoC: an ephemeral worker, to prove the storage model before the real
+# redesign commits to it.
+#
+# What it demonstrates, in order:
+#   1. a worker with NO PersistentVolumeClaims can obtain its reference
+#      material (books, skills, plugins) at boot from Garage
+#   2. the pull is fast enough to sit in a boot path - the measurement
+#      is printed, not assumed
+#   3. each worker gets its OWN copy in an emptyDir, so nothing is
+#      shared and no worker can see or edit another's files
+#   4. the pod leaves nothing behind, so it scales to zero by existing
+#
+# Run it with: kubectl apply -f claude-pods/worker/poc-worker-job.yaml
+# then: kubectl logs -n claude-pods job/poc-worker
+#
+# Requires the garage-s3-reference secret, which External Secrets
+# projects from kv/garage/s3-reference. Until that Vault path is seeded
+# the job stays Pending on the missing secret - which is itself the
+# correct behaviour, not a failure to debug.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: poc-worker
+  namespace: claude-pods
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        # The reference pull. An init container rather than part of the
+        # worker so a failed pull fails the pod outright instead of
+        # letting a stage script run against missing books.
+        - name: fetch-reference
+          image: amazon/aws-cli:2.17.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              E="$AWS_ENDPOINT_URL"
+              start=$(date +%s)
+              aws --endpoint-url "$E" s3 sync s3://claude-reference/ /ref/ --only-show-errors
+              end=$(date +%s)
+              echo "pulled $(du -sh /ref | cut -f1) in $((end-start))s"
+              echo "  files: $(find /ref -type f | wc -l)"
+          envFrom:
+            - secretRef:
+                name: garage-s3-reference
+          volumeMounts:
+            - name: ref
+              mountPath: /ref
+      containers:
+        - name: worker
+          image: busybox:1.36
+          command: ["sh", "-c"]
+          args:
+            - |
+              echo "=== reference material present ==="
+              for d in books skills plugins; do
+                n=$(find "/ref/$d" -type f 2>/dev/null | wc -l)
+                echo "  $d: $n files"
+              done
+              echo "=== this copy is the worker's own ==="
+              # Writable because it is a local emptyDir, not a shared
+              # mount - which is the point. Another worker's copy is a
+              # different emptyDir on a different node.
+              echo scratch > /ref/.worker-local && echo "  local write OK (own copy)"
+              echo "=== no PVC is attached ==="
+              mount | grep -cE 'longhorn|nfs' | sed 's/^/  longhorn\/nfs mounts: /'
+          volumeMounts:
+            - name: ref
+              mountPath: /ref
+      volumes:
+        # Not a PVC. Dies with the pod, which is what makes a worker
+        # disposable and lets the set scale to zero with nothing left
+        # attached.
+        - name: ref
+          emptyDir: {}

@@ -7,8 +7,14 @@
 # /health reports unhealthy until it is done, which is why the pod
 # probes the S3 port rather than /health.
 #
-# Idempotent: every step checks first, so re-running after a redeploy
-# is safe and reports what already existed.
+# Bucket, key and grant are check-then-create and safe to re-run; the
+# grant is re-applied unconditionally, which repairs a drifted one.
+#
+# The layout step is weaker: assign and apply are two calls, so an
+# apply that fails leaves a staged layout the next run will re-stage.
+# It reads the staged version rather than guessing, and fails loudly if
+# it cannot, but a cluster wedged mid-layout needs `garage layout show`
+# and a human.
 #
 # The secret key is printed ONCE at the end, by `garage key info
 # --show-secret`. Put it in Vault, not in this repo:
@@ -21,11 +27,16 @@ POD="${GARAGE_POD:-garage-0}"
 BUCKET="${GARAGE_BUCKET:-claude-reference}"
 KEY="${GARAGE_KEY:-claude-worker}"
 ZONE="${GARAGE_ZONE:-home}"
-CAPACITY="${GARAGE_CAPACITY:-10G}"
+# Gi, not G: this must track the data PVC in garage/statefulset.yaml,
+# and 10G (decimal) against a 10Gi (binary) volume made garage advertise
+# 9.3 GiB for a 10 GiB disk. Harmless at 74MB of use; misleading if the
+# store is ever grown, because the two knobs live in different files.
+CAPACITY="${GARAGE_CAPACITY:-10Gi}"
 
 # Garage logs an RPC handshake to stderr on every call, which
-# buries this script's own output. Callers that need stderr
-# (the credential dump) re-enable it explicitly.
+# buries this script's own output. The redirect is inside the
+# function, so a caller cannot re-enable stderr by adding 2>&1 -
+# use kubectl exec directly if you ever need it.
 g() { kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>/dev/null; }
 
 echo "=== garage-init: ns=$NS pod=$POD ==="
@@ -38,11 +49,20 @@ if g status 2>/dev/null | grep -q 'NO ROLE ASSIGNED'; then
   [ -n "$node" ] || { echo "FATAL: could not read node id" >&2; exit 1; }
   echo "assigning layout to ${node:0:16}... zone=$ZONE capacity=$CAPACITY"
   g layout assign -z "$ZONE" -c "$CAPACITY" "$node" >/dev/null
-  # Version 1 on a fresh cluster; a later re-run would need the next
-  # number, which `layout show` prints.
-  ver="$(g layout show 2>/dev/null | grep -oE 'version [0-9]+' | tail -1 | awk '{print $2}')"
-  g layout apply --version "${ver:-1}" >/dev/null
-  echo "layout applied"
+  # Read the staged version rather than assuming: garage prints
+  # "Current cluster layout version: N", and applying the wrong number
+  # is refused. The first draft globbed for "version N" without the
+  # colon, so it never matched and silently fell back to 1 on every
+  # run - correct only because a fresh cluster's first layout IS 1.
+  ver="$(g layout show | sed -n 's/.*layout version: *\([0-9][0-9]*\).*/\1/p' | tail -1)"
+  if [ -z "$ver" ]; then
+    echo "FATAL: could not read the staged layout version from:" >&2
+    g layout show >&2
+    exit 1
+  fi
+  # apply takes the version being created, which is one past current.
+  g layout apply --version "$((ver + 1))" >/dev/null
+  echo "layout applied (version $((ver + 1)))"
 else
   echo "layout: already assigned"
 fi
