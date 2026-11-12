@@ -1,0 +1,146 @@
+# Garage: S3-compatible object storage, in-cluster.
+#
+# Here to serve reference material (books, skills, plugins) to the
+# claude worker pods without a shared filesystem. A read-only RWX mount
+# would also work, but object storage gives stronger isolation for free:
+# there is no filesystem for one worker to see another through, only
+# HTTP against a bucket. It also leaves nothing attached between tasks,
+# so workers really do scale to zero.
+#
+# MinIO was tried here before and never worked; its Services are still
+# orphaned in the minio namespace with no endpoints. Garage is a single
+# small daemon by comparison - one binary, SQLite metadata, no operator.
+#
+# Single node, replication_factor 1. Garage's docs warn that this gives
+# no redundancy and is not for production data, which is the right
+# trade here: everything in it is reference material seeded by hand and
+# re-seedable in seconds.
+#
+# Be precise about what survives a disk loss, because the two volumes
+# differ and the weaker one is the one that matters. data-garage-0 is
+# on longhorn (numberOfReplicas 2). meta-garage-0 is on
+# longhorn-single-ssd, which is numberOfReplicas 1 - a single replica,
+# on the same node the pod runs on. Meta holds the bucket, the alias,
+# the access key and its grant, and the object-to-block mappings, so
+# the replicated data volume is unreadable without it.
+#
+# Recovery from a meta loss is therefore not "Longhorn has a copy": it
+# is re-run bootstrap/garage-init.sh and re-upload. That mints a NEW
+# access key, which makes kv/garage/s3-reference stale - every worker
+# fails to authenticate until Vault is re-seeded. Both volumes are in
+# Longhorn's default recurring-job group, so there are daily snapshots
+# and weekly backups to fall back on first.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: garage
+  namespace: garage
+spec:
+  serviceName: garage
+  replicas: 1
+  selector:
+    matchLabels:
+      app: garage
+  template:
+    metadata:
+      labels:
+        app: garage
+      annotations:
+        # Restart when the rpc secret rotates.
+        reloader.stakater.com/auto: "true"
+    spec:
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+      containers:
+        - name: garage
+          # v2.5.0, not a commit tag: the floating tags on this repo are
+          # per-commit builds. >= 2.0 also makes [admin] admin_token
+          # optional, which is why none is set below.
+          image: dxflrs/garage:v2.5.0
+          ports:
+            - name: s3
+              containerPort: 3900
+            - name: rpc
+              containerPort: 3901
+            - name: admin
+              containerPort: 3903
+          env:
+            # The secret comes from Vault via ExternalSecret rather than
+            # the config file, so garage.toml can stay a plain ConfigMap
+            # with nothing sensitive in it. Env overrides the file value.
+            - name: GARAGE_RPC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: garage-rpc
+                  key: rpc-secret
+          volumeMounts:
+            - name: meta
+              mountPath: /var/lib/garage/meta
+            - name: data
+              mountPath: /var/lib/garage/data
+            - name: config
+              mountPath: /etc/garage.toml
+              subPath: garage.toml
+              readOnly: true
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          # /health reports unhealthy until a cluster layout is applied,
+          # which is a one-time manual step (bootstrap/garage-init.sh) --
+          # so a fresh deploy would sit unready forever behind this
+          # probe and never let anyone in to run it. Probe the S3 port
+          # for liveness of the process instead, and leave "is the
+          # cluster laid out" to the init script, which says so plainly.
+          #
+          # What that costs: this reports Ready as soon as the listener
+          # binds, which is before garage can serve an object. A pod
+          # that restarts into an unlaid-out state looks Ready and
+          # fails every client instead of failing itself. Free while
+          # nothing consumes the bucket; once the workers pull their
+          # reference material at boot, switch readiness back to
+          # /health -- by then the layout is a permanent fixture and
+          # the lockout this avoids cannot happen.
+          readinessProbe:
+            tcpSocket:
+              port: s3
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            tcpSocket:
+              port: s3
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: config
+          configMap:
+            name: garage-config
+  volumeClaimTemplates:
+    # Metadata on SSD: it is small and latency-sensitive (SQLite).
+    - metadata:
+        name: meta
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-single-ssd
+        resources:
+          requests:
+            storage: 2Gi
+    # Object data. 10Gi is far more than the ~74MB of reference material
+    # needs, leaving room for anything else that wants a bucket later.
+    #
+    # Growing this means growing garage's advertised capacity too -
+    # GARAGE_CAPACITY in bootstrap/garage-init.sh, re-applied with a new
+    # layout version. Garage refuses writes past the capacity it was
+    # told about, regardless of how much disk is actually free.
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 10Gi
