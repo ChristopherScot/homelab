@@ -81,9 +81,10 @@ spec:
       # resume it.
       backoffLimit: 0
       # 3h for the run itself (the historical budget) plus 10 minutes —
-      # wait-ready's --timeout below, the same fact in seconds — for when
-      # the 02:55 wake-up is still pulling images. The ScaledObject's
-      # window end is derived from this; see the invariant on
+      # the two wait-ready attempts below at 300s each, the same fact in
+      # seconds — for when the 02:55 wake-up is still pulling images or
+      # the pod is being recreated under us. The ScaledObject's window
+      # end is derived from this; see the invariant on
       # startingDeadlineSeconds above.
       activeDeadlineSeconds: 11400
       template:
@@ -97,6 +98,29 @@ spec:
             # `kubectl wait pod` would. If KEDA never woke it (KEDA down,
             # ScaledObject missing), this times out and the job fails
             # visibly instead of exec'ing into nothing.
+            #
+            # Two attempts, because a ready pod can stop being ready
+            # while we wait for it. argocd-image-updater polls
+            # desloppify-pod:latest every 5 minutes with
+            # update-strategy: digest, and a new digest patches the
+            # StatefulSet, which recreates the pod. On 2026-11-11 that
+            # landed at 07:59:52Z -- eight seconds before this container
+            # started -- and the first attempt watched a pod being
+            # replaced until it timed out, so the night never ran. The
+            # same thing happened on 11-10 via a manifest change in
+            # #147.
+            #
+            # A retry loop would be the obvious shape, but this image
+            # ships no shell (its entrypoint is kubectl), so each
+            # attempt is its own container instead: they run in order,
+            # and the second starts only if the first failed to see a
+            # settled rollout. 300s each rather than one 600s wait, so
+            # the pair still fits the 10 minutes activeDeadlineSeconds
+            # budgets for it.
+            #
+            # This retries only the wait. backoffLimit stays 0: the
+            # trigger below must not run twice, because a half-finished
+            # session has already written state and pushed a branch.
             - name: wait-ready
               image: registry.k8s.io/kubectl:v1.30.14
               args:
@@ -105,7 +129,16 @@ spec:
                 - statefulset/desloppify
                 - -n
                 - claude-pods
-                - --timeout=600s
+                - --timeout=300s
+            - name: wait-ready-retry
+              image: registry.k8s.io/kubectl:v1.30.14
+              args:
+                - rollout
+                - status
+                - statefulset/desloppify
+                - -n
+                - claude-pods
+                - --timeout=300s
           containers:
             - name: trigger
               # registry.k8s.io is upstream and keeps its version tags.
