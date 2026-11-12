@@ -171,6 +171,19 @@ vault write auth/kubernetes/role/monitoring \
   policies="monitoring" \
   ttl=1h
 
+# garage: in-cluster S3. Reads only its own RPC secret; the S3 access
+# keys it mints for clients are read by those clients' policies, not
+# this one.
+vault policy write garage - <<EOF
+path "kv/data/garage/*"     { capabilities = ["read"] }
+path "kv/metadata/garage/*" { capabilities = ["read", "list"] }
+EOF
+vault write auth/kubernetes/role/garage \
+  bound_service_account_names="external-secrets-sa" \
+  bound_service_account_namespaces="garage" \
+  policies="garage" \
+  ttl=1h
+
 # homepage reads keys for every app it shows widgets for. Distinct from
 # the per-app roles above because it spans namespaces.
 vault policy write homepage - <<EOF
