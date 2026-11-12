@@ -96,7 +96,13 @@ done
 # makes the grant declarative, so this also downgrades a key that was
 # created RW by an earlier version of this script.
 g bucket deny --write "$BUCKET" --key "$KEY_RO" >/dev/null 2>&1 || true
-g bucket allow --read "$BUCKET" --key "$KEY_RO" >/dev/null
+# Not silenced like the deny above: if this fails, garage's reason is
+# the only clue, and g() sends stderr to /dev/null.
+g bucket allow --read "$BUCKET" --key "$KEY_RO" >/dev/null 2>&1 \
+  || { echo "FATAL: could not grant read on $BUCKET to $KEY_RO" >&2
+       kubectl exec -n "$NS" "$POD" -- /garage bucket allow --read \
+         "$BUCKET" --key "$KEY_RO" >&2 || true
+       exit 1; }
 echo "grant: $KEY_RO has R on $BUCKET"
 g bucket allow --read --write "$BUCKET" --key "$KEY_RW" >/dev/null
 echo "grant: $KEY_RW has RW on $BUCKET"
