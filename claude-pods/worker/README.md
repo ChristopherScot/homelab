@@ -25,6 +25,17 @@ both: workers pull their own copy over HTTP, so there is no filesystem
 to share, and a read-only key makes write isolation structural rather
 than behavioural.
 
+## Known discrepancy
+
+The live layout advertises **9.3 GiB**, not 10 GiB. It was applied when
+`garage-init.sh` defaulted to `10G` (decimal) against a `10Gi` (binary)
+PVC. The script now says `10Gi`, but re-running it will not correct the
+applied layout - the layout step short-circuits on "already assigned".
+
+Harmless at 74MB of use. Fixing it means `garage layout assign -c 10Gi`
+and `layout apply --version 2`, which is a live cluster change and not
+worth doing until something needs the space.
+
 ## What is running
 
 - **Garage** (`garage` namespace), single node, `replication_factor 1`,
@@ -71,13 +82,47 @@ and the number of Longhorn/NFS mounts it holds — which should be zero.
 
 - **The dispatcher change.** Today `ROUTES` maps a column to a fixed
   pod name. It would map a column to a *script*, and pick any idle
-  worker. The busy lock already works this way, so this is a modest
-  change rather than a rewrite.
+  worker. The busy lock already works this way (`podIsBusy` asks a pod,
+  not a role), so this is a modest change rather than a rewrite.
+
+  One thing that looked like a blocker and is not: `podWorksRepo`
+  refuses to dispatch a repo that is not on that pod's list in
+  `/run/secrets/repos/pod<n>`, which would make workers
+  non-interchangeable. Measured, the lists are near-identical - 24 of
+  26 repos are common to all three pods, and only pod1 carries the
+  other 2. So the check is guarding against a bad mount rather than
+  enforcing specialization, and giving every worker the union of 26
+  keeps it as a safety net while making workers genuinely
+  interchangeable.
 - **Remote Control sessions.** Workers are anonymous, so the
   `pod0-author` naming that tells you which agent is doing what would
   be lost. Either name the session after the card it picked up, or keep
   one long-lived pod for attaching that never does stage work.
 - **The go-build cache.** 1.4GB per session pod today, regenerable but
   not free. An ephemeral worker starts cold.
+
+  Note the repo clones are NOT a concern, which was not obvious: a
+  session pod carries 32 full clones (153MB), but a worker only needs
+  the one repo its card names, and `git clone --depth 50` of homelab
+  measured 1 second and 3.2MB. Cloning on demand is cheaper than
+  carrying warm clones, so only the build cache is a real loss.
 - **Transcripts.** `.claude/projects` is ~79MB of session history. A
   resumed card currently has it; an ephemeral worker would not.
+
+## What checks out
+
+Verified against the live cluster and the scripts, so the design does
+not rest on assumption:
+
+- **The stage scripts do not touch $HOME.** No reference to `$HOME`,
+  `~/` or `.claude/` in nightly-author.sh, nightly-merge.sh or
+  nightly-test.sh. They need their lib (in the image) and
+  `/workspace/<repo>` (which a worker clones). So an ephemeral worker
+  with no persistent home can run them unchanged - this was the last
+  structural unknown.
+- **Workers can be interchangeable.** See the podWorksRepo note above.
+- **Cloning on demand beats carrying clones.** 1s and 3.2MB shallow,
+  against 153MB of warm clones per pod.
+- **Garage adoption works.** Argo adopted the hand-applied StatefulSet
+  rather than fighting it; the pod rolled once on a spec change and the
+  layout, bucket and keys survived on their PVCs.
