@@ -190,3 +190,8 @@ not rest on assumption:
 - **Garage adoption works.** Argo adopted the hand-applied StatefulSet
   rather than fighting it; the pod rolled once on a spec change and the
   layout, bucket and keys survived on their PVCs.
+- **The S3 data path works end to end.** Not inferred from "garage is
+  running" - a pod in the cluster uploaded an object, listed it,
+  downloaded it and diffed it byte-for-byte: upload 632ms, download
+  578ms, round trip OK. That is the assumption the whole worker design
+  rests on, and it is now measured rather than assumed.
