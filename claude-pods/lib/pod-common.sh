@@ -573,3 +573,164 @@ kaneo_note_and_requeue() {
 
 $summary"
 }
+
+# The one disk-pressure threshold, shared by the warning and the prune:
+# the point where this home is tight enough to act on. Overridable so
+# tuning it is one env var, not two edits.
+HOME_TIGHT_PCT="${HOME_TIGHT_PCT:-85}"
+
+# agent_is_running
+# True if a Claude agent launched by THIS stage is still alive.
+#
+# Two things make this fiddly, and both were found by running it in the
+# pod rather than reasoning about it:
+#
+#   1. It must not ask "do I have a child". The stage shell always has
+#      one: log_to's `tee` is forked by `exec > >(tee ...)` and lives
+#      for the whole run by design, so a child-counting guard never
+#      lets the prune run at all.
+#   2. It must not ask "is any process named claude alive". An attached
+#      Remote Control session (`claude --remote-control ...`, under
+#      tmux) is one, and it is nobody's stage agent - blocking the
+#      prune whenever a human is attached is the opposite of useful.
+#
+# So: a process named claude whose ancestry leads back to this shell.
+# Walking ancestry rather than checking a direct child because bash may
+# interpose a subshell for `out=$(timeout ... claude -p ...)`, and the
+# three stages each invoke the agent in a different shape.
+#
+# Reads /proc rather than pgrep/ps: the pod image is
+# node:22-trixie-slim with no procps, so both are missing there. A
+# guard built on them passes on a developer's Mac and does nothing in
+# the pod. Falls back to pgrep where /proc is absent (macOS), so the
+# same code stays testable off-cluster.
+agent_is_running() {
+  local p comm stat state anc hops
+  if [ -d /proc ]; then
+    for p in /proc/[0-9]*; do
+      [ -r "$p/comm" ] || continue
+      read -r comm < "$p/comm" 2>/dev/null || continue
+      # comm, verified empirically rather than assumed: the shipped
+      # claude is a Bun-compiled binary named claude.exe that renames
+      # its own main thread to `claude` via prctl, and `timeout` execs
+      # it directly without interposing. Checked against the running
+      # agent in the pod. This is an implementation detail, not a
+      # contract - if a release ever drops the rename, comm becomes
+      # claude.exe, this returns false and the prune runs mid-agent, so
+      # claude.exe is matched too rather than relying on the rename.
+      case "$comm" in claude|claude.exe) ;; *) continue ;; esac
+      stat="$(sed -e 's/.*) //' "$p/stat" 2>/dev/null)" || continue
+      state="$(printf '%s' "$stat" | awk '{print $1}')"
+      # Dead but unreaped is not still working.
+      [ "$state" = Z ] && continue
+      # Climb to pid 1; a bounded walk, so a cycle cannot hang a trap.
+      anc="$(printf '%s' "$stat" | awk '{print $2}')"
+      hops=0
+      while [ -n "$anc" ] && [ "$anc" != 0 ] && [ "$hops" -lt 32 ]; do
+        [ "$anc" = "$$" ] && return 0
+        stat="$(sed -e 's/.*) //' "/proc/$anc/stat" 2>/dev/null)" || break
+        anc="$(printf '%s' "$stat" | awk '{print $2}')"
+        hops=$((hops + 1))
+      done
+    done
+    return 1
+  fi
+  # macOS only, where there is no /proc. Same question as above - a
+  # claude under this shell - asked with pgrep's own ancestry filter so
+  # the tee and an unrelated Remote Control session are both excluded.
+  command -v pgrep >/dev/null 2>&1 || return 1
+  local p
+  for p in $(pgrep -x claude 2>/dev/null); do
+    pgrep -P "$$" >/dev/null 2>&1 || break
+    # Climb this pid's ancestry via ps, which macOS does have.
+    local anc=$p hops=0
+    while [ -n "$anc" ] && [ "$anc" != 1 ] && [ "$hops" -lt 32 ]; do
+      [ "$anc" = "$$" ] && return 0
+      anc="$(ps -o ppid= -p "$anc" 2>/dev/null | tr -d ' ')" || break
+      hops=$((hops + 1))
+    done
+  done
+  return 1
+}
+
+# prune_build_caches
+# Drop the regenerable package and build caches from $HOME.
+#
+# These pods ran out of disk on 2026-11-12 and the failure was not an
+# obvious one: pod2's home hit 100%, Claude Code could not write its
+# session transcript (ENOSPC), the agent exited non-zero AFTER
+# completing its work and reaching a PASS verdict, and stage-test read
+# that exit code as "the pod could not run this" and parked the card in
+# needs-human-review as BLOCKED. A full disk therefore looks like a
+# broken ticket, not like a full disk.
+#
+# What fills it is entirely regenerable - on pod2, go/pkg 1.9G,
+# .npm 1.8G and .cache/go-build 1.2G against .claude at 99M. The stage
+# scripts do not invoke go themselves, but the prompts they render do
+# (author.md and review.md both say `go test ./...`, and
+# nightly-settings.json allow-lists Bash(go:*)), so this grows on its
+# own with every run.
+#
+# Called from a trap so it runs whether the stage succeeded, failed or
+# timed out - the run that fills the disk is exactly the one that will
+# not reach a tidy ending.
+#
+# Pruning only under pressure, not on every exit. ROUTES pins each stage
+# to its own pod and its own home PVC, so there is no cross-stage cache
+# to protect - but pod0 runs the author stage again tomorrow, and today's
+# caches are what keeps that run inside PER_TICKET_TIMEOUT. Dropping them
+# unconditionally buys headroom nobody needed and trades a
+# BLOCKED-on-full-disk for a BLOCKED-on-timeout, which is the same
+# failure wearing a different hat.
+prune_build_caches() {
+  local before after pct
+
+  # The EXIT trap fires as soon as bash stops waiting on its child, which
+  # on SIGTERM is BEFORE a TERM-ignoring child has died. Pruning there
+  # would delete the module cache mid `go test`, and the agent would
+  # report missing packages - an environmental fault wearing a ticket's
+  # clothes, which is the whole thing this function exists to prevent.
+  #
+  # Not `jobs`: the agent runs in the FOREGROUND inside a command
+  # substitution (out=$(timeout ... claude -p ...)), and `jobs` lists
+  # only background jobs, so it is empty in exactly the case this guard
+  # is for.
+  if agent_is_running; then
+    echo "   caches NOT pruned: the agent is still running" >&2
+    return 0
+  fi
+
+  pct="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')"
+  if [ -n "$pct" ] && [ "$pct" -lt "$HOME_TIGHT_PCT" ]; then
+    return 0
+  fi
+
+  before="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
+
+  # go clean rather than rm -rf: the module cache is written read-only,
+  # so rm fails on it and go knows how to drop its own caches.
+  command -v go >/dev/null 2>&1 && {
+    go clean -modcache >/dev/null 2>&1 || true
+    go clean -cache    >/dev/null 2>&1 || true
+  }
+  if command -v npm >/dev/null 2>&1; then
+    npm cache clean --force >/dev/null 2>&1 || true
+  fi
+
+  after="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$before" ] && [ -n "$after" ]; then
+    echo "   caches pruned: $(( (after - before) / 1024 ))MB freed, $(( after / 1024 ))MB now free on $HOME"
+  fi
+}
+
+# warn_if_home_tight
+# Say so BEFORE the work starts, while a human can still act. The
+# ENOSPC above surfaced only as a stage failure an hour into a run.
+warn_if_home_tight() {
+  local pct
+  pct="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')"
+  [ -n "$pct" ] || return 0
+  if [ "$pct" -ge "$HOME_TIGHT_PCT" ]; then
+    echo "WARNING: $HOME is ${pct}% full before this run; a transcript write that fails here reads as a BLOCKED ticket" >&2
+  fi
+}
