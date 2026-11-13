@@ -113,8 +113,11 @@ done
 #    Mac usually has several real `claude` processes of its own (editor
 #    sessions, other agents), none of them descendants of this shell.
 #    The guard correctly ignores them, so there is nothing here to
-#    observe. The pod has one process tree and /proc, which is where
-#    this behaviour is real - run the suite in the image to exercise it:
+#    observe. On Linux - CI and the pod - it runs and it gates: the
+#    any-child and name-only regressions both fail the suite on a clean
+#    ubuntu/node image with no claude running at all. To exercise it
+#    against a real pod, with an attached Remote Control session in the
+#    process table:
 #      kubectl exec -n claude-pods claude-session-0 -- bash <path>/disk-pressure.sh
 cp "$(command -v sleep)" "$tmp/bin/claude"
 if [ -d /proc ]; then
@@ -143,6 +146,10 @@ fi
 #
 #     The harness already calls log_to, so this case just asserts the
 #     prune happens with the tee alive and no agent running.
+#
+#     This one runs everywhere, CI included, and it gates there:
+#     reverting the guard to "any child" fails it on a clean Linux
+#     image with no claude process of any kind running.
 : > "$tmp/pruned.log"
 harness 99 85 'true'
 pruned || fail "did not prune with log_to's tee alive: the guard mistakes the stage's own logging for a running agent"

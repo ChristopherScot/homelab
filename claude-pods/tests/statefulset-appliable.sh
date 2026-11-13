@@ -16,10 +16,20 @@
 # been resized by hand, so the template edit bought nothing and would
 # have cost the delivery path.
 #
-# This check compares the committed volumeClaimTemplates against the
-# live StatefulSet, which is the only thing that can say "immutable
-# field changed". With no cluster reachable it SKIPS rather than passes
-# silently - a check that cannot run must not look like one that did.
+# This check asks the API whether the committed manifest applies, which
+# is the only thing that can say "immutable field changed". That needs
+# a cluster, so in CI it SKIPs - a check that cannot run must not look
+# like one that did.
+#
+# WHAT ACTUALLY GUARANTEES THIS, as of 2026-11-13: nothing but running
+# this test with cluster access. The obvious backstop - Argo alerting
+# on SyncFailed - does not exist here: argocd-notifications-cm in the
+# argocd namespace has zero keys, so although the controller is running
+# it has no triggers configured. Until that changes, a forbidden edit
+# is caught either by someone running this locally or by someone
+# noticing the Application stuck at SyncFailed. If you wire up
+# SyncFailed alerting later, that becomes the real guarantee and this
+# test becomes a pre-push convenience - say so here when you do.
 #
 # Run: claude-pods/tests/statefulset-appliable.sh
 set -uo pipefail
@@ -33,10 +43,15 @@ fail() { echo "FAIL: $*"; exit 1; }
 skip() { echo "SKIP: $*"; exit 0; }
 
 [ -f "$sts" ] || fail "$sts not found"
-command -v kubectl >/dev/null 2>&1 || skip "kubectl not installed"
-kubectl cluster-info >/dev/null 2>&1 || skip "no reachable cluster"
+
+# A skip is a real gap in coverage, not a pass. Say which protection is
+# missing, so a wall of green in CI does not read as "this was checked".
+command -v kubectl >/dev/null 2>&1 \
+  || skip "kubectl not installed - the committed manifest was NOT checked against the API"
+kubectl cluster-info >/dev/null 2>&1 \
+  || skip "no reachable cluster - the committed manifest was NOT checked against the API"
 kubectl get sts "$name" -n "$ns" >/dev/null 2>&1 \
-  || skip "StatefulSet $name not deployed in $ns"
+  || skip "StatefulSet $name not deployed in $ns - nothing to compare against"
 
 # The authoritative check: ask the API whether this manifest applies.
 # --dry-run=server runs the same admission the real sync would.
