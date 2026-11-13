@@ -573,3 +573,54 @@ kaneo_note_and_requeue() {
 
 $summary"
 }
+
+# prune_build_caches
+# Drop the regenerable package and build caches from $HOME.
+#
+# These pods ran out of disk on 2026-11-12 and the failure was not an
+# obvious one: pod2's home hit 100%, Claude Code could not write its
+# session transcript (ENOSPC), the agent exited non-zero AFTER
+# completing its work and reaching a PASS verdict, and stage-test read
+# that exit code as "the pod could not run this" and parked the card in
+# needs-human-review as BLOCKED. A full disk therefore looks like a
+# broken ticket, not like a full disk.
+#
+# What fills it is entirely regenerable - on pod2, go/pkg 1.9G,
+# .npm 1.8G and .cache/go-build 1.2G against .claude at 99M. The stage
+# scripts do not invoke go themselves, but the prompts they render do
+# (author.md and review.md both say `go test ./...`, and
+# nightly-settings.json allow-lists Bash(go:*)), so this grows on its
+# own with every run.
+#
+# Called from a trap so it runs whether the stage succeeded, failed or
+# timed out - the run that fills the disk is exactly the one that will
+# not reach a tidy ending.
+prune_build_caches() {
+  local before after
+  before="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
+
+  # go clean rather than rm -rf: the module cache is written read-only,
+  # so rm fails on it and go knows how to drop its own caches.
+  command -v go >/dev/null 2>&1 && {
+    go clean -modcache >/dev/null 2>&1 || true
+    go clean -cache    >/dev/null 2>&1 || true
+  }
+  command -v npm >/dev/null 2>&1 && npm cache clean --force >/dev/null 2>&1 || true
+
+  after="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
+  if [ -n "$before" ] && [ -n "$after" ]; then
+    echo "   caches pruned: $(( (after - before) / 1024 ))MB freed, $(( after / 1024 ))MB now free on $HOME"
+  fi
+}
+
+# warn_if_home_tight
+# Say so BEFORE the work starts, while a human can still act. The
+# ENOSPC above surfaced only as a stage failure an hour into a run.
+warn_if_home_tight() {
+  local pct
+  pct="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')"
+  [ -n "$pct" ] || return 0
+  if [ "$pct" -ge 85 ]; then
+    echo "WARNING: $HOME is ${pct}% full before this run; a transcript write that fails here reads as a BLOCKED ticket" >&2
+  fi
+}
