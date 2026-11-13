@@ -49,9 +49,17 @@ echo "pruned $*" >> "$PRUNE_LOG"
 G
 chmod +x "$tmp/bin/go"
 
-# A harness shell: sources the library, fakes df at a given fullness,
-# installs the real trap, and optionally holds a TERM-ignoring
-# foreground child so the trap fires while it is alive.
+# A harness shell built the way a stage builds itself.
+#
+# It calls log_to before installing the trap, because that is the stage
+# preamble's order (stage-author.sh, stage-test.sh, stage-merge.sh all
+# do log_to -> ... -> trap). That ordering is not incidental: log_to
+# does `exec > >(tee ...)`, which forks a tee that is a direct child of
+# the stage shell and lives for the whole run. A guard that asks "do I
+# have a child" therefore never lets the prune run - a bug that every
+# test here passed straight through while the harness was a sketch of a
+# stage rather than the shape of one. Build the subject the way
+# production builds it.
 harness() {
   cat > "$tmp/run.sh" <<H
 #!/bin/bash
@@ -60,11 +68,15 @@ export PRUNE_LOG="$tmp/pruned.log"
 set +u; . "$lib" 2>/dev/null; set -u
 HOME_TIGHT_PCT=$2
 df() { printf 'x\n/d 100 1 99 $1%% /\n'; }
+log_to "$tmp/stage.log"
 trap prune_build_caches EXIT
 echo \$\$ > "$tmp/victim.pid"
 $3
 H
   bash "$tmp/run.sh" >"$tmp/out" 2>&1
+  # log_to redirects the shell's own output into the tee, so the
+  # diagnostics land in the stage log rather than on stdout.
+  cat "$tmp/stage.log" >> "$tmp/out" 2>/dev/null || true
 }
 
 : > "$tmp/pruned.log"
@@ -90,43 +102,64 @@ for fn in prune_build_caches warn_if_home_tight; do
     || fail "$fn does not use the shared HOME_TIGHT_PCT threshold"
 done
 
-# 4. The guard must survive TERM arriving from OUTSIDE with a
-#    TERM-ignoring child in the foreground. A background timer inside
-#    the harness would make a `jobs` guard pass for the wrong reason,
-#    so the signal is sent from here.
+# 4. The guard must survive TERM arriving from OUTSIDE while the agent
+#    is still alive. A background timer inside the harness would make a
+#    `jobs`-based guard pass for the wrong reason, so the signal is sent
+#    from here. The stand-in is named `claude` because that is what the
+#    guard looks for - it asks whether THE AGENT is running, not whether
+#    any child is.
+#
+#    Linux only, and not because of a quirk of the test: a developer's
+#    Mac usually has several real `claude` processes of its own (editor
+#    sessions, other agents), none of them descendants of this shell.
+#    The guard correctly ignores them, so there is nothing here to
+#    observe. The pod has one process tree and /proc, which is where
+#    this behaviour is real - run the suite in the image to exercise it:
+#      kubectl exec -n claude-pods claude-session-0 -- bash <path>/disk-pressure.sh
+cp "$(command -v sleep)" "$tmp/bin/claude"
+if [ -d /proc ]; then
 : > "$tmp/pruned.log"; rm -f "$tmp/victim.pid"
-( harness 99 1 'out=$(bash -c '"'"'trap "" TERM; sleep 6'"'"')' ) 2>/dev/null &
+( harness 99 1 'out=$(bash -c '"'"'trap "" TERM; claude 6'"'"')' ) 2>/dev/null &
 hpid=$!
 for _ in $(seq 1 60); do [ -s "$tmp/victim.pid" ] && break; sleep 0.1; done
 [ -s "$tmp/victim.pid" ] || fail "harness never reported its pid"
 sleep 0.4
 kill -TERM "$(cat "$tmp/victim.pid")" 2>/dev/null
 wait $hpid 2>/dev/null
-pruned && fail "pruned while a foreground child was still running: go clean -modcache can delete the module cache mid-run"
+pruned && fail "pruned while the agent was still running: go clean -modcache can delete the module cache mid-run"
 grep -q 'NOT pruned' "$tmp/out" \
-  || fail "no diagnostic when the prune was skipped for a live child"
+  || fail "no diagnostic when the prune was skipped for a live agent"
+fi
 
-# 4b. The same with no procps on PATH. The pod image is
-#     node:22-trixie-slim and has neither pgrep nor ps, so a guard built
-#     on them passes on a developer's Mac and silently no-ops in the pod,
-#     pruning the module cache out from under a running agent. That is
-#     the bug this case exists for, and it ran green until the guard was
-#     moved onto /proc.
+# 4b. log_to's tee must NOT look like a running agent.
 #
-#     Only meaningful where /proc exists - i.e. Linux, which is CI and
-#     the pod. On macOS there is no /proc AND no procps once PATH is
-#     stripped, so the guard genuinely cannot see children and the case
-#     would fail for a reason that does not apply in production.
+#     This is the case that matters most, because it is the one that
+#     shipped broken. Every stage calls log_to before installing the
+#     trap, and log_to does `exec > >(tee ...)`, which forks a tee that
+#     is a direct child of the stage shell for the whole run. A guard
+#     that asks "do I have a child" therefore skips the prune on every
+#     exit of every stage, forever - the ENOSPC fix dead on arrival,
+#     announcing in the log that it deliberately did nothing.
+#
+#     The harness already calls log_to, so this case just asserts the
+#     prune happens with the tee alive and no agent running.
+: > "$tmp/pruned.log"
+harness 99 85 'true'
+pruned || fail "did not prune with log_to's tee alive: the guard mistakes the stage's own logging for a running agent"
+
+# 4c. An unrelated `claude` that is NOT a descendant of this shell must
+#     not block the prune either. An attached Remote Control session
+#     (claude --remote-control, under tmux) is exactly that, and it can
+#     be attached for hours - blocking the prune whenever a human is
+#     looking at the pod is the opposite of useful.
 if [ -d /proc ]; then
-  : > "$tmp/pruned.log"; rm -f "$tmp/victim.pid"
-  ( PATH="$tmp/bin:/usr/bin:/bin" harness 99 1 'out=$(bash -c '"'"'trap "" TERM; sleep 6'"'"')' ) 2>/dev/null &
-  hpid=$!
-  for _ in $(seq 1 60); do [ -s "$tmp/victim.pid" ] && break; sleep 0.1; done
-  [ -s "$tmp/victim.pid" ] || fail "harness never reported its pid (no-procps case)"
+  : > "$tmp/pruned.log"
+  setsid "$tmp/bin/claude" 8 >/dev/null 2>&1 &
+  outsider=$!
   sleep 0.4
-  kill -TERM "$(cat "$tmp/victim.pid")" 2>/dev/null
-  wait $hpid 2>/dev/null
-  pruned && fail "pruned while a child was alive with no pgrep on PATH: the guard does not work in the pod image"
+  harness 99 85 'true'
+  kill $outsider 2>/dev/null
+  pruned || fail "an unrelated claude process (e.g. an attached Remote Control session) blocked the prune"
 fi
 
 # 5. The trap must not eat the stage's exit code. This is the incident's

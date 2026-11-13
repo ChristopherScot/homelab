@@ -579,28 +579,70 @@ $summary"
 # tuning it is one env var, not two edits.
 HOME_TIGHT_PCT="${HOME_TIGHT_PCT:-85}"
 
-# have_live_children
-# True if this shell has any child process still alive.
+# agent_is_running
+# True if a Claude agent launched by THIS stage is still alive.
 #
-# Reads /proc rather than calling pgrep/ps: the pod image is
-# node:22-trixie-slim with no procps, so both of those are missing
-# there. A guard built on them passes every test on a machine that has
-# them and does nothing at all in the pod, which is the failure mode
-# worth engineering away. Falls back to pgrep where /proc is absent
-# (macOS), so the same code is testable off-cluster.
-have_live_children() {
-  local p stat
+# Two things make this fiddly, and both were found by running it in the
+# pod rather than reasoning about it:
+#
+#   1. It must not ask "do I have a child". The stage shell always has
+#      one: log_to's `tee` is forked by `exec > >(tee ...)` and lives
+#      for the whole run by design, so a child-counting guard never
+#      lets the prune run at all.
+#   2. It must not ask "is any process named claude alive". An attached
+#      Remote Control session (`claude --remote-control ...`, under
+#      tmux) is one, and it is nobody's stage agent - blocking the
+#      prune whenever a human is attached is the opposite of useful.
+#
+# So: a process named claude whose ancestry leads back to this shell.
+# Walking ancestry rather than checking a direct child because bash may
+# interpose a subshell for `out=$(timeout ... claude -p ...)`, and the
+# three stages each invoke the agent in a different shape.
+#
+# Reads /proc rather than pgrep/ps: the pod image is
+# node:22-trixie-slim with no procps, so both are missing there. A
+# guard built on them passes on a developer's Mac and does nothing in
+# the pod. Falls back to pgrep where /proc is absent (macOS), so the
+# same code stays testable off-cluster.
+agent_is_running() {
+  local p comm stat state anc hops
   if [ -d /proc ]; then
     for p in /proc/[0-9]*; do
-      [ -r "$p/stat" ] || continue
-      # field 4 of /proc/PID/stat is PPID; comm (field 2) may contain
-      # spaces or parentheses, so cut after the final ')'.
+      [ -r "$p/comm" ] || continue
+      read -r comm < "$p/comm" 2>/dev/null || continue
+      [ "$comm" = claude ] || continue
       stat="$(sed -e 's/.*) //' "$p/stat" 2>/dev/null)" || continue
-      [ "$(printf '%s' "$stat" | awk '{print $2}')" = "$$" ] && return 0
+      state="$(printf '%s' "$stat" | awk '{print $1}')"
+      # Dead but unreaped is not still working.
+      [ "$state" = Z ] && continue
+      # Climb to pid 1; a bounded walk, so a cycle cannot hang a trap.
+      anc="$(printf '%s' "$stat" | awk '{print $2}')"
+      hops=0
+      while [ -n "$anc" ] && [ "$anc" != 0 ] && [ "$hops" -lt 32 ]; do
+        [ "$anc" = "$$" ] && return 0
+        stat="$(sed -e 's/.*) //' "/proc/$anc/stat" 2>/dev/null)" || break
+        anc="$(printf '%s' "$stat" | awk '{print $2}')"
+        hops=$((hops + 1))
+      done
     done
     return 1
   fi
-  command -v pgrep >/dev/null 2>&1 && [ -n "$(pgrep -P $$ 2>/dev/null)" ]
+  # macOS only, where there is no /proc. Same question as above - a
+  # claude under this shell - asked with pgrep's own ancestry filter so
+  # the tee and an unrelated Remote Control session are both excluded.
+  command -v pgrep >/dev/null 2>&1 || return 1
+  local p
+  for p in $(pgrep -x claude 2>/dev/null); do
+    pgrep -P "$$" >/dev/null 2>&1 || break
+    # Climb this pid's ancestry via ps, which macOS does have.
+    local anc=$p hops=0
+    while [ -n "$anc" ] && [ "$anc" != 1 ] && [ "$hops" -lt 32 ]; do
+      [ "$anc" = "$$" ] && return 0
+      anc="$(ps -o ppid= -p "$anc" 2>/dev/null | tr -d ' ')" || break
+      hops=$((hops + 1))
+    done
+  done
+  return 1
 }
 
 # prune_build_caches
@@ -644,12 +686,9 @@ prune_build_caches() {
   # Not `jobs`: the agent runs in the FOREGROUND inside a command
   # substitution (out=$(timeout ... claude -p ...)), and `jobs` lists
   # only background jobs, so it is empty in exactly the case this guard
-  # is for. Not `pgrep` either - the pod image is node:22-trixie-slim
-  # without procps, so pgrep and ps are both MISSING and the guard would
-  # silently no-op in production while passing on a developer's Mac.
-  # /proc is always there in the container, and that is what decides.
-  if have_live_children; then
-    echo "   caches NOT pruned: a child is still running" >&2
+  # is for.
+  if agent_is_running; then
+    echo "   caches NOT pruned: the agent is still running" >&2
     return 0
   fi
 
