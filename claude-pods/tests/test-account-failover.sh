@@ -22,9 +22,27 @@ for text in \
   'desloppify_run outcome=BLOCKED stop_reason=api_error_429' \
   '{"status": 429}' \
   'Error: rate limit exceeded' \
-  'You have hit your usage limit'
+  'You have hit your usage limit' \
+  "You've hit your 5-hour limit · resets 10:10pm (UTC)" \
+  'You have hit your 7-hour limit' \
+  '{"terminal_reason":"limit_reached"}' \
+  '{"subtype": "quota_exceeded"}' \
+  '{"api_error_status": 429}'
 do
   claude_rate_limited "$text" || { echo "FAIL: missed a rate limit in: $text"; fail=1; }
+done
+
+# Must NOT match: the pattern was widened to catch the CLI's "N-hour
+# limit" wording, and a pattern that also eats ordinary build output
+# would send every failure to the personal account.
+for text in \
+  'compilation failed' \
+  'test failure in pkg/foo' \
+  'the 5-hour build limit was discussed in the PR' \
+  '{"terminal_reason":"completed"}' \
+  '{"api_error_status": null}'
+do
+  claude_rate_limited "$text" && { echo "FAIL: false positive on: $text"; fail=1; }
 done
 
 # ...and what must NOT trigger it, or an ordinary failure burns the reserve.

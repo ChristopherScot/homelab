@@ -54,9 +54,32 @@ use_claude_account() {
 # 0 if TEXT looks like an account that has run out rather than a failure
 # of the work itself. A rate-limited run fails in seconds with no tool
 # calls, so this is cheap to detect and cheap to retry.
+# Two checks, because prose is the weaker signal and we were caught by
+# it once. On 2026-11-09 an author run was cut off mid-review-cycle by
+# "You've hit your 5-hour limit · resets 10:10pm (UTC)" - no "rate
+# limit", no "usage limit", no 429 - so the failover never fired, the
+# personal account sat unused, and the card parked in Backlog as
+# "produced no pull request" with nothing saying the account had run
+# out.
+#
+# Prefer the machine-readable reason. `claude --output-format json`
+# returns terminal_reason and api_error_status, the same fields the SDK
+# path in desloppify-pod/run.py already reads, and the CLI binary
+# carries the token values "limit_reached" and "quota_exceeded". Those
+# are identifiers; the sentence above is marketing copy that can be
+# reworded without notice.
+claude_terminal_reason_limited() {
+  printf '%s' "$1" | grep -qE \
+    '"(terminal_reason|subtype|stop_reason)"[[:space:]]*:[[:space:]]*"(limit_reached|quota_exceeded|rate_limited)"' \
+    || printf '%s' "$1" | grep -qE '"api_error_status"[[:space:]]*:[[:space:]]*429'
+}
+
 claude_rate_limited() {
+  # Structured first; prose only as the fallback for text output, which
+  # is what the stage scripts still produce.
+  claude_terminal_reason_limited "$1" && return 0
   printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded'
+    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|hit your [0-9]+-hour limit|limit[ ·]+resets'
 }
 
 # run_with_account_failover CMD...
