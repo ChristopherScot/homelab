@@ -43,6 +43,50 @@ worth doing until something needs the space.
 - **Two keys**: `claude-worker` (read, for pods) and `claude-seed`
   (read-write, for seeding). Verified distinct in `garage bucket info`.
 
+## The PoC ran, and it works
+
+Measured on the live cluster 2026-11-12, not inferred:
+
+```
+seed-reference:  1801 objects, 71.4 MB uploaded (books 48M,
+                 skills 6.1M, plugins 21M)
+
+poc-worker:      pulled 74M in 7s, 1801 files
+                 books: 609  skills: 476  plugins: 716
+                 local write OK (own copy)
+                 longhorn/nfs mounts: 0
+```
+
+Every claim the design rests on is now demonstrated: a worker with **no
+PersistentVolumeClaim** obtained the full reference set in 7 seconds -
+free against a pod startup that already takes ~70s - using only the
+read-only key, got its own writable copy rather than a shared mount,
+and left nothing attached when it exited.
+
+The remaining steps below are about moving the credentials into Vault.
+The storage model itself no longer needs proving.
+
+### Startup, measured
+
+Dropping the PVCs is also the startup win, which was not an expected
+benefit:
+
+| | session pod (2 PVCs) | worker (none) |
+|---|---|---|
+| scheduled -> volumes attached | ~10s | - |
+| volumes attached -> container started | **~28s** | - |
+| scheduled -> container started | 41s total | **same second** |
+| reference pull | - | 7s |
+
+A session pod spends roughly 28 seconds attaching two Longhorn volumes
+before its container starts. The PoC worker, with no
+PersistentVolumeClaims, was scheduled and started in the same second.
+Both volumes are already single-replica and node-local, so this is
+Longhorn engine startup rather than a remote attach - which is why it
+cannot be tuned away, only avoided.
+
+Net: about 41s of startup becomes about 8s, pull included.
+
 ## The remaining step
 
 Garage mints the S3 key, so it cannot be generated ahead of time:
@@ -186,12 +230,18 @@ being a StatefulSet.
 Verified against the live cluster and the scripts, so the design does
 not rest on assumption:
 
-- **The stage scripts do not touch $HOME.** No reference to `$HOME`,
-  `~/` or `.claude/` in claude-pods/stage-author.sh,
-  stage-merge.sh or stage-test.sh. They need their lib (in the image) and
-  `/workspace/<repo>` (which a worker clones). So an ephemeral worker
-  with no persistent home can run them unchanged - this was the last
-  structural unknown.
+- **The stage scripts need no PERSISTENT $HOME.** They reference it only
+  through `prune_build_caches` and `warn_if_home_tight` in
+  lib/pod-common.sh, which drop regenerable package caches and check
+  free space - neither needs anything to survive the run. The work
+  itself lives in their lib (in the image) and `/workspace/<repo>`
+  (which a worker clones). So an ephemeral worker can run them
+  unchanged; this was the last structural unknown.
+
+  Stated carefully because the first version of this claim said the
+  scripts do not touch `$HOME` at all. That was true when written and
+  stopped being true the same day, when the disk-full fix wired cache
+  pruning into all three.
 - **Workers can be interchangeable.** See the podWorksRepo note above.
 - **Cloning on demand beats carrying clones.** 1s and 3.2MB shallow,
   against 153MB of warm clones per pod.
