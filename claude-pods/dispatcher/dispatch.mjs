@@ -357,20 +357,20 @@ function ghJson(args) {
   return r.stdout.trim() ? JSON.parse(r.stdout) : null;
 }
 
-function workExists(column, repo, task) {
+function taskPullRequest(repo, task) {
   const branch = `${BRANCH_PREFIX}${task}`;
   const prs = ghJson([
-    "pr", "list", "--repo", `${OWNER}/${repo.replace(/^.*\//, "")}`,
+    "pr", "list", "--repo", repo.includes("/") ? repo : `${OWNER}/${repo}`,
     "--head", branch, "--state", "all",
-    "--json", "number,state,headRefOid",
+    "--json", "number,state,headRefOid,headRefName,isCrossRepository",
   ]) ?? [];
-  const pr = prs[0];
-  // A merged pull request ends the card's story whatever column it is
-  // sitting in. CLA-13 was merged by hand while in In Review and carries
-  // no nightly/integration status, so the in-review check below would
-  // have called it unfinished and re-dispatched the test stage against
-  // work that is already on main.
-  if (pr?.state === "MERGED") return true;
+  // A reused branch can have an old merged PR and a new open/closed PR.
+  // Only the newest same-repository PR describes the card's current work.
+  return prs.filter(pr => pr.isCrossRepository === false && pr.headRefName === branch)
+    .sort((a, b) => b.number - a.number)[0] ?? null;
+}
+
+function workExists(column, repo, pr) {
   switch (column) {
     // The author's job is to open a pull request. One exists -> it ran.
     case "to-do":
@@ -379,7 +379,7 @@ function workExists(column, repo, task) {
     case "in-review": {
       if (!pr) return false;
       const st = ghJson([
-        "api", `repos/${OWNER}/${repo.replace(/^.*\//, "")}/commits/${pr.headRefOid}/status`,
+        "api", `repos/${repo.includes("/") ? repo : `${OWNER}/${repo}`}/commits/${pr.headRefOid}/status`,
         "--jq", '[.statuses[] | select(.context == "nightly/integration")] | length',
       ]);
       return Number(st) > 0;
@@ -392,13 +392,39 @@ function workExists(column, repo, task) {
   }
 }
 
+async function completeMergedTask(task, column, columns, dryRun) {
+  if (columns.filter(c => c.slug === "done").length !== 1) {
+    throw new Error("project must have exactly one Done column");
+  }
+  // Re-read rather than acting on an already-outdated board snapshot.
+  const current = await kaneo(`/task/${encodeURIComponent(task)}`);
+  if (current.projectId !== PROJECT || current.status !== column) return false;
+  if (dryRun) return true;
+  // Use the same supported operation as the stage scripts; the API key
+  // stays in the environment, never command arguments or log output.
+  const result = spawnSync("kaneo", ["task", "status", task, "done"], {
+    encoding: "utf8", timeout: 20_000,
+    env: { ...process.env, KANEO_API_URL: API_URL,
+      KANEO_API_KEY: readFileSync(process.env.DISPATCH_API_KEY_FILE ?? "/run/secrets/kaneo/api-key", "utf8").trim() },
+  });
+  if (result.error || result.status !== 0) {
+    const reason = result.error?.message || (result.stderr ?? "").trim() || `exit ${result.status}`;
+    throw new Error(`cannot move merged task to Done: ${reason}`);
+  }
+  const updated = await kaneo(`/task/${encodeURIComponent(task)}`);
+  if (updated.projectId !== PROJECT || updated.status !== "done") {
+    throw new Error("merged task update did not leave the card in Done");
+  }
+  return true;
+}
+
 // One sweep. Returns a summary rather than logging only, so the CronJob's
 // own output says what happened.
 async function reconcile(dryRun) {
   const board = await kaneo(`/task/tasks/${PROJECT}`);
   const columns = board?.data?.columns ?? [];
   const now = Date.now();
-  const out = { checked: 0, redispatched: [], skipped: [], errors: [] };
+  const out = { checked: 0, completed: [], redispatched: [], skipped: [], errors: [] };
 
   for (const col of columns) {
     // in-progress is no ROUTES column - nothing dispatches FROM it - but
@@ -416,7 +442,8 @@ async function reconcile(dryRun) {
     // wrong for rework and closed-PR cards within one review.
     const stranded = col.slug === "in-progress";
     const route = stranded ? ROUTES["to-do"] : ROUTES[col.slug];
-    if (!route) continue; // inert column: nothing was ever owed here
+    // Human-review cards do not dispatch, but a human may merge their PR.
+    if (!route && col.slug !== "needs-human-review") continue;
     for (const task of col.tasks ?? []) {
       // The raw task id drives branch lookups; ticketId is only ever for
       // the log line, where a human reads it. The branch is built from
@@ -428,27 +455,35 @@ async function reconcile(dryRun) {
       const label = task.ticketId ?? task.id;
       out.checked++;
       try {
-        const at = await enteredColumnAt(id);
-        // No recorded move means the card was created straight into this
-        // column and never moved, so no webhook ever fired for it. Treat
-        // creation as the clock.
-        const since = at ?? Date.parse(task.createdAt ?? "") ?? null;
-        if (!since || now - since < STALE_MS) {
-          continue; // still within the window a real run could take
-        }
         const repo = await repoForTask(id);
         if (!repo) {
           out.skipped.push(`${label}: no single repo: label`);
           continue;
         }
-        if (!podWorksRepo(route[0], repo)) {
-          out.skipped.push(`${label}: ${route[0]} does not work ${repo}`);
+        const repoPod = route?.[0] ?? ROUTES["to-do"][0];
+        if (!podWorksRepo(repoPod, repo)) {
+          out.skipped.push(`${label}: ${repoPod} does not work ${repo}`);
           continue;
         }
+        const pr = taskPullRequest(repo, id);
+        if (pr?.state === "MERGED") {
+          if (await completeMergedTask(id, col.slug, columns, dryRun)) {
+            out.completed.push(`${label}: PR #${pr.number} merged; ${col.slug} -> done${dryRun ? " [dry-run]" : ""}`);
+          } else {
+            out.skipped.push(`${label}: card changed since board snapshot`);
+          }
+          continue;
+        }
+        if (!route) continue; // unmerged human-review cards stay inert
+        const at = await enteredColumnAt(id);
+        // Only restarting agents needs the stale window. A confirmed
+        // merge is terminal and can correct the card on the next sweep.
+        const since = at ?? Date.parse(task.createdAt ?? "") ?? null;
+        if (!since || now - since < STALE_MS) continue;
         // Stranded cards skip this check on purpose: existing work is
         // exactly what the author's mode logic exists to judge, and it
         // must see the card to judge it.
-        if (!stranded && workExists(col.slug, repo, id)) {
+        if (!stranded && workExists(col.slug, repo, pr)) {
           // The work ran; the card is simply waiting on the next stage,
           // or on a human. Not ours to restart.
           out.skipped.push(`${label}: work already exists`);
@@ -526,8 +561,9 @@ createServer((req, res) => {
       reconcile(dryRun)
         .then((r) => {
           log(
-            `RECONCILE done checked=${r.checked} redispatched=${r.redispatched.length} skipped=${r.skipped.length} errors=${r.errors.length}`,
+            `RECONCILE done checked=${r.checked} completed=${r.completed.length} redispatched=${r.redispatched.length} skipped=${r.skipped.length} errors=${r.errors.length}`,
           );
+          for (const line of r.completed) log(`  complete   ${line}`);
           for (const line of r.redispatched) log(`  redispatch ${line}`);
           for (const line of r.skipped) log(`  skip       ${line}`);
           for (const line of r.errors) log(`  ERROR      ${line}`);
