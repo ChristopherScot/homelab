@@ -189,6 +189,16 @@ if [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
     echo "$sync_err" | head -5
     exit 1
   fi
+  # `checkout <pr>` lands on THAT PR's branch, and `add` only works from
+  # the top of the stack - so adding straight after checkout fails with
+  # "can only add branches to the top of the stack". Three nightly runs
+  # died there (2026-11-11 through 13) because prev_pr is the BOTTOM of
+  # the stack, which is the one position that is never the top.
+  if ! top_err=$( (cd "$dir" && gh stack top) 2>&1 ); then
+    echo "FATAL: gh stack top failed; cannot add to this stack"
+    echo "$top_err" | head -5
+    exit 1
+  fi
   if ! add_err=$( (cd "$dir" && gh stack add "$branch") 2>&1 ); then
     echo "FATAL: gh stack add $branch failed"
     echo "$add_err" | head -5

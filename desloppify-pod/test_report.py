@@ -214,3 +214,22 @@ assert '"required": ["outcome", "findings_resolved", "pr_numbers"]' in _run_src,
     "fill in a field that can contradict the list")
 
 print("test_report: pr field agreement pinned")
+
+# The runner must run `gh stack top` between checkout and add. checkout
+# lands on the PR's own branch, which for prev_pr is the BOTTOM of the
+# stack, and add refuses anywhere but the top:
+#   can only add branches to the top of the stack
+# Three nightly runs died there (2026-11-11 to 13) before anything
+# asserted the ordering. Reproduced against the real stack: checkout
+# 17027 lands on ...0524 of four branches, add fails verbatim, and
+# `gh stack top` then add succeeds.
+_runner = (pathlib.Path(__file__).parent / "nightly-desloppify.sh").read_text()
+_co = _runner.index("gh stack checkout")
+_top = _runner.index("gh stack top")
+_add = _runner.index('gh stack add "$branch"')
+assert _co < _top < _add, (
+    "nightly-desloppify.sh must call `gh stack top` between checkout and "
+    "add: checkout lands on the bottom of the stack and add only works "
+    "from the top")
+
+print("test_report: stack checkout->top->add ordering pinned")

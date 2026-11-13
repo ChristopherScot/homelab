@@ -86,7 +86,12 @@ ALLOWED: dict[str, set[str]] = {
 # would otherwise be the one that admits a whole namespace, because
 # check_bash stops at the first level. gh-stack v0.2.0 ships 20
 # subcommands and is still a 0.x: enumerating the ones the runner's
-# prompt actually instructs means a version bump cannot widen this gate
+# prompt actually instructs means a version bump cannot widen this gate.
+# `top` was missing from the first list and three nightly runs died on
+# it - the runner needs it between checkout and add, because checkout
+# lands on the PR's own branch and add only works from the top of the
+# stack. Navigation verbs are not dangerous; the reason the others are
+# absent is that nothing calls them
 # without someone adding a line here. The refusals below are kept as
 # well, so a reader greping for `merge` finds the reason and not just
 # an absence.
@@ -96,7 +101,8 @@ ALLOWED: dict[str, set[str]] = {
 # itself, and --force-with-lease bounds it to branches this pod owns; a
 # bare rebase has neither the lease nor the runner's sequencing.
 ALLOWED_SUB: dict[str, set[str]] = {
-    "gh stack": {"init", "add", "submit", "sync", "checkout", "view"},
+    "gh stack": {"init", "add", "submit", "sync", "checkout", "view",
+                 "top"},
     # Same argument for `gh pr`: 18 verbs are exposed and the runner's
     # prompt instructs a handful. Refusing the dangerous ones by name
     # left `gh pr new` allowed -- gh's own documented alias for create,
