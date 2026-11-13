@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - 'claude-pods/**'
+      - 'bootstrap/vault-policies.sh'
       # tests/image-pinning.sh also checks the Applications and the
       # root app, so a change there runs it too.
       - 'app-of-apps/app-of-apps.yaml'
@@ -18,6 +19,7 @@ on:
     branches: [main]
     paths:
       - 'claude-pods/**'
+      - 'bootstrap/vault-policies.sh'
       - 'app-of-apps/app-of-apps.yaml'
       - 'app-of-apps/apps/claude-pods.yaml'
       - 'app-of-apps/apps/desloppify-pod.yaml'
