@@ -40,7 +40,10 @@ for text in \
   'test failure in pkg/foo' \
   'the 5-hour build limit was discussed in the PR' \
   '{"terminal_reason":"completed"}' \
-  '{"api_error_status": null}'
+  '{"api_error_status": null}' \
+  'cache limit · resets on deploy' \
+  'docs say the limit resets daily' \
+  'ERROR: connection limit  resets after timeout'
 do
   claude_rate_limited "$text" && { echo "FAIL: false positive on: $text"; fail=1; }
 done

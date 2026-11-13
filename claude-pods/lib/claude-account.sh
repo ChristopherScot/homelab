@@ -77,9 +77,18 @@ claude_terminal_reason_limited() {
 claude_rate_limited() {
   # Structured first; prose only as the fallback for text output, which
   # is what the stage scripts still produce.
+  #
+  # The prose set stays deliberately narrow. A first draft of this fix
+  # also matched `limit[ ·]+resets`, which looked like a safe
+  # generalisation of the CLI's wording and instead matched "the limit
+  # resets daily", "cache limit · resets on deploy" and "connection
+  # limit resets after timeout" - any of which an agent could print
+  # while discussing unrelated code, silently burning the personal
+  # account on a run that was never limited. Only the CLI's own
+  # "hit your N-hour limit" is specific enough to add.
   claude_terminal_reason_limited "$1" && return 0
   printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|hit your [0-9]+-hour limit|limit[ ·]+resets'
+    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|hit your [0-9]+-hour limit'
 }
 
 # run_with_account_failover CMD...
