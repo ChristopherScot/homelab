@@ -62,6 +62,7 @@ ALLOW = [
     "gh stack sync",
     "gh stack checkout 12",
     "gh stack view",
+    "gh stack top",
     # the webapp toolchain
     "yarn lint:biome",
     "yarn workspace @schoolhouse/webapp build",
@@ -317,7 +318,11 @@ REASON = [
 # The gate is one list, so pin its contents. Adding a verb here used to
 # leave the suite green because a parallel denylist caught it; with the
 # denylist gone, this assertion is what fails.
-EXPECTED_STACK_SUBS = {"init", "add", "submit", "sync", "checkout", "view"}
+# `top` is here because the runner needs it between checkout and add:
+# checkout lands on the PR's own branch and add only works from the top
+# of the stack. Three nightly runs died on its absence.
+EXPECTED_STACK_SUBS = {"init", "add", "submit", "sync", "checkout", "view",
+                       "top"}
 EXPECTED_PR_SUBS = {"create", "view", "list", "comment", "edit", "checks",
                     "diff", "status", "ready", "review"}
 

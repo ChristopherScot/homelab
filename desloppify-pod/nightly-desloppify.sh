@@ -189,6 +189,16 @@ if [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
     echo "$sync_err" | head -5
     exit 1
   fi
+  # `checkout <pr>` lands on THAT PR's branch, and `add` only works from
+  # the top of the stack - so adding straight after checkout fails with
+  # "can only add branches to the top of the stack". Three nightly runs
+  # died there (2026-11-11 through 13) because prev_pr is the BOTTOM of
+  # the stack, which is the one position that is never the top.
+  if ! top_err=$( (cd "$dir" && gh stack top) 2>&1 ); then
+    echo "FATAL: gh stack top failed; cannot add to this stack"
+    echo "$top_err" | head -5
+    exit 1
+  fi
   if ! add_err=$( (cd "$dir" && gh stack add "$branch") 2>&1 ); then
     echo "FATAL: gh stack add $branch failed"
     echo "$add_err" | head -5
@@ -279,8 +289,15 @@ run_once() {
 # for a third that does not exist.
 run_once
 rc=$?
+# Any exhaustion reason, not just api_error_429. run.py writes
+# stop_reason from result.terminal_reason when the run is not is_error,
+# so an account that runs out mid-run reports "limit_reached" or
+# "quota_exceeded" - neither of which equals "api_error_429", so the
+# equality test above silently skipped the retry and the night ended on
+# one account with the other untouched. claude_rate_limited knows the
+# full set and is the one place that list lives.
 if [ "$rc" -ne 0 ] \
-   && [ "$(jq -r '.stop_reason // ""' "$report" 2>/dev/null)" = "api_error_429" ]; then
+   && claude_rate_limited "$(jq -r '.stop_reason // ""' "$report" 2>/dev/null)"; then
   if use_claude_account personal; then
     echo "work account is rate limited; retrying on personal"
     cp "$report" "${report%.json}-work-attempt.json" 2>/dev/null || true

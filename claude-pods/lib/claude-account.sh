@@ -54,9 +54,64 @@ use_claude_account() {
 # 0 if TEXT looks like an account that has run out rather than a failure
 # of the work itself. A rate-limited run fails in seconds with no tool
 # calls, so this is cheap to detect and cheap to retry.
+# Two checks, because prose is the weaker signal and we were caught by
+# it once. On 2026-11-09 an author run was cut off mid-review-cycle by
+# "You've hit your 5-hour limit · resets 10:10pm (UTC)" - no "rate
+# limit", no "usage limit", no 429 - so the failover never fired, the
+# personal account sat unused, and the card parked in Backlog as
+# "produced no pull request" with nothing saying the account had run
+# out.
+#
+# Prefer the machine-readable reason. `claude --output-format json`
+# returns terminal_reason and api_error_status, the same fields the SDK
+# path in desloppify-pod/run.py already reads, and the CLI binary
+# carries the token values "limit_reached" and "quota_exceeded". Those
+# are identifiers; the sentence above is marketing copy that can be
+# reworded without notice.
+# The exhaustion reasons the CLI and SDK report, matched in two shapes.
+#
+# The BARE form is the one in use: nightly-desloppify.sh passes
+# `jq -r .stop_reason`, a single word. A first draft matched only the
+# JSON form, so the runner's limit_reached never matched and the retry
+# it was meant to trigger still did not fire.
+#
+# The JSON form has NO caller yet. The stage scripts invoke `claude -p`
+# bare - no failover wrapper, no --output-format json - so a stage that
+# hits the limit still parks its card. Wiring them is a separate change;
+# when it lands it will need --output-format json, and this branch is
+# what will read it. Do not read this as the stages being covered.
+#
+# rate_limit (underscore) as well as rate_limited: run.py:332 greps for
+# the former in subtype, so the two must agree.
+CLAUDE_LIMIT_REASONS='limit_reached|quota_exceeded|rate_limited|rate_limit|insufficient_credits|credit_balance_too_low'
+
+claude_terminal_reason_limited() {
+  # A bare reason, as jq -r hands back.
+  printf '%s' "$1" | grep -qE "^($CLAUDE_LIMIT_REASONS|api_error_429)$" && return 0
+  # Or the same as a JSON value, for a caller passing whole output.
+  printf '%s' "$1" | grep -qE \
+    "\"(terminal_reason|subtype|stop_reason)\"[[:space:]]*:[[:space:]]*\"($CLAUDE_LIMIT_REASONS)\"" && return 0
+  printf '%s' "$1" | grep -qE '"api_error_status"[[:space:]]*:[[:space:]]*429'
+}
+
 claude_rate_limited() {
+  # Structured first. The prose fallback has no production caller
+  # either: the only caller passes a bare reason, and every exhaustion
+  # value that can appear there is already caught by the bare-word
+  # anchor above. It is here for the stage scripts' text output when
+  # they are wired - see CLAUDE_LIMIT_REASONS.
+  #
+  # The prose set stays deliberately narrow. A first draft of this fix
+  # also matched `limit[ ·]+resets`, which looked like a safe
+  # generalisation of the CLI's wording and instead matched "the limit
+  # resets daily", "cache limit · resets on deploy" and "connection
+  # limit resets after timeout" - any of which an agent could print
+  # while discussing unrelated code, silently burning the personal
+  # account on a run that was never limited. Only the CLI's own
+  # "hit your N-hour limit" is specific enough to add.
+  claude_terminal_reason_limited "$1" && return 0
   printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded'
+    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|you.?(ve|have) hit your [0-9]+-hour limit'
 }
 
 # run_with_account_failover CMD...
