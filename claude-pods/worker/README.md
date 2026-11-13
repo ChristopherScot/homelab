@@ -230,12 +230,18 @@ being a StatefulSet.
 Verified against the live cluster and the scripts, so the design does
 not rest on assumption:
 
-- **The stage scripts do not touch $HOME.** No reference to `$HOME`,
-  `~/` or `.claude/` in claude-pods/stage-author.sh,
-  stage-merge.sh or stage-test.sh. They need their lib (in the image) and
-  `/workspace/<repo>` (which a worker clones). So an ephemeral worker
-  with no persistent home can run them unchanged - this was the last
-  structural unknown.
+- **The stage scripts need no PERSISTENT $HOME.** They reference it only
+  through `prune_build_caches` and `warn_if_home_tight` in
+  lib/pod-common.sh, which drop regenerable package caches and check
+  free space - neither needs anything to survive the run. The work
+  itself lives in their lib (in the image) and `/workspace/<repo>`
+  (which a worker clones). So an ephemeral worker can run them
+  unchanged; this was the last structural unknown.
+
+  Stated carefully because the first version of this claim said the
+  scripts do not touch `$HOME` at all. That was true when written and
+  stopped being true the same day, when the disk-full fix wired cache
+  pruning into all three.
 - **Workers can be interchangeable.** See the podWorksRepo note above.
 - **Cloning on demand beats carrying clones.** 1s and 3.2MB shallow,
   against 153MB of warm clones per pod.
