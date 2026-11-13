@@ -34,7 +34,29 @@ here=$(cd "$(dirname "$0")" && pwd)
 pods="$here/.."
 lib="$pods/lib/pod-common.sh"
 tmp=$(mktemp -d)
-trap 'rm -rf "$tmp"' EXIT
+
+# Reap stand-in agents as well as the tmpdir. Case 4 deliberately TERMs
+# the stage shell while its `claude` is alive, so that process outlives
+# the case - and a later case asking "is an agent running" would see it
+# and judge the guard on a corpse of an earlier test. Matching on the
+# copy's own path, never on the name, so a real claude (an attached
+# Remote Control session, a developer's own) is never signalled.
+reap_standins() {
+  [ -x "$tmp/bin/claude" ] || return 0
+  [ -d /proc ] || return 0
+  local d
+  for d in /proc/[0-9]*; do
+    [ -r "$d/exe" ] || continue
+    case "$(readlink "$d/exe" 2>/dev/null)" in
+      "$tmp/bin/claude"*) kill "$(basename "$d")" 2>/dev/null ;;
+    esac
+  done
+  # Give them a moment to leave the process table, or the next case
+  # sees a dying stand-in and judges the guard on it.
+  sleep 0.3
+}
+cleanup() { reap_standins; rm -rf "$tmp"; }
+trap cleanup EXIT
 
 fail() {
   echo "FAIL: $*"
@@ -132,6 +154,11 @@ wait $hpid 2>/dev/null
 pruned && fail "pruned while the agent was still running: go clean -modcache can delete the module cache mid-run"
 grep -q 'NOT pruned' "$tmp/out" \
   || fail "no diagnostic when the prune was skipped for a live agent"
+# This case TERMs the stage shell while its agent is alive, so the
+# stand-in outlives it. Reap it here: 4b asserts that the prune DOES
+# run, and a survivor from this case would make it fail for a reason
+# that has nothing to do with what 4b is testing.
+reap_standins
 fi
 
 # 4b. log_to's tee must NOT look like a running agent.
