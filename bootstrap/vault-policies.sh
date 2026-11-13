@@ -26,6 +26,39 @@ set -euo pipefail
 : "${VAULT_TOKEN:?no token - run 'vault login' first, or set VAULT_TOKEN}"
 export VAULT_ADDR VAULT_TOKEN
 
+# Garage and its S3 consumers can be bootstrapped without rewriting every
+# other application's policy. Both roles remain namespace/SA-bound.
+configure_garage_policies() {
+  vault policy write garage - <<EOF
+path "kv/data/garage/rpc"     { capabilities = ["read"] }
+path "kv/metadata/garage/rpc" { capabilities = ["read"] }
+EOF
+  vault write auth/kubernetes/role/garage \
+    bound_service_account_names="external-secrets-sa" \
+    bound_service_account_namespaces="garage" \
+    policies="garage" ttl=1h
+
+  vault policy write claude-pods - <<EOF
+path "kv/data/claude-pods/*"     { capabilities = ["read"] }
+path "kv/metadata/claude-pods/*" { capabilities = ["read", "list"] }
+path "kv/data/garage/s3-reference" { capabilities = ["read"] }
+path "kv/data/garage/s3-seed"      { capabilities = ["read"] }
+EOF
+  vault write auth/kubernetes/role/claude-pods \
+    bound_service_account_names="external-secrets-sa" \
+    bound_service_account_namespaces="claude-pods" \
+    policies="claude-pods" ttl=1h
+}
+
+case "${1:-}" in
+  --garage-only)
+    [ "$#" -eq 1 ] || { echo "Usage: $0 [--garage-only]" >&2; exit 64; }
+    configure_garage_policies
+    exit 0 ;;
+  '') ;;
+  *) echo "Usage: $0 [--garage-only]" >&2; exit 64 ;;
+esac
+
 vault auth list 2>/dev/null | grep -q '^kubernetes/' || \
   vault auth enable kubernetes
 
@@ -171,20 +204,8 @@ vault write auth/kubernetes/role/monitoring \
   policies="monitoring" \
   ttl=1h
 
-# garage: in-cluster S3. Reads only its own RPC secret. The S3 access
-# key it mints for the worker pods is read by the claude-pods role, not
-# this one - that role and policy are not managed by this script (the
-# vault-claude-pods SecretStore names it), so granting it read on
-# kv/garage/s3-reference is a manual step until it moves here.
-vault policy write garage - <<EOF
-path "kv/data/garage/*"     { capabilities = ["read"] }
-path "kv/metadata/garage/*" { capabilities = ["read", "list"] }
-EOF
-vault write auth/kubernetes/role/garage \
-  bound_service_account_names="external-secrets-sa" \
-  bound_service_account_namespaces="garage" \
-  policies="garage" \
-  ttl=1h
+# Garage RPC and the Claude namespace's distinct S3 reader/seeder keys.
+configure_garage_policies
 
 # homepage reads keys for every app it shows widgets for. Distinct from
 # the per-app roles above because it spans namespaces.

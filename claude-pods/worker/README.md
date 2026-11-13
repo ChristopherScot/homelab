@@ -45,64 +45,44 @@ worth doing until something needs the space.
 
 ## The remaining step
 
-Garage mints the S3 key, so it cannot be generated ahead of time:
+Garage mints the two S3 keys, so use the existing credentials rather than
+inventing replacement values. Keep credential values out of chat, terminal
+logs, process arguments, and Git.
 
-**Order matters here.** An earlier version of this file told you to
-delete `garage-rpc` before the Vault side could serve a replacement.
-Doing that today takes garage down at its next restart, because the
-`garage` Vault role does not exist yet and External Secrets cannot
-create the secret. Delete nothing until step 4 proves the store works.
+1. Log into Vault (`VAULT_ADDR=http://vault.lab vault login` on the LAN).
+2. Securely transfer the **existing** `garage-rpc` Secret value into
+   `kv/garage/rpc`, property `rpc-secret`. Do not generate a replacement
+   during this handoff. Copy Garage's `claude-worker` key into
+   `kv/garage/s3-reference` and its distinct `claude-seed` key into
+   `kv/garage/s3-seed`; both paths use `access-key-id` and
+   `secret-access-key`. Refuse conflicting existing Vault values until
+   they have been investigated. `garage-init.sh` is for initial setup;
+   its credential-printing output must not be captured in logs.
+3. Apply only these reviewed Vault policies and Kubernetes-auth roles:
 
-```sh
-# 1. create the vault role and policy. The garage block exists in this
-#    script but has not been run, so the SecretStore currently fails
-#    with: invalid role name "garage"
-./bootstrap/vault-policies.sh
+   ```sh
+   VAULT_ADDR=http://vault.lab ./bootstrap/vault-policies.sh --garage-only
+   ```
 
-# 2. print the credentials
-./bootstrap/garage-init.sh
-
-# 3. seed both paths. s3-reference takes the READ-ONLY key
-#    (claude-worker), never claude-seed.
-vault kv put kv/garage/s3-reference \
-  access-key-id=<Key ID> secret-access-key=<Secret key>
-vault kv put kv/garage/rpc rpc-secret="$(openssl rand -hex 32)"
-
-# 4. VERIFY before deleting anything - and check the ExternalSecret,
-#    NOT the SecretStore. A Valid store proves only that ESO can log in
-#    to Vault with that role; it says nothing about whether the role can
-#    read the path. Both states coexist on this cluster right now:
-#    vault-claude-pods is Valid/True while its garage-s3-reference
-#    ExternalSecret fails with a 403. Checking the store would green-
-#    light step 5 with the path still unreadable.
-#
-#    This must say SecretSynced/True:
-kubectl get externalsecret garage-rpc -n garage
-
-# 5. only now hand the RPC secret over. External Secrets will not adopt
-#    a Secret it did not create, so the hand-made one has to go first -
-#    which is safe only because step 4 proved ESO has actually read the
-#    path, not merely authenticated.
-kubectl delete secret garage-rpc -n garage
-# refreshInterval is 1h, so recreation is not instant - nudge it rather
-# than wondering whether it is broken:
-kubectl annotate externalsecret garage-rpc -n garage \
-  force-sync=$(date +%s) --overwrite
-kubectl get secret garage-rpc -n garage
-
-# 6. grant the claude-pods vault role read on BOTH kv/garage/s3-reference
-#    and kv/garage/s3-seed. Seeding alone is not enough: those
-#    ExternalSecrets fail with a 403, not a 404, so they keep failing
-#    after step 3 until the policy is widened - and widening it for one
-#    path leaves the seed job failing for the reason you just fixed for
-#    the other. That role is not managed by bootstrap/vault-policies.sh.
-#
-#    Widen the POLICY's contents, not the role's allowed_policies.
-#    Policy contents are evaluated per request and take effect on the
-#    next reconcile; a role property change is frozen at token-creation
-#    time and silently does nothing for up to the 1h ttl - which looks
-#    exactly like "the policy did not work".
-```
+   This declares the `garage` and `claude-pods` roles without rewriting
+   unrelated applications. It preserves Claude's own secret access and
+   adds reads on the two exact Garage S3 paths. The Garage role reads only
+   the RPC path. Secret values remain outside Git; the permission policy
+   is declared in this repository.
+4. Let External Secrets reconcile, then verify all three ExternalSecrets
+   are `SecretSynced/True`: `garage-rpc` in `garage`, and
+   `garage-s3-reference` / `garage-s3-seed` in `claude-pods`. A Ready
+   SecretStore alone does not prove the paths are readable. These
+   resources refresh every minute so bootstrap and rotation do not wait
+   for an hourly refresh.
+5. Verify the RPC value is unchanged and the live Secret has an
+   ownerReference to its ExternalSecret. **Do not delete the Secret.**
+   ESO 0.11 adopts an existing Secret with no ownerReference in place;
+   the older instructions requiring deletion were incorrect. If a
+   different controller owns it, investigate that ownership conflict.
+6. Verify the worker key can list/read the reference bucket and rejects
+   writes; verify the seeder can write/read/delete a temporary probe.
+   Workers must never mount the seeder Secret.
 
 ## Then the PoC proves the model
 
