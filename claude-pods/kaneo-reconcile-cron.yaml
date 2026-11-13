@@ -13,22 +13,17 @@
 # nightly sweep leaves that gap up to a day wide. The sweep itself is
 # cheap: it only looks at the three columns that dispatch, only at cards
 # older than RECONCILE_STALE_MS, and asks GitHub whether the work already
-# exists before restarting anything.
+# exists before restarting anything. Confirmed merged PRs are instead
+# reconciled to Done, without waking a worker. That correction does not
+# need the retry age window.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: kaneo-reconcile
   namespace: claude-pods
 spec:
-  # Unsuspended after a dry run on the real board reported correctly:
-  #
-  #   RECONCILE done checked=1 redispatched=0 skipped=1 errors=0
-  #     skip d3kgbsty...: work already exists
-  #
-  # That card was 27.5h stale in In Review, well past the window, so a
-  # sweep that only looked at the clock would have re-dispatched it. It
-  # found the merged pull request instead and left it alone, which is the
-  # behaviour that makes an hourly sweep safe to run unattended.
+  # The sweep repairs both missed dispatches and cards left behind after
+  # a manual merge, such as CLA-13. It never reruns agents for merged PRs.
   schedule: "17 * * * *"
   timeZone: America/New_York
   # Forbid, not Replace: a sweep that overruns is talking to GitHub about
