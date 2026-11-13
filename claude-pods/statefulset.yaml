@@ -25,6 +25,35 @@ spec:
   # and the session-sleep cron scales it to 0 when idle; a value here
   # would make Argo selfHeal fight both. Initial creation defaults to 1;
   # the first dispatch or sleep cycle settles it.
+  #
+  # partition at 3 means no running pod is ever updated in place: a
+  # rolling update touches ordinals >= partition, and the highest here
+  # is 2. A new image digest -- argocd-image-updater writes one within
+  # ~5 minutes of a build -- would otherwise terminate each pod in turn
+  # with a 30s grace period, and since the stage scripts do not handle
+  # SIGTERM an hour-long run dies mid-edit, leaving its card In Progress
+  # until reconcile's hours-stale threshold notices.
+  #
+  # The strategy stays RollingUpdate, which is what makes this work: a
+  # scale-up creates pods at updateRevision (the new image), while
+  # partition holds back in-place updates. OnDelete would do the
+  # opposite -- scale-ups create at currentRevision, so a new image
+  # would never arrive without deleting a pod by hand.
+  #
+  # So the roll becomes the teardown these pods already have:
+  # session-sleep scales the set to 0 only when no pod holds
+  # /tmp/nightly.lock, has a tmux client attached, or woke in the last
+  # 900s, and the dispatcher's next wake starts them on the new image.
+  #
+  # 3 is 1 + the highest ordinal in dispatch.mjs's ROUTES, the same
+  # derivation as its WAKE_REPLICAS. It is written out here because the
+  # dispatcher's RBAC grants statefulsets/scale but not statefulsets,
+  # and widening that to patch this one field would hand it the whole
+  # pod spec. Adding a fourth stage to ROUTES means changing this too.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 3
   selector:
     matchLabels:
       app: claude-session
@@ -124,7 +153,9 @@ spec:
             # Claude subscription tokens, shared with the desloppify pod
             # from kv/claude-pods/claude. preflight_credential prefers
             # these over ~/.claude/.credentials.json, which is the file
-            # that keeps arriving blanked with expiresAt=0.
+            # that keeps arriving blanked with expiresAt=0. entrypoint.sh
+            # is what calls it; it did not until 2026-11-12, so this
+            # mount sat unread and every RC session said "Not logged in".
             - name: claude-oauth
               mountPath: /run/secrets/claude
               readOnly: true

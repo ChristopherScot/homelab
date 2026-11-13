@@ -119,6 +119,26 @@ fi
 # is running yet, so every swap file in this dir is by definition an orphan.
 rm -f "$HOME"/.local/state/nvim/swap/*.sw[a-p] 2>/dev/null || true
 
+# Load the mounted OAuth token into the environment before anything runs
+# claude. The statefulset mounts claude-oauth at /run/secrets/claude, but
+# nothing here read it: CLAUDE_CODE_OAUTH_TOKEN was never exported, so the
+# RC session below fell through to ~/.claude/.credentials.json -- the file
+# the statefulset's own comment says "keeps arriving blanked with
+# expiresAt=0". All three pods sat at "Not logged in · Run /login", so no
+# session ever registered with claude.ai and none appeared in the session
+# list, while a perfectly good token sat unread on disk.
+#
+# Same helper and same path the desloppify runner uses, so the two pods
+# authenticate the same way. preflight_credential prefers the work token,
+# falls back to personal, and only then to the CLI's own login file --
+# and it clears ANTHROPIC_API_KEY, which would otherwise silently outrank
+# the token and bill per-token against the API account instead of the
+# subscription.
+# shellcheck source=lib/claude-account.sh
+. "${CLAUDE_ACCOUNT_LIB:-/usr/local/share/claude-pods/lib/claude-account.sh}" 2>/dev/null \
+  && preflight_credential \
+  || echo "WARNING: no credential helper; RC will use whatever login it finds" >&2
+
 # Always-on Remote Control, the way that actually survives: run interactive
 # `claude --remote-control` in a dedicated `rc` tmux session that we NEVER
 # attach to. Why this works where the others didn't:
@@ -147,7 +167,15 @@ esac
 RC_NAME="pod$ORD-$RC_ROLE $(basename "$(cat /workspace/.primary-repo 2>/dev/null || echo workspace)") $(date '+%m-%d %H:%M')"
 RC_DIR="$(cat /workspace/.primary-repo 2>/dev/null || echo /workspace)"
 [ -d "$RC_DIR" ] || RC_DIR=/workspace
+# -e passes the token into the new session explicitly. Exporting it in
+# this shell is not enough: `tmux kill-server` above discards the server
+# environment, and a new-session's command does not inherit this
+# process's exports -- verified in the pod, where a var exported here
+# arrived empty inside the session. tmux 3.2+ supports -e; the image
+# ships 3.5a.
 tmux new-session -d -s rc -c "$RC_DIR" \
+  ${CLAUDE_CODE_OAUTH_TOKEN:+-e "CLAUDE_CODE_OAUTH_TOKEN=$CLAUDE_CODE_OAUTH_TOKEN"} \
+  ${CLAUDE_ACCOUNT:+-e "CLAUDE_ACCOUNT=$CLAUDE_ACCOUNT"} \
   "while true; do claude --remote-control \"$RC_NAME\"; echo 'RC exited; restart 5s'; sleep 5; done"
 
 # The `work` layout (nvim + claude + shell) is built by `rclaude N` on attach
