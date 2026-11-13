@@ -151,7 +151,21 @@ for _ in $(seq 1 60); do [ -s "$tmp/victim.pid" ] && break; sleep 0.1; done
 sleep 0.4
 kill -TERM "$(cat "$tmp/victim.pid")" 2>/dev/null
 wait $hpid 2>/dev/null
-pruned && fail "pruned while the agent was still running: go clean -modcache can delete the module cache mid-run"
+if pruned; then
+  echo "--- DIAG: case 4 state at failure ---" >&2
+  echo "stage pid was: $(cat "$tmp/victim.pid" 2>/dev/null)" >&2
+  echo "claude procs now:" >&2
+  for d in /proc/[0-9]*; do
+    [ -r "$d/comm" ] || continue
+    read -r c < "$d/comm" 2>/dev/null
+    [ "$c" = claude ] || continue
+    st=$(sed -e 's/.*) //' "$d/stat" 2>/dev/null)
+    echo "  pid=$(basename "$d") state=$(printf '%s' "$st" | awk '{print $1}') ppid=$(printf '%s' "$st" | awk '{print $2}') exe=$(readlink "$d/exe" 2>/dev/null)" >&2
+  done
+  echo "--- harness out ---" >&2; tail -5 "$tmp/out" >&2
+  echo "--- stage log ---" >&2; tail -5 "$tmp/stage.log" 2>/dev/null >&2
+  fail "pruned while the agent was still running: go clean -modcache can delete the module cache mid-run"
+fi
 grep -q 'NOT pruned' "$tmp/out" \
   || fail "no diagnostic when the prune was skipped for a live agent"
 # This case TERMs the stage shell while its agent is alive, so the
