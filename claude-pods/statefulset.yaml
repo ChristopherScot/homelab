@@ -186,14 +186,28 @@ spec:
     #
     # What filled it was all regenerable: go/pkg 1.9G, .npm 1.8G,
     # .cache/go-build 1.2G, against .claude at 99M. prune_build_caches
-    # in lib/pod-common.sh now drops those on every stage exit, so this
-    # size is headroom rather than the fix.
+    # in lib/pod-common.sh now drops those when a stage ends with this
+    # filesystem under pressure, so this size is headroom, not the fix.
     #
-    # volumeClaimTemplates are immutable, so changing this does NOT
-    # resize existing PVCs - they were patched directly:
+    # The live PVCs are already 15Gi. They were patched directly:
     #   kubectl patch pvc home-claude-session-N -n claude-pods \
     #     -p '{"spec":{"resources":{"requests":{"storage":"15Gi"}}}}'
-    # This value applies to pods created from here on.
+    #
+    # This stays 5Gi, and the mismatch is deliberate. volumeClaimTemplates
+    # are immutable: the API does not ignore an edit here, it REJECTS the
+    # whole StatefulSet with "updates to statefulset spec for fields other
+    # than 'replicas', 'ordinals', 'template', 'updateStrategy',
+    # 'persistentVolumeClaimRetentionPolicy' and 'minReadySeconds' are
+    # forbidden". This app auto-syncs, so writing 15Gi here does not
+    # document reality - it wedges the Application at SyncFailed, and
+    # argocd-image-updater pins the pod image on this same Application,
+    # so the next image roll would stop landing with no obvious cause.
+    #
+    # Raising it for real means recreating the StatefulSet
+    # (kubectl delete sts claude-session --cascade=orphan, at 0 replicas,
+    # with persistentVolumeClaimRetentionPolicy checked first) - a
+    # deliberate operation, not a line in a bugfix PR.
+    # tests/statefulset-appliable.sh keeps this honest.
     - metadata:
         name: home
       spec:
@@ -201,7 +215,7 @@ spec:
         storageClassName: longhorn-single-ssd
         resources:
           requests:
-            storage: 15Gi
+            storage: 5Gi
     # /workspace — HDD capacity tier (1 replica). Bulk, re-clonable repos.
     - metadata:
         name: workspace

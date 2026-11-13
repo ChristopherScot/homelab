@@ -574,6 +574,11 @@ kaneo_note_and_requeue() {
 $summary"
 }
 
+# The one disk-pressure threshold, shared by the warning and the prune:
+# the point where this home is tight enough to act on. Overridable so
+# tuning it is one env var, not two edits.
+HOME_TIGHT_PCT="${HOME_TIGHT_PCT:-85}"
+
 # prune_build_caches
 # Drop the regenerable package and build caches from $HOME.
 #
@@ -595,8 +600,37 @@ $summary"
 # Called from a trap so it runs whether the stage succeeded, failed or
 # timed out - the run that fills the disk is exactly the one that will
 # not reach a tidy ending.
+#
+# Pruning only under pressure, not on every exit. ROUTES pins each stage
+# to its own pod and its own home PVC, so there is no cross-stage cache
+# to protect - but pod0 runs the author stage again tomorrow, and today's
+# caches are what keeps that run inside PER_TICKET_TIMEOUT. Dropping them
+# unconditionally buys headroom nobody needed and trades a
+# BLOCKED-on-full-disk for a BLOCKED-on-timeout, which is the same
+# failure wearing a different hat.
 prune_build_caches() {
-  local before after
+  local before after pct
+
+  # The EXIT trap fires as soon as bash stops waiting on its child, which
+  # on SIGTERM is BEFORE a TERM-ignoring child has died. Pruning there
+  # would delete the module cache mid `go test`, and the agent would
+  # report missing packages - an environmental fault wearing a ticket's
+  # clothes, which is the whole thing this function exists to prevent.
+  #
+  # pgrep -P, not `jobs`: the agent runs in the FOREGROUND inside a
+  # command substitution (out=$(timeout ... claude -p ...)), and `jobs`
+  # lists only background jobs, so it is empty in exactly the case this
+  # guard is for.
+  if [ -n "$(pgrep -P $$ 2>/dev/null)" ]; then
+    echo "   caches NOT pruned: a child is still running" >&2
+    return 0
+  fi
+
+  pct="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')"
+  if [ -n "$pct" ] && [ "$pct" -lt "$HOME_TIGHT_PCT" ]; then
+    return 0
+  fi
+
   before="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
 
   # go clean rather than rm -rf: the module cache is written read-only,
@@ -605,7 +639,9 @@ prune_build_caches() {
     go clean -modcache >/dev/null 2>&1 || true
     go clean -cache    >/dev/null 2>&1 || true
   }
-  command -v npm >/dev/null 2>&1 && npm cache clean --force >/dev/null 2>&1 || true
+  if command -v npm >/dev/null 2>&1; then
+    npm cache clean --force >/dev/null 2>&1 || true
+  fi
 
   after="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {print $4}')"
   if [ -n "$before" ] && [ -n "$after" ]; then
@@ -620,7 +656,7 @@ warn_if_home_tight() {
   local pct
   pct="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}')"
   [ -n "$pct" ] || return 0
-  if [ "$pct" -ge 85 ]; then
+  if [ "$pct" -ge "$HOME_TIGHT_PCT" ]; then
     echo "WARNING: $HOME is ${pct}% full before this run; a transcript write that fails here reads as a BLOCKED ticket" >&2
   fi
 }
