@@ -95,8 +95,11 @@ claude_terminal_reason_limited() {
 }
 
 claude_rate_limited() {
-  # Structured first; prose only as the fallback for text output, which
-  # is what the stage scripts still produce.
+  # Structured first. The prose fallback has no production caller
+  # either: the only caller passes a bare reason, and every exhaustion
+  # value that can appear there is already caught by the bare-word
+  # anchor above. It is here for the stage scripts' text output when
+  # they are wired - see CLAUDE_LIMIT_REASONS.
   #
   # The prose set stays deliberately narrow. A first draft of this fix
   # also matched `limit[ ·]+resets`, which looked like a safe

@@ -243,6 +243,14 @@ assert _co < _top < _add, (
 # nothing checked that the runner actually calls it. An unwired
 # function is exactly what no unit test catches, which is the defect
 # this file now guards against twice.
+# Both halves: the call must be present AND the equality it replaced
+# must be gone. The presence check alone can be satisfied by a comment
+# quoting the call - the same comment-satisfiability flaw as the stack
+# ordering pin had, verified by reverting the line and adding one
+# comment that mentions it.
+assert '= "api_error_429" ]' not in _runner, (
+    "nightly-desloppify.sh must not decide the retry by equality with "
+    "api_error_429: that misses limit_reached and quota_exceeded")
 assert 'claude_rate_limited "$(jq -r' in _runner, (
     "nightly-desloppify.sh must decide the retry with claude_rate_limited: "
     "an equality test against api_error_429 misses limit_reached and "
