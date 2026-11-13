@@ -27,7 +27,10 @@ for text in \
   'You have hit your 7-hour limit' \
   '{"terminal_reason":"limit_reached"}' \
   '{"subtype": "quota_exceeded"}' \
-  '{"api_error_status": 429}'
+  '{"api_error_status": 429}' \
+  'limit_reached' \
+  'quota_exceeded' \
+  'insufficient_credits'
 do
   claude_rate_limited "$text" || { echo "FAIL: missed a rate limit in: $text"; fail=1; }
 done
@@ -43,7 +46,11 @@ for text in \
   '{"api_error_status": null}' \
   'cache limit · resets on deploy' \
   'docs say the limit resets daily' \
-  'ERROR: connection limit  resets after timeout'
+  'ERROR: connection limit  resets after timeout' \
+  'test: shows banner when you hit your 5-hour limit' \
+  'feat(billing): warn before users hit your 24-hour limit' \
+  'completed' \
+  'max_turns'
 do
   claude_rate_limited "$text" && { echo "FAIL: false positive on: $text"; fail=1; }
 done

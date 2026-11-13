@@ -225,7 +225,12 @@ print("test_report: pr field agreement pinned")
 # `gh stack top` then add succeeds.
 _runner = (pathlib.Path(__file__).parent / "nightly-desloppify.sh").read_text()
 _co = _runner.index("gh stack checkout")
-_top = _runner.index("gh stack top")
+# Anchor on the executable call, not the bare words: "gh stack top"
+# also appears in the FATAL echo one line below, so matching the phrase
+# passed even with the command replaced by `if false`. That is the same
+# "test the string, not a word in it" failure this file documents
+# elsewhere - reproduced here by the fix for it.
+_top = _runner.index('gh stack top) 2>&1')
 _add = _runner.index('gh stack add "$branch"')
 assert _co < _top < _add, (
     "nightly-desloppify.sh must call `gh stack top` between checkout and "

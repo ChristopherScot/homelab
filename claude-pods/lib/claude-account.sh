@@ -68,10 +68,25 @@ use_claude_account() {
 # carries the token values "limit_reached" and "quota_exceeded". Those
 # are identifiers; the sentence above is marketing copy that can be
 # reworded without notice.
+# The exhaustion reasons the CLI and SDK report. Matched two ways,
+# because callers hand this either whole JSON or a single extracted
+# value: nightly-desloppify.sh passes `jq -r .stop_reason`, which is a
+# BARE word, while a stage passing raw output has the "key": "value"
+# shape. A first draft matched only the latter, so the runner's
+# limit_reached never matched and the retry it was meant to trigger
+# still did not fire.
+#
+# rate_limit (underscore) as well as rate_limited: run.py:332 greps for
+# the former in subtype, so the two must agree.
+CLAUDE_LIMIT_REASONS='limit_reached|quota_exceeded|rate_limited|rate_limit|insufficient_credits|credit_balance_too_low'
+
 claude_terminal_reason_limited() {
+  # A bare reason, as jq -r hands back.
+  printf '%s' "$1" | grep -qE "^($CLAUDE_LIMIT_REASONS|api_error_429)$" && return 0
+  # Or the same as a JSON value, for a caller passing whole output.
   printf '%s' "$1" | grep -qE \
-    '"(terminal_reason|subtype|stop_reason)"[[:space:]]*:[[:space:]]*"(limit_reached|quota_exceeded|rate_limited)"' \
-    || printf '%s' "$1" | grep -qE '"api_error_status"[[:space:]]*:[[:space:]]*429'
+    "\"(terminal_reason|subtype|stop_reason)\"[[:space:]]*:[[:space:]]*\"($CLAUDE_LIMIT_REASONS)\"" && return 0
+  printf '%s' "$1" | grep -qE '"api_error_status"[[:space:]]*:[[:space:]]*429'
 }
 
 claude_rate_limited() {
@@ -88,7 +103,7 @@ claude_rate_limited() {
   # "hit your N-hour limit" is specific enough to add.
   claude_terminal_reason_limited "$1" && return 0
   printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|hit your [0-9]+-hour limit'
+    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|you.?(ve|have) hit your [0-9]+-hour limit'
 }
 
 # run_with_account_failover CMD...
