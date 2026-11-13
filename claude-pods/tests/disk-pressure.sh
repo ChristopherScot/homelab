@@ -106,6 +106,29 @@ pruned && fail "pruned while a foreground child was still running: go clean -mod
 grep -q 'NOT pruned' "$tmp/out" \
   || fail "no diagnostic when the prune was skipped for a live child"
 
+# 4b. The same with no procps on PATH. The pod image is
+#     node:22-trixie-slim and has neither pgrep nor ps, so a guard built
+#     on them passes on a developer's Mac and silently no-ops in the pod,
+#     pruning the module cache out from under a running agent. That is
+#     the bug this case exists for, and it ran green until the guard was
+#     moved onto /proc.
+#
+#     Only meaningful where /proc exists - i.e. Linux, which is CI and
+#     the pod. On macOS there is no /proc AND no procps once PATH is
+#     stripped, so the guard genuinely cannot see children and the case
+#     would fail for a reason that does not apply in production.
+if [ -d /proc ]; then
+  : > "$tmp/pruned.log"; rm -f "$tmp/victim.pid"
+  ( PATH="$tmp/bin:/usr/bin:/bin" harness 99 1 'out=$(bash -c '"'"'trap "" TERM; sleep 6'"'"')' ) 2>/dev/null &
+  hpid=$!
+  for _ in $(seq 1 60); do [ -s "$tmp/victim.pid" ] && break; sleep 0.1; done
+  [ -s "$tmp/victim.pid" ] || fail "harness never reported its pid (no-procps case)"
+  sleep 0.4
+  kill -TERM "$(cat "$tmp/victim.pid")" 2>/dev/null
+  wait $hpid 2>/dev/null
+  pruned && fail "pruned while a child was alive with no pgrep on PATH: the guard does not work in the pod image"
+fi
+
 # 5. The trap must not eat the stage's exit code. This is the incident's
 #    own mechanism: a good run that reports non-zero is read as BLOCKED.
 #

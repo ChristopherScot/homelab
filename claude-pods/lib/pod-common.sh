@@ -579,6 +579,30 @@ $summary"
 # tuning it is one env var, not two edits.
 HOME_TIGHT_PCT="${HOME_TIGHT_PCT:-85}"
 
+# have_live_children
+# True if this shell has any child process still alive.
+#
+# Reads /proc rather than calling pgrep/ps: the pod image is
+# node:22-trixie-slim with no procps, so both of those are missing
+# there. A guard built on them passes every test on a machine that has
+# them and does nothing at all in the pod, which is the failure mode
+# worth engineering away. Falls back to pgrep where /proc is absent
+# (macOS), so the same code is testable off-cluster.
+have_live_children() {
+  local p stat
+  if [ -d /proc ]; then
+    for p in /proc/[0-9]*; do
+      [ -r "$p/stat" ] || continue
+      # field 4 of /proc/PID/stat is PPID; comm (field 2) may contain
+      # spaces or parentheses, so cut after the final ')'.
+      stat="$(sed -e 's/.*) //' "$p/stat" 2>/dev/null)" || continue
+      [ "$(printf '%s' "$stat" | awk '{print $2}')" = "$$" ] && return 0
+    done
+    return 1
+  fi
+  command -v pgrep >/dev/null 2>&1 && [ -n "$(pgrep -P $$ 2>/dev/null)" ]
+}
+
 # prune_build_caches
 # Drop the regenerable package and build caches from $HOME.
 #
@@ -617,11 +641,14 @@ prune_build_caches() {
   # report missing packages - an environmental fault wearing a ticket's
   # clothes, which is the whole thing this function exists to prevent.
   #
-  # pgrep -P, not `jobs`: the agent runs in the FOREGROUND inside a
-  # command substitution (out=$(timeout ... claude -p ...)), and `jobs`
-  # lists only background jobs, so it is empty in exactly the case this
-  # guard is for.
-  if [ -n "$(pgrep -P $$ 2>/dev/null)" ]; then
+  # Not `jobs`: the agent runs in the FOREGROUND inside a command
+  # substitution (out=$(timeout ... claude -p ...)), and `jobs` lists
+  # only background jobs, so it is empty in exactly the case this guard
+  # is for. Not `pgrep` either - the pod image is node:22-trixie-slim
+  # without procps, so pgrep and ps are both MISSING and the guard would
+  # silently no-op in production while passing on a developer's Mac.
+  # /proc is always there in the container, and that is what decides.
+  if have_live_children; then
     echo "   caches NOT pruned: a child is still running" >&2
     return 0
   fi
