@@ -48,7 +48,11 @@ reap_standins() {
   for d in /proc/[0-9]*; do
     [ -r "$d/exe" ] || continue
     case "$(readlink "$d/exe" 2>/dev/null)" in
-      "$tmp/bin/claude"*) kill "$(basename "$d")" 2>/dev/null ;;
+      # -KILL, not TERM: case 4 starts the stand-in under
+      # `trap "" TERM`, and an ignored disposition survives exec, so the
+      # stand-in is immune to the signal that would otherwise reap it.
+      "$tmp/bin/claude"|"$tmp/bin/claude "*)
+        kill -KILL "$(basename "$d")" 2>/dev/null ;;
     esac
   done
   # Give them a moment to leave the process table, or the next case
@@ -141,7 +145,20 @@ done
 #    against a real pod, with an attached Remote Control session in the
 #    process table:
 #      kubectl exec -n claude-pods claude-session-0 -- bash <path>/disk-pressure.sh
-cp "$(command -v sleep)" "$tmp/bin/claude"
+# A script, not `cp $(command -v sleep)`. On ubuntu-latest /usr/bin/sleep
+# is a multi-call coreutils binary that dispatches on its own basename,
+# so a copy named `claude` exits with "coreutils: unknown program
+# 'claude'" and the stand-in never runs - the agent is absent, the guard
+# correctly says so, and case 4 fails claiming the prune ran while the
+# agent was alive. That failed only on the GitHub runner; ubuntu:24.04
+# and the pod image both ship a standalone sleep, so no local run or
+# container probe reproduced it.
+# No `exec`: with it the process becomes `sleep` and the guard - which
+# matches on comm - would never see the stand-in, making this case pass
+# vacuously. Without it the script stays comm=claude with sleep as its
+# child, which is also closer to the real agent's shape.
+printf '#!/bin/sh\nsleep "$@"\n' > "$tmp/bin/claude"
+chmod +x "$tmp/bin/claude"
 if [ -d /proc ]; then
 : > "$tmp/pruned.log"; rm -f "$tmp/victim.pid"
 ( harness 99 1 'out=$(bash -c '"'"'trap "" TERM; claude 6'"'"')' ) 2>/dev/null &
@@ -188,6 +205,13 @@ pruned || fail "did not prune with log_to's tee alive: the guard mistakes the st
 #     looking at the pod is the opposite of useful.
 if [ -d /proc ]; then
   : > "$tmp/pruned.log"
+  # setsid changes the SESSION, not the parent - this stays a child of
+  # the test script. That is still the property under test, because the
+  # harness runs in a separate shell, so the outsider is its sibling and
+  # not its descendant, which is what the guard discriminates on. The
+  # real shape it stands for is an attached RC session
+  # (claude <- zsh <- tmux-server <- 1), verified separately against the
+  # live pod.
   setsid "$tmp/bin/claude" 8 >/dev/null 2>&1 &
   outsider=$!
   sleep 0.4

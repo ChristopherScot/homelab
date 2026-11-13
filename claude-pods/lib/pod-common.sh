@@ -610,7 +610,15 @@ agent_is_running() {
     for p in /proc/[0-9]*; do
       [ -r "$p/comm" ] || continue
       read -r comm < "$p/comm" 2>/dev/null || continue
-      [ "$comm" = claude ] || continue
+      # comm, verified empirically rather than assumed: the shipped
+      # claude is a Bun-compiled binary named claude.exe that renames
+      # its own main thread to `claude` via prctl, and `timeout` execs
+      # it directly without interposing. Checked against the running
+      # agent in the pod. This is an implementation detail, not a
+      # contract - if a release ever drops the rename, comm becomes
+      # claude.exe, this returns false and the prune runs mid-agent, so
+      # claude.exe is matched too rather than relying on the rename.
+      case "$comm" in claude|claude.exe) ;; *) continue ;; esac
       stat="$(sed -e 's/.*) //' "$p/stat" 2>/dev/null)" || continue
       state="$(printf '%s' "$stat" | awk '{print $1}')"
       # Dead but unreaped is not still working.
