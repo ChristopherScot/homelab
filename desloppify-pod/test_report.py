@@ -237,4 +237,16 @@ assert _co < _top < _add, (
     "add: checkout lands on the bottom of the stack and add only works "
     "from the top")
 
+# The retry must consult claude_rate_limited, not an equality test.
+# Reverting that one line - undoing the whole point of this fix - left
+# every suite green: the reason list was well tested in isolation and
+# nothing checked that the runner actually calls it. An unwired
+# function is exactly what no unit test catches, which is the defect
+# this file now guards against twice.
+assert 'claude_rate_limited "$(jq -r' in _runner, (
+    "nightly-desloppify.sh must decide the retry with claude_rate_limited: "
+    "an equality test against api_error_429 misses limit_reached and "
+    "quota_exceeded, which is what run.py writes when an account runs out")
+
 print("test_report: stack checkout->top->add ordering pinned")
+print("test_report: retry wiring pinned")

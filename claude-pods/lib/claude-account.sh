@@ -68,13 +68,18 @@ use_claude_account() {
 # carries the token values "limit_reached" and "quota_exceeded". Those
 # are identifiers; the sentence above is marketing copy that can be
 # reworded without notice.
-# The exhaustion reasons the CLI and SDK report. Matched two ways,
-# because callers hand this either whole JSON or a single extracted
-# value: nightly-desloppify.sh passes `jq -r .stop_reason`, which is a
-# BARE word, while a stage passing raw output has the "key": "value"
-# shape. A first draft matched only the latter, so the runner's
-# limit_reached never matched and the retry it was meant to trigger
-# still did not fire.
+# The exhaustion reasons the CLI and SDK report, matched in two shapes.
+#
+# The BARE form is the one in use: nightly-desloppify.sh passes
+# `jq -r .stop_reason`, a single word. A first draft matched only the
+# JSON form, so the runner's limit_reached never matched and the retry
+# it was meant to trigger still did not fire.
+#
+# The JSON form has NO caller yet. The stage scripts invoke `claude -p`
+# bare - no failover wrapper, no --output-format json - so a stage that
+# hits the limit still parks its card. Wiring them is a separate change;
+# when it lands it will need --output-format json, and this branch is
+# what will read it. Do not read this as the stages being covered.
 #
 # rate_limit (underscore) as well as rate_limited: run.py:332 greps for
 # the former in subtype, so the two must agree.
