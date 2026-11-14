@@ -195,17 +195,22 @@ DENY = [
     # closes and the `;` is a separator.
     (r"grep 'a\' ; rm -rf /", "single quotes end at the backslash-quote"),
     # --- the agent does not push at all ---
-    # Not because pushing is dangerous in itself, but because every
-    # guard below has to decide what a push TARGETS, which means reading
-    # a branch name out of a command line and agreeing with bash about
-    # quoting, escaping and continuations. Two bypasses have already
-    # come from that (`ma"in"`, `ori\<newline>gin`). `gh stack submit`
-    # does the pushing, in a subprocess of the gh binary this hook never
-    # sees, so the verb is unnecessary as well as hazardous.
+    # Not because pushing is dangerous in itself, but because guarding
+    # it means deciding what a push TARGETS, which means reading a
+    # branch name out of a command line and agreeing with bash about
+    # quoting, escaping and continuations. Two bypasses came from that
+    # in turn (`ma"in"`, then `ori\<newline>gin`), each needing its own
+    # fix. Both are closed; removing the verb is what stops the question
+    # being asked again.
     #
-    # The guards below are kept anyway: they are the second answer if
-    # `push` is ever added back, and they still fire today - just with
-    # the subcommand reason rather than their own.
+    # `gh stack submit` and `gh stack sync` do the pushing, inside the
+    # gh binary, which this PreToolUse hook never sees - so the verb is
+    # unnecessary as well as hazardous.
+    #
+    # The FORBIDDEN push patterns are GONE, not kept as a second answer:
+    # they were all anchored `^git\s+push`, so the subcommand refusal
+    # fires first and they could never run. These cases pin the refusal
+    # itself, which is now the only thing standing here.
     ("git push -u origin desloppify/webapp-20261101",
      "the agent's own branch - gh stack submit does this"),
     # Credentials in a URL are a hazard whatever the verb. This was
@@ -213,6 +218,10 @@ DENY = [
     # allowed on main while the identical URL in a push was refused.
     ("git fetch https://x:y@github.com/a/b", "inline credentials in a fetch"),
     ("git remote add o https://x:y@github.com/a/b", "credentials in a remote"),
+    # The bare-token form, with no colon. This is how a GitHub PAT is
+    # usually written, and this pod holds one, so it is the likeliest
+    # shape - it was allowed while the pattern still required a colon.
+    ("git fetch https://ghp_abc123@github.com/a/b", "a bare token in a URL"),
     ("git push origin HEAD:desloppify/webapp-20261101",
      "even a safe refspec - the verb is gone"),
 

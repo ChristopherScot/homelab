@@ -59,10 +59,19 @@ ALLOWED: dict[str, set[str]] = {
     # The point is not that pushing is dangerous in itself; it is that
     # every guard protecting main has to decide what a push TARGETS, and
     # that means reading a branch name out of a command line. Doing that
-    # correctly means agreeing with bash about quoting, escaping and line
-    # continuations - and each of those has already been a bypass here
-    # (`ma"in"`, and `ori\<newline>gin`). Not having the verb makes the
-    # whole question unreachable instead of answered carefully.
+    # correctly means agreeing with bash about quoting, escaping and
+    # line continuations - and each of those was a bypass here in turn
+    # (`ma"in"`, then `ori\<newline>gin`), each needing its own fix.
+    # Both are closed, so this is not removing a broken guard; it is
+    # removing the need to keep getting that question right.
+    #
+    # And this layer was never the last one. `timeout git push ...`,
+    # `xargs git push ...` and anything via node or python reach a real
+    # push on either side of this change, because the allowlist only
+    # inspects argv[0]. What stops those is the pre-push hook in the
+    # clone, which nightly-desloppify.sh installs and verifies refuses
+    # main before it will run at all. This gate narrows the surface; the
+    # hook is the guarantee.
     "git": {
         "fetch", "log", "diff", "show", "status", "rev-parse", "describe",
         "branch", "checkout", "switch", "restore", "stash", "worktree",
@@ -296,20 +305,28 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # branch; a PR with no explicit --base inherits the repo default,
     # which is main, so a bare `gh pr create` is refused too.
     #
-    # There are no `git push` patterns here any more, and that is the
-    # point of removing the verb rather than guarding it. A regex has to
-    # decide what a push TARGETS, which means reading a branch name out
-    # of a command line and agreeing with bash about quoting, escaping
-    # and line continuations; `ma"in"` and `ori\<newline>gin` both
-    # defeated these patterns while reading as obviously correct. The
-    # allowlist matches argv instead, so none of that is reachable.
+    # There are no `git push` patterns here any more. They were all
+    # anchored `^git\s+push\b`, so with the verb gone from ALLOWED the
+    # subcommand check refuses every string they could match before they
+    # are ever consulted. Verified rather than assumed: re-inserting all
+    # four changes no verdict anywhere in the suite.
     #
-    # Deliberately not kept "just in case" someone re-adds push. Tested:
-    # with `push` back in ALLOWED these patterns catch
-    # `git push origin main` but still allow `git push origin ma"in"` -
-    # protection that looks real and is not, which is worse than none.
-    # Re-adding push means solving the targeting problem properly, and
-    # leaving a half-working guard here would hide that.
+    # They are deleted rather than kept "just in case" someone re-adds
+    # push, but NOT because they are evadable - #182's _normalised()
+    # closed that, and with `push` restored they correctly refuse
+    # `ma"in"`, `'main'` and `ma""in` today. They are deleted because
+    # dead code in a security gate is a liability: it reads as active
+    # protection, so the next person weighing whether to re-add the verb
+    # would count a guard that is not running. Re-adding push means
+    # re-adding these deliberately and re-testing them.
+    #
+    # The reason the verb went rather than the guards is still the
+    # targeting problem: a regex has to decide what a push TARGETS,
+    # which means reading a branch name out of a command line and
+    # agreeing with bash about quoting, escaping and line
+    # continuations. `ma"in"` and `ori\<newline>gin` each defeated these
+    # patterns at some point, and each needed its own fix. An allowlist
+    # matches argv, so the question does not arise.
     (re.compile(r"^gh\s+pr\s+merge\b"),
      "merging is done by the runner after its checks, not by the agent"),
     # Overnight PRs open as drafts so a human reads them before they are
@@ -373,7 +390,14 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # gap was real before the verb was removed: `git fetch
     # https://user:token@...` was allowed on main while the same URL in
     # a push was refused.
-    (re.compile(r"\bhttps?://[^@\s/]*:[^@\s/]*@"),
+    # Userinfo in an https URL at all, with or without a colon. The
+    # bare form is the common one for a GitHub PAT
+    # (https://ghp_xxx@github.com/...), and this pod holds a token, so
+    # omitting it would leave the likeliest shape open: `git fetch
+    # https://ghp_xxx@github.com/a/b` was allowed until this pattern
+    # dropped the `:`. The class stops at `/` and whitespace so a
+    # host:port URL, a path, or a later email address is not userinfo.
+    (re.compile(r"\bhttps?://[^@\s/]+@"),
      "a URL with inline credentials"),
 ]
 
