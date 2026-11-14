@@ -24,8 +24,6 @@ ALLOW = [
     "git checkout -b desloppify/webapp-20261101",
     "git add projects/webapp/src/foo.ts",
     "git commit -m 'desloppify: remove dead code'",
-    "git push -u origin desloppify/webapp-20261101",
-    "git push origin HEAD:desloppify/webapp-20261101",
     "git stash list",
     "git clean -qfd",
     "git reset --hard",
@@ -106,6 +104,14 @@ ALLOW = [
     'grep -rn "Factory<" --include=*.ts tests/',
     'grep -c "^  [A-Z][A-Za-z]*: {$" types.ts',
     'grep -n "cost: $ here" f.ts',
+    # A host:port URL is not a credential URL - the pattern must not
+    # read the port as a password.
+    "git fetch https://github.com/schoolhouse-world/app",
+    'grep -n "https://example.com:8080/path" f.ts',
+    # The `@` here belongs to an email, not to a credential URL. A
+    # greedy `https?://.*:.*@` reads across the whole line and refuses
+    # this; the pattern stops at `/` and at whitespace so it cannot.
+    'grep -n "https://example.com:8080/x and bob@example.com" f.ts',
 ]
 
 DENY = [
@@ -188,6 +194,27 @@ DENY = [
     # Single quotes do NOT interpret backslash, so this quote really
     # closes and the `;` is a separator.
     (r"grep 'a\' ; rm -rf /", "single quotes end at the backslash-quote"),
+    # --- the agent does not push at all ---
+    # Not because pushing is dangerous in itself, but because every
+    # guard below has to decide what a push TARGETS, which means reading
+    # a branch name out of a command line and agreeing with bash about
+    # quoting, escaping and continuations. Two bypasses have already
+    # come from that (`ma"in"`, `ori\<newline>gin`). `gh stack submit`
+    # does the pushing, in a subprocess of the gh binary this hook never
+    # sees, so the verb is unnecessary as well as hazardous.
+    #
+    # The guards below are kept anyway: they are the second answer if
+    # `push` is ever added back, and they still fire today - just with
+    # the subcommand reason rather than their own.
+    ("git push -u origin desloppify/webapp-20261101",
+     "the agent's own branch - gh stack submit does this"),
+    # Credentials in a URL are a hazard whatever the verb. This was
+    # scoped to `git push`, so `git fetch https://user:token@...` was
+    # allowed on main while the identical URL in a push was refused.
+    ("git fetch https://x:y@github.com/a/b", "inline credentials in a fetch"),
+    ("git remote add o https://x:y@github.com/a/b", "credentials in a remote"),
+    ("git push origin HEAD:desloppify/webapp-20261101",
+     "even a safe refspec - the verb is gone"),
 
     # --- the main guarantee ---
     ("git push origin main", "pushes to main"),

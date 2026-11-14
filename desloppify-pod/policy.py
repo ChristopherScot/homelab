@@ -46,12 +46,29 @@ ALLOWED_REPO = "schoolhouse-world/app"
 SHELL_METACHARS = re.compile(r"[;&|<>`$(){}\n]|\breval\b")
 
 ALLOWED: dict[str, set[str]] = {
+    # No "push". The agent does not need it: `gh stack` is what puts work
+    # on the remote, and it spawns its own git as a subprocess of the gh
+    # binary, which this hook never sees. Checked against the audit logs
+    # rather than assumed - the 2026-11-14 run opened PR #17094 via
+    # `gh stack add` and `gh stack submit` with zero `git push` calls,
+    # and across all history the agent pushed exactly twice, both on
+    # 2026-11-04/05 to its own desloppify/* branch, before gh stack
+    # existed here. The runner's own one-time push of the integration
+    # branch lives in nightly-desloppify.sh, outside this gate entirely.
+    #
+    # The point is not that pushing is dangerous in itself; it is that
+    # every guard protecting main has to decide what a push TARGETS, and
+    # that means reading a branch name out of a command line. Doing that
+    # correctly means agreeing with bash about quoting, escaping and line
+    # continuations - and each of those has already been a bypass here
+    # (`ma"in"`, and `ori\<newline>gin`). Not having the verb makes the
+    # whole question unreachable instead of answered carefully.
     "git": {
         "fetch", "log", "diff", "show", "status", "rev-parse", "describe",
         "branch", "checkout", "switch", "restore", "stash", "worktree",
         "ls-files", "ls-tree", "blame", "shortlog", "merge-base", "add",
         "cat-file", "for-each-ref", "config", "clean", "reset", "commit",
-        "push", "rm", "mv", "apply", "symbolic-ref",
+        "rm", "mv", "apply", "symbolic-ref",
     },
     "gh": {"pr", "issue", "label", "repo", "api", "search", "auth",
            "browse", "stack"},
@@ -196,6 +213,10 @@ def _canonical_verb(namespace: str, sub: str, verb: str) -> str:
 # allowlist stayed denied by the regex while the suite reported PASS,
 # so neither layer's failure was visible through the other.
 SUB_REASONS: dict[tuple[str, str], str] = {
+    ("git", "push"):
+        "pushing is `gh stack`'s job here -- `gh stack submit` puts the "
+        "branch and its PR on the remote. The agent has not needed a "
+        "direct push since gh stack landed",
     ("gh stack", "merge"):
         "merging is the runner's after its checks, not the agent's -- and "
         "`gh stack merge` merges every PR up to the one named, without "
@@ -273,13 +294,21 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # PR that targets one. The pod's base is always the integration
     # branch; a PR with no explicit --base inherits the repo default,
     # which is main, so a bare `gh pr create` is refused too.
-    (re.compile(r"^git\s+push\b.*\b(origin\s+)?(HEAD:)?(refs/heads/)?"
-                r"(main|master|production|prod|release)\b"),
-     "pushing to a protected branch"),
-    (re.compile(r"^git\s+push\b.*--mirror\b"), "mirror push rewrites every ref"),
-    (re.compile(r"^git\s+push\b.*(--force|--force-with-lease|-f)\b"),
-     "force-push"),
-    (re.compile(r"^git\s+push\b.*--delete\b"), "deleting a remote branch"),
+    #
+    # There are no `git push` patterns here any more, and that is the
+    # point of removing the verb rather than guarding it. A regex has to
+    # decide what a push TARGETS, which means reading a branch name out
+    # of a command line and agreeing with bash about quoting, escaping
+    # and line continuations; `ma"in"` and `ori\<newline>gin` both
+    # defeated these patterns while reading as obviously correct. The
+    # allowlist matches argv instead, so none of that is reachable.
+    #
+    # Deliberately not kept "just in case" someone re-adds push. Tested:
+    # with `push` back in ALLOWED these patterns catch
+    # `git push origin main` but still allow `git push origin ma"in"` -
+    # protection that looks real and is not, which is worse than none.
+    # Re-adding push means solving the targeting problem properly, and
+    # leaving a half-working guard here would hide that.
     (re.compile(r"^gh\s+pr\s+merge\b"),
      "merging is done by the runner after its checks, not by the agent"),
     # Overnight PRs open as drafts so a human reads them before they are
@@ -337,7 +366,13 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\b(curl|wget)\b.*\|\s*(ba)?sh\b"), "piping a download into a shell"),
     (re.compile(r"^rm\s+.*(-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])"),
      "recursive force-delete"),
-    (re.compile(r"\bgit\s+push\b.*\bhttps?://[^@\s]*:[^@\s]*@"),
+    # Any URL carrying credentials, not just a push's. This was scoped
+    # to `git push` and that verb is gone, which would have left it
+    # matching nothing - but the hazard was never about the verb. The
+    # gap was real before the verb was removed: `git fetch
+    # https://user:token@...` was allowed on main while the same URL in
+    # a push was refused.
+    (re.compile(r"\bhttps?://[^@\s/]*:[^@\s/]*@"),
      "a URL with inline credentials"),
 ]
 
@@ -779,6 +814,9 @@ def check_bash(command: str) -> Decision:
     if sub is None:
         return Decision(True, f"{binary} with no subcommand")
     if sub not in subcommands:
+        why = SUB_REASONS.get((binary, sub))
+        if why:
+            return Decision(False, why)
         return Decision(False, f"{binary} {sub} is not allowed for this pod")
 
     # A namespace that carries its own subcommands (`gh stack`) is
