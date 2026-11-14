@@ -45,10 +45,52 @@ spec:
     name: desloppify
   minReplicaCount: 0
   maxReplicaCount: 1
+  # 5 minutes after the last trigger goes inactive, which for the busy
+  # trigger means 5 minutes after the run's own pod exits. Stated rather
+  # than left to the default so the two numbers that decide when the pod
+  # dies are both visible here.
+  cooldownPeriod: 300
+  # Two triggers, and the HPA takes max() across them - that is what
+  # makes this an OR. The cron wakes the pod on schedule; the workload
+  # trigger keeps it awake while a run is in flight, including past the
+  # cron's end time.
   triggers:
+    # The wake. Starts 5 minutes before the 03:00 CronJob so the pod is
+    # ready when the trigger job execs into it.
     - type: cron
       metadata:
         timezone: America/New_York
         start: 55 2 * * *
         end: 30 6 * * *
         desiredReplicas: "1"
+    # The hold. Counts the trigger CronJob's own pod, which carries this
+    # label and lives for exactly as long as the run: its container is a
+    # blocking `kubectl exec` with no `&`, so the pod is Running until
+    # nightly-desloppify.sh returns.
+    #
+    # This is the fix for the 2026-11-14 incident. The cron trigger alone
+    # scaled the set to 0 at 06:30 with an agent mid-ticket, which killed
+    # that run and wedged the next three on a half-created stack branch.
+    # A run that overruns its window now holds the pod itself.
+    #
+    # The scaler reports a RAW COUNT of matching non-terminated pods -
+    # read from kubernetes_workload_scaler.go at v2.21.0, because the
+    # docs describe a "relation = count / workload pods" that the code
+    # does not compute. That matters here: a ratio would divide by zero
+    # while the StatefulSet sits at 0 replicas, which is exactly when
+    # this trigger has to fire. A raw count has no such problem.
+    #
+    # Activation is `count > activationValue`, and activationValue
+    # defaults to 0, so one matching pod is enough to hold the set up
+    # from zero. value: "1" is the HPA target, giving 1 replica per
+    # matching pod - and maxReplicaCount caps it at 1 regardless.
+    #
+    # Succeeded and Failed pods are excluded by the scaler, so a
+    # finished run stops holding at once and cooldownPeriod decides the
+    # rest. No authentication: the scaler lists pods as KEDA's own
+    # identity (its ClusterRole grants pods get/list/watch), scoped to
+    # this namespace.
+    - type: kubernetes-workload
+      metadata:
+        podSelector: 'desloppify.homelab/run=active'
+        value: "1"
