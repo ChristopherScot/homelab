@@ -87,7 +87,12 @@ spec:
     #
     # Succeeded and Failed pods are excluded by the scaler, so a
     # finished run stops holding at once and cooldownPeriod decides the
-    # rest. No authentication: the scaler lists pods as KEDA's own
+    # rest. Note which phases that leaves holding: Pending, Running and
+    # Unknown all count. A pod on a lost node keeps phase Running, and
+    # so does one stuck Terminating, so the hold releases when the pod
+    # reaches a TERMINAL phase rather than when the run ends. For a
+    # wedged pod that is the trigger job's activeDeadlineSeconds
+    # (11400s) - which is why test-keda-hold.sh now pins it. No authentication: the scaler lists pods as KEDA's own
     # identity (its ClusterRole grants pods get/list/watch), scoped to
     # this namespace.
     - type: kubernetes-workload

@@ -29,9 +29,17 @@ for f in "$so" "$cj"; do
   [ -f "$f" ] || { echo "FAIL: $f not found"; exit 1; }
 done
 
+# Fail rather than skip. This test is the only thing standing between a
+# typo in either manifest and a silent return of the 2026-11-14
+# incident, so a green run on a missing binary is worse than no test -
+# it reads as "the pair agrees" when nothing was compared. yq is
+# preinstalled on ubuntu-latest, which is what CI runs; if that ever
+# stops being true the right outcome is a loud failure here.
 if ! command -v yq >/dev/null 2>&1; then
-  echo "SKIP: yq not installed; cannot read the manifests structurally"
-  exit 0
+  echo "FAIL: yq is required to read these manifests structurally"
+  echo "      install it (brew install yq / snap install yq) and rerun;"
+  echo "      skipping would leave the label/selector pair unchecked"
+  exit 1
 fi
 
 # The ScaledObject is a multi-document file (it carries a RoleBinding
@@ -105,7 +113,47 @@ if [ -n "$start_hr" ] && [ -n "$cj_hr" ]; then
   fi
 fi
 
+# 6. The hold's only bound. shouldCountPod in KEDA excludes just
+#    Succeeded and Failed, so Pending, Running AND Unknown all hold the
+#    set up - a pod on a lost node keeps phase Running, and so does one
+#    stuck Terminating. What converts those to Failed is the Job
+#    controller acting on activeDeadlineSeconds. Before this change that
+#    deadline was job hygiene; now it is the thing that stops a stuck
+#    pod pinning the StatefulSet indefinitely, and nothing tested it.
+deadline=$(cj_doc '.spec.jobTemplate.spec.activeDeadlineSeconds')
+if [ -z "$deadline" ] || [ "$deadline" = "null" ]; then
+  echo "FAIL: no activeDeadlineSeconds on the trigger job"
+  echo "      it is the only bound on the hold: a pod stuck Running or"
+  echo "      Unknown keeps the set scaled up until the deadline fires"
+  fail=1
+fi
+
+# 7. Forbid and Never, for the same reason. Two concurrent trigger jobs
+#    would each hold the set up, and a restarting one would hold it
+#    across restarts - both turn a bounded hold into an open-ended one.
+conc=$(cj_doc '.spec.concurrencyPolicy')
+[ "$conc" = "Forbid" ] || {
+  echo "FAIL: concurrencyPolicy is ${conc:-<unset>}, not Forbid"
+  echo "      overlapping trigger jobs would each hold the pod up"
+  fail=1
+}
+restart=$(cj_doc '.spec.jobTemplate.spec.template.spec.restartPolicy')
+[ "$restart" = "Never" ] || {
+  echo "FAIL: restartPolicy is ${restart:-<unset>}, not Never"
+  fail=1
+}
+
+# 8. value must be present and positive. KEDA's Validate() rejects the
+#    ScaledObject outright when value <= 0 ("value must be a float
+#    greater than 0"), and it defaults to 0 - so omitting it breaks the
+#    whole object rather than just this trigger.
+val=$(so_doc '.spec.triggers[] | select(.type == "kubernetes-workload") | .metadata.value')
+if [ -z "$val" ] || [ "$val" = "null" ]; then
+  echo "FAIL: the kubernetes-workload trigger has no value; KEDA rejects value <= 0"
+  fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
-  echo "PASS: the run's pod is labelled, the scaler counts that label, the set cannot hold itself up, and the wake precedes the exec"
+  echo "PASS: the run's pod is labelled, the scaler counts that label, the set cannot hold itself up, the wake precedes the exec, and the hold stays bounded"
 fi
 exit "$fail"
