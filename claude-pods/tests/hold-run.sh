@@ -97,6 +97,20 @@ printf '%s' "$out" | grep -q 'already running something' \
 check "does not pin when refusing a busy pod" 0 \
   "$(count 'annotate.*paused-replicas=')"
 
+# 4b. `--release` takes an early path that skips startup, so it has to
+#     resolve the KEDA decision itself. It did not, and shipped briefly
+#     taking the wrong branch - found by running it against a real hold,
+#     which it failed to drop while reporting success.
+out=$(run --release desloppify)
+check "--release unpins" 1 "$(unpins)"
+printf '%s' "$out" | grep -q 'session-sleep owns it' \
+  && { echo "FAIL: --release took the non-KEDA branch"; fail=1; }
+
+# 4c. And it must still unpin when the lookup fails, for the same reason
+#     the trap path must: this subcommand exists to undo a stuck hold.
+out=$(FK_GET_SO=missing run --release desloppify)
+check "--release unpins even when the lookup fails" 1 "$(unpins)"
+
 # 5. Run the probe's OWN logic against a fake /proc holding a process
 #    called claude.exe - the real binary's name. A test that greps the
 #    probe's source passes on any spelling; this one only passes if the

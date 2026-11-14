@@ -155,6 +155,16 @@ if [ "$1" = "--release" ]; then
   kind=${1:-}
   so=$(sts_for "$kind")
   [ -n "$so" ] || { echo "hold-run --release <desloppify|author|test|merge>" >&2; exit 1; }
+  # --release skips the startup path, so resolve the one thing release
+  # reads. Default to yes on a failed lookup: an unpin against a target
+  # that has no ScaledObject is a harmless no-op, while skipping one
+  # that does leaves the pod pinned - which is the whole failure this
+  # subcommand exists to undo.
+  if have_scaledobject "$so" || [ "$kind" = desloppify ]; then
+    KEDA_BACKED=yes
+  else
+    KEDA_BACKED=no
+  fi
   release "$so"
   exit 0
 fi
