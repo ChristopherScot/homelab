@@ -479,7 +479,11 @@ SHELL_CONTRACT = (
     "fine. Separators inside quotes are data, not syntax, so "
     '`grep -n "a\\|b" f` and `sed -n \'1,5p;9p\' f` are single commands '
     "and pass. `$` and a backtick still count inside double quotes, "
-    "because the shell expands them there."
+    "because the shell expands them there. "
+    "Write each command on ONE line: a backslash line continuation is "
+    "refused, because bash joins the halves and the command that runs "
+    "is then not the one that was checked. Long invocations are fine, "
+    "just unwrapped."
 )
 
 
