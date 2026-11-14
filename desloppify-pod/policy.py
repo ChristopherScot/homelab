@@ -513,13 +513,25 @@ def _unquoted(command: str) -> str:
                 out.append("  ")
                 i += 2
                 continue
-            # `$` and a backtick keep their meaning INSIDE double quotes -
-            # "a $(whoami)" really does run whoami - so they must still
-            # reach the metachar scan. Only the characters that double
-            # quotes genuinely neuter (`;`, `|`, `&`, redirection,
-            # grouping, newline) are blanked here. Verified against bash:
-            # `printf '%s' "a\\" $(whoami)"` prints the substituted name.
-            if ch in "$`":
+            # A backtick always expands inside double quotes, and so does
+            # `$` when it introduces a name, a brace or a subshell -
+            # "a $(whoami)" really does run whoami - so those must still
+            # reach the metachar scan. Everything double quotes genuinely
+            # neuters (`;`, `|`, `&`, redirection, grouping, newline) is
+            # blanked. Verified against bash rather than assumed, in both
+            # directions: `"a\\" $(whoami)"` substitutes, while a `$`
+            # before the closing quote or before a space is literal - which
+            # is why `grep -c "^ [A-Z]*: {$" f` is an ordinary command and
+            # must not be refused.
+            if ch == "`":
+                out.append(ch)
+                i += 1
+                continue
+            if ch == "$" and i + 1 < n and (
+                command[i + 1].isalpha()
+                or command[i + 1] == "_"
+                or command[i + 1] in "{("
+            ):
                 out.append(ch)
                 i += 1
                 continue

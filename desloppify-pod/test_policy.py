@@ -100,6 +100,12 @@ ALLOW = [
     "grep -n 'x|y' f.ts",
     # A quoted metachar next to a real pipeline: both halves still checked.
     r'grep -n "a\|b" f.ts | head -20',
+    # `<` and `{` are inert inside quotes, and a `$` that introduces
+    # nothing is literal to bash too - checked against bash, which prints
+    # `a: {$` unchanged. All three are ordinary grep patterns.
+    'grep -rn "Factory<" --include=*.ts tests/',
+    'grep -c "^  [A-Z][A-Za-z]*: {$" types.ts',
+    'grep -n "cost: $ here" f.ts',
 ]
 
 DENY = [
@@ -118,6 +124,9 @@ DENY = [
     # than closing it - so they must still reach the metachar scan.
     (r'grep "a\" $(whoami)" f', "substitution inside double quotes"),
     (r'grep "a\" `id`" f', "backticks inside double quotes"),
+    # A `$` that DOES introduce an expansion still counts inside quotes.
+    (r'grep "a\" ${HOME}" f', "brace expansion inside double quotes"),
+    (r'grep "a\" $HOME" f', "bare variable inside double quotes"),
     # Single quotes do NOT interpret backslash, so this quote really
     # closes and the `;` is a separator.
     (r"grep 'a\' ; rm -rf /", "single quotes end at the backslash-quote"),
