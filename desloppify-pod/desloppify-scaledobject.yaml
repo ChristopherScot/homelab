@@ -85,16 +85,42 @@ spec:
     # from zero. value: "1" is the HPA target, giving 1 replica per
     # matching pod - and maxReplicaCount caps it at 1 regardless.
     #
-    # Succeeded and Failed pods are excluded by the scaler, so a
-    # finished run stops holding at once and cooldownPeriod decides the
-    # rest. Note which phases that leaves holding: Pending, Running and
-    # Unknown all count. A pod on a lost node keeps phase Running, and
-    # so does one stuck Terminating, so the hold releases when the pod
-    # reaches a TERMINAL phase rather than when the run ends. For a
-    # wedged pod that is the trigger job's activeDeadlineSeconds
-    # (11400s) - which is why test-keda-hold.sh now pins it. No authentication: the scaler lists pods as KEDA's own
-    # identity (its ClusterRole grants pods get/list/watch), scoped to
-    # this namespace.
+    # The hold releases when the pod reaches a TERMINAL phase, not when
+    # the run ends. shouldCountPod excludes only Succeeded and Failed,
+    # so Pending, Running and Unknown all keep counting.
+    #
+    # In the normal cases that is the same thing: the run finishes, the
+    # container exits, the kubelet moves the pod to Succeeded or Failed,
+    # the count drops to 0 and cooldownPeriod decides the rest.
+    #
+    # It is NOT bounded when the pod cannot reach a terminal phase, and
+    # activeDeadlineSeconds does not save it - traced through k8s
+    # v1.30.6 and confirmed on this cluster. The deadline makes the Job
+    # controller DELETE the pod (job_controller.go deleteActivePods, an
+    # ordinary graceful delete); deletion sets deletionTimestamp and
+    # leaves status.phase at Running, which only the kubelet changes. A
+    # test pod here reported `phase=Running deletionTimestamp=<set>`
+    # after deletion, and KEDA checks phase with no deletionTimestamp
+    # check. So:
+    #
+    #   - kubelet unreachable, node object still Ready: nothing moves
+    #     the phase, and PodGC does not engage.
+    #   - node lost: podgc gcTerminating needs the node NotReady AND the
+    #     node.kubernetes.io/out-of-service taint, which is only ever
+    #     applied by an operator.
+    #   - stuck finalizer: the pod persists at Running.
+    #
+    # In those cases the pod pins this set at 1 replica until a human
+    # intervenes. maxReplicaCount: 1 caps it at one idle pod, and note
+    # `hold-run.sh --release` does NOT clear it - that clears the
+    # paused-replicas annotation, a different mechanism, while this
+    # trigger goes on counting the stuck pod. The remedy is:
+    #
+    #   kubectl delete pod <trigger-pod> -n claude-pods --force --grace-period=0
+    #
+    # No authentication: the scaler lists pods as KEDA's own identity
+    # (its ClusterRole grants pods get/list/watch), scoped to this
+    # namespace.
     - type: kubernetes-workload
       metadata:
         podSelector: 'desloppify.homelab/run=active'

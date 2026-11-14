@@ -121,11 +121,35 @@ fi
 #    deadline was job hygiene; now it is the thing that stops a stuck
 #    pod pinning the StatefulSet indefinitely, and nothing tested it.
 deadline=$(cj_doc '.spec.jobTemplate.spec.activeDeadlineSeconds')
+start_deadline=$(cj_doc '.spec.startingDeadlineSeconds')
 if [ -z "$deadline" ] || [ "$deadline" = "null" ]; then
   echo "FAIL: no activeDeadlineSeconds on the trigger job"
-  echo "      it is the only bound on the hold: a pod stuck Running or"
-  echo "      Unknown keeps the set scaled up until the deadline fires"
+  echo "      without it a wedged run has no deadline at all"
   fail=1
+elif ! [ "$deadline" -gt 0 ] 2>/dev/null; then
+  # 0 is the degenerate value and k8s reads it as already-expired:
+  # pastActiveDeadline compares duration >= deadline, so every run dies
+  # instantly. Testing presence alone let that through.
+  echo "FAIL: activeDeadlineSeconds is $deadline; must be a positive integer"
+  fail=1
+else
+  # The window-end invariant the ScaledObject comment derives:
+  #   cron end >= schedule + startingDeadlineSeconds + activeDeadlineSeconds
+  # Raising the deadline past the window end breaks it silently, so the
+  # arithmetic is checked rather than described.
+  cron_end=$(so_doc '.spec.triggers[] | select(.type == "cron") | .metadata.end')
+  end_min=${cron_end%% *}; end_hr=$(echo "$cron_end" | awk '{print $2}')
+  sd=${start_deadline:-0}; [ "$sd" = "null" ] && sd=0
+  if [ -n "$end_hr" ] && [ -n "$cj_hr" ]; then
+    window_end=$((10#$end_hr * 60 + 10#$end_min))
+    needs=$((exec_at + (sd + deadline) / 60))
+    if [ "$needs" -gt "$window_end" ]; then
+      echo "FAIL: the job can outlive the cron window"
+      echo "      exec $cj_sched + ${sd}s + ${deadline}s ends past $cron_end"
+      echo "      the window end must cover the whole worst-case run"
+      fail=1
+    fi
+  fi
 fi
 
 # 7. Forbid and Never, for the same reason. Two concurrent trigger jobs
@@ -133,13 +157,13 @@ fi
 #    across restarts - both turn a bounded hold into an open-ended one.
 conc=$(cj_doc '.spec.concurrencyPolicy')
 [ "$conc" = "Forbid" ] || {
-  echo "FAIL: concurrencyPolicy is ${conc:-<unset>}, not Forbid"
+  echo "FAIL: concurrencyPolicy is $conc, not Forbid"
   echo "      overlapping trigger jobs would each hold the pod up"
   fail=1
 }
 restart=$(cj_doc '.spec.jobTemplate.spec.template.spec.restartPolicy')
 [ "$restart" = "Never" ] || {
-  echo "FAIL: restartPolicy is ${restart:-<unset>}, not Never"
+  echo "FAIL: restartPolicy is $restart, not Never"
   fail=1
 }
 
@@ -148,12 +172,20 @@ restart=$(cj_doc '.spec.jobTemplate.spec.template.spec.restartPolicy')
 #    greater than 0"), and it defaults to 0 - so omitting it breaks the
 #    whole object rather than just this trigger.
 val=$(so_doc '.spec.triggers[] | select(.type == "kubernetes-workload") | .metadata.value')
+# `> 0`, not merely present. Validate() rejects the whole ScaledObject at
+# value <= 0, which disables the cron trigger too, so the pod never even
+# wakes. Checking presence alone let value: "0" and "-1" through - the
+# assertion contradicted the condition its own comment stated.
 if [ -z "$val" ] || [ "$val" = "null" ]; then
   echo "FAIL: the kubernetes-workload trigger has no value; KEDA rejects value <= 0"
+  fail=1
+elif ! awk -v v="$val" 'BEGIN { exit !(v + 0 > 0) }' 2>/dev/null; then
+  echo "FAIL: trigger value is $val; KEDA rejects the whole ScaledObject at <= 0"
+  echo "      that disables the cron trigger too, so the pod never wakes"
   fail=1
 fi
 
 if [ "$fail" -eq 0 ]; then
-  echo "PASS: the run's pod is labelled, the scaler counts that label, the set cannot hold itself up, the wake precedes the exec, and the hold stays bounded"
+  echo "PASS: the run's pod is labelled, the scaler counts that label, the set cannot hold itself up, the wake precedes the exec, and the job deadline fits inside the cron window"
 fi
 exit "$fail"
