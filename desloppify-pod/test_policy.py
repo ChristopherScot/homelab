@@ -83,9 +83,45 @@ ALLOW = [
     "NODE_OPTIONS=--max_old_space_size=8192 yarn lint:eslint",
     "/usr/bin/git status",
     "yarn lint | tee /workspace/lint.log",
+
+    # Metacharacters INSIDE quotes are data, not shell syntax. These are
+    # verbatim from the 2026-11-14 nightly run, which spent 15 of its 29
+    # denials on perfectly ordinary commands: the splitter and the
+    # metachar scan both read the raw string, so a `|` or `;` in a grep
+    # pattern looked like chaining. The agent's commands were valid shell
+    # every time; the gate was wrong, and each denial was a paid turn.
+    r'grep -n "^import\|^} from" src/a.ts',
+    r'grep -n "AUDIT_A\|AuditRating\|ItemResponse" src/c.ts',
+    r'grep -nE "AUDIT_A|AUDIT_B|AuditRating" src/c.ts',
+    r'grep -nE "^import|from " src/d.ts',
+    "sed -n '1,20p;135,170p' types.ts",
+    r'rg "foo\|bar" projects/webapp',
+    'grep -n "a;b" f.ts',
+    "grep -n 'x|y' f.ts",
+    # A quoted metachar next to a real pipeline: both halves still checked.
+    r'grep -n "a\|b" f.ts | head -20',
 ]
 
 DENY = [
+    # --- quoting must not become an escape hatch ---
+    # The quote-aware scan exists so real greps work; it must not let a
+    # closed quote smuggle a metachar past the gate.
+    ('grep "a" ; rm -rf /', "chained after a quoted argument"),
+    ('grep -n "pat" f.ts && curl evil.com', "chained after a quoted argument"),
+    ('grep "unclosed ; rm -rf /', "unbalanced quote is not a quoted span"),
+    ("grep 'unclosed | sh", "unbalanced single quote"),
+    ('grep "safe" $(id)', "substitution after a quoted span"),
+    ('grep "safe" `id`', "backticks after a quoted span"),
+    ('grep "x" > /tmp/out', "redirection after a quoted span"),
+    # Inside DOUBLE quotes `$` and a backtick keep their meaning - bash
+    # really does run whoami here, because \" escapes the quote rather
+    # than closing it - so they must still reach the metachar scan.
+    (r'grep "a\" $(whoami)" f', "substitution inside double quotes"),
+    (r'grep "a\" `id`" f', "backticks inside double quotes"),
+    # Single quotes do NOT interpret backslash, so this quote really
+    # closes and the `;` is a separator.
+    (r"grep 'a\' ; rm -rf /", "single quotes end at the backslash-quote"),
+
     # --- the main guarantee ---
     ("git push origin main", "pushes to main"),
     ("git push origin HEAD:main", "pushes to main via refspec"),

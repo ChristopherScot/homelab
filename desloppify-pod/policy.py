@@ -476,15 +476,148 @@ SHELL_CONTRACT = (
     "Command substitution, redirection and grouping are refused outright. "
     "A pipeline or `&&`/`;` chain passes only if every clause passes on "
     "its own - a simple pipe of allowed commands (`rg pattern | head`) is "
-    "fine. But the splitter is quote-blind: a quoted argument containing "
-    "`;`, `|`, `&` or `$` makes the whole call fail as unparseable, which "
-    "looks like chaining being refused. One command per Bash call is the "
-    "reliable habit."
+    "fine. Separators inside quotes are data, not syntax, so "
+    '`grep -n "a\\|b" f` and `sed -n \'1,5p;9p\' f` are single commands '
+    "and pass. `$` and a backtick still count inside double quotes, "
+    "because the shell expands them there."
 )
 
 
+def _unquoted(command: str) -> str:
+    """The command with quoted spans blanked out, for metachar scanning.
+
+    A metacharacter only does something - substitution, redirection,
+    chaining - when the shell sees it OUTSIDE quotes. Inside quotes it is
+    data: `grep -n "a|b" f` passes one literal pattern to grep and starts
+    no pipeline. Scanning the raw string cannot tell those apart and
+    refused the second, so ordinary greps came back as "command
+    substitution, redirection or grouping".
+
+    Quoted content is replaced with spaces rather than removed, so any
+    offset reported against this string still lines up with the original.
+    """
+    out = []
+    quote = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote == "'":
+            out.append(" " if ch != "'" else ch)
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "\\" and i + 1 < n:
+                out.append("  ")
+                i += 2
+                continue
+            # `$` and a backtick keep their meaning INSIDE double quotes -
+            # "a $(whoami)" really does run whoami - so they must still
+            # reach the metachar scan. Only the characters that double
+            # quotes genuinely neuter (`;`, `|`, `&`, redirection,
+            # grouping, newline) are blanked here. Verified against bash:
+            # `printf '%s' "a\\" $(whoami)"` prints the substituted name.
+            if ch in "$`":
+                out.append(ch)
+                i += 1
+                continue
+            out.append(" " if ch != '"' else ch)
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            # An escaped metachar outside quotes is literal too.
+            out.append("  ")
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _split_commands(command: str) -> list[str]:
-    return [c.strip() for c in re.split(r"\|\||&&|\||;", command) if c.strip()]
+    """Split a command on shell separators that are NOT inside quotes.
+
+    A plain `re.split` is quote-blind, and that cost real work: an
+    ordinary `grep -n "^import\\|^} from" file` was split mid-pattern
+    into `grep -n "^import\\` and `^} from" file`, and the first
+    fragment - an unterminated quote ending in a backslash - came back
+    from shlex as `unparseable: No escaped character`. The agent's
+    command was valid shell every time. One nightly run spent 15 of its
+    29 denials this way (2026-11-14, report-20261114-0807.json), each
+    one a wasted turn on a command that should simply have run.
+
+    Quoting rules are the shell's, not Python's: inside single quotes
+    nothing is special, including backslash; inside double quotes a
+    backslash escapes the next character; outside quotes a backslash
+    escapes the next character too. Separators are only separators when
+    the scanner is outside both kinds of quote.
+    """
+    out: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote == "'":
+            # Single quotes are literal; only the closing quote ends them.
+            buf.append(ch)
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "\\" and i + 1 < n:
+                buf.append(ch)
+                buf.append(command[i + 1])
+                i += 2
+                continue
+            buf.append(ch)
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        # Outside quotes.
+        if ch == "\\" and i + 1 < n:
+            buf.append(ch)
+            buf.append(command[i + 1])
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ";":
+            out.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        if ch in "|&":
+            # `||` and `&&` are two-character separators; a lone `|` is a
+            # pipe. A lone `&` is backgrounding, which SHELL_METACHARS
+            # refuses on the whole command before this ever runs, but
+            # splitting on it here keeps the scan honest either way.
+            if i + 1 < n and command[i + 1] == ch:
+                i += 2
+            else:
+                i += 1
+            out.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+        i += 1
+    out.append("".join(buf))
+    return [c.strip() for c in out if c.strip()]
 
 
 def check_bash(command: str) -> Decision:
@@ -504,7 +637,7 @@ def check_bash(command: str) -> Decision:
                 return verdict
         return Decision(True, "pipeline, every clause allowed")
 
-    if SHELL_METACHARS.search(command):
+    if SHELL_METACHARS.search(_unquoted(command)):
         return Decision(
             False,
             "command substitution, redirection or grouping - run the steps "
