@@ -505,6 +505,14 @@ EXPECTED_PR_SUBS = {"create", "view", "list", "comment", "edit", "checks",
 # here, so without these pins the conversion is a net loss of coverage.
 EXPECTED_AUTH_SUBS = {"status"}
 EXPECTED_REPO_SUBS = {"view"}
+# VERB_ALIASES decides too, and it decides FIRST: _canonical_verb
+# resolves an alias before the ALLOWED_SUB membership test, so an entry
+# here launders a refused verb into a permitted one without any of the
+# sets above changing. Adding ("gh","auth","refresh"): "status" allows
+# `gh auth refresh -s admin:org` with every other pin still exactly
+# equal to its expected value. Pin the table that decides, not only the
+# tables it feeds.
+EXPECTED_ALIASES = {("gh", "pr", "new"): "create"}
 
 
 def main() -> int:
@@ -564,6 +572,14 @@ def main() -> int:
                 f"ALLOWED_SUB[{ns!r}] changed: added [{extra}], "
                 f"removed [{missing}]. {why}")
 
+    if policy.VERB_ALIASES != EXPECTED_ALIASES:
+        extra = ", ".join(f"{k}->{v}" for k, v in sorted(
+            policy.VERB_ALIASES.items()) if EXPECTED_ALIASES.get(k) != v)
+        failures.append(
+            f"VERB_ALIASES changed: [{extra or 'entries removed'}]. An "
+            f"alias resolves BEFORE the ALLOWED_SUB check, so one here "
+            f"grants a refused verb without any allowlist set changing")
+
     for cmd, expected in REASON:
         d = policy.check_bash(cmd)
         if d.allow:
@@ -573,7 +589,9 @@ def main() -> int:
                 f"WRONG REASON: {cmd}\n      got: {d.reason}\n"
                 f"      want substring: {expected}")
 
-    total = len(ALLOW) + len(DENY) + len(REASON) + 11
+    # 7 allow-tools + 2 deny-tools + 5 table pins (gh pr, gh stack,
+    # gh auth, gh repo, VERB_ALIASES).
+    total = len(ALLOW) + len(DENY) + len(REASON) + 14
     if failures:
         print(f"FAIL - {len(failures)} of {total}\n")
         for f in failures:
