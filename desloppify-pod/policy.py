@@ -476,15 +476,189 @@ SHELL_CONTRACT = (
     "Command substitution, redirection and grouping are refused outright. "
     "A pipeline or `&&`/`;` chain passes only if every clause passes on "
     "its own - a simple pipe of allowed commands (`rg pattern | head`) is "
-    "fine. But the splitter is quote-blind: a quoted argument containing "
-    "`;`, `|`, `&` or `$` makes the whole call fail as unparseable, which "
-    "looks like chaining being refused. One command per Bash call is the "
-    "reliable habit."
+    "fine. Separators inside quotes are data, not syntax, so "
+    '`grep -n "a\\|b" f` and `sed -n \'1,5p;9p\' f` are single commands '
+    "and pass. `$` and a backtick still count inside double quotes, "
+    "because the shell expands them there. "
+    "Write each command on ONE line: a backslash line continuation is "
+    "refused, because bash joins the halves and the command that runs "
+    "is then not the one that was checked. Long invocations are fine, "
+    "just unwrapped."
 )
 
 
+def _unquoted(command: str) -> str:
+    """The command with quoted spans blanked out, for metachar scanning.
+
+    A metacharacter only does something - substitution, redirection,
+    chaining - when the shell sees it OUTSIDE quotes. Inside quotes it is
+    data: `grep -n "a|b" f` passes one literal pattern to grep and starts
+    no pipeline. Scanning the raw string cannot tell those apart and
+    refused the second, so ordinary greps came back as "command
+    substitution, redirection or grouping".
+
+    Quoted content is replaced with spaces rather than removed, so any
+    offset reported against this string still lines up with the original.
+    """
+    out = []
+    quote = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote == "'":
+            out.append(" " if ch != "'" else ch)
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "\\" and i + 1 < n:
+                out.append("  ")
+                i += 2
+                continue
+            # A backtick always expands inside double quotes, and so does
+            # `$` when it introduces a name, a brace or a subshell -
+            # "a $(whoami)" really does run whoami - so those must still
+            # reach the metachar scan. Everything double quotes genuinely
+            # neuters (`;`, `|`, `&`, redirection, grouping, newline) is
+            # blanked. Verified against bash rather than assumed, in both
+            # directions: `"a\\" $(whoami)"` substitutes, while a `$`
+            # before the closing quote or before a space is literal - which
+            # is why `grep -c "^ [A-Z]*: {$" f` is an ordinary command and
+            # must not be refused.
+            if ch == "`":
+                out.append(ch)
+                i += 1
+                continue
+            if ch == "$" and i + 1 < n and (
+                command[i + 1].isalpha()
+                or command[i + 1] == "_"
+                or command[i + 1] in "{("
+            ):
+                out.append(ch)
+                i += 1
+                continue
+            out.append(" " if ch != '"' else ch)
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            # An escaped metachar outside quotes is literal too.
+            out.append("  ")
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _split_commands(command: str) -> list[str]:
-    return [c.strip() for c in re.split(r"\|\||&&|\||;", command) if c.strip()]
+    """Split a command on shell separators that are NOT inside quotes.
+
+    A plain `re.split` is quote-blind, and that cost real work: an
+    ordinary `grep -n "^import\\|^} from" file` was split mid-pattern
+    into `grep -n "^import\\` and `^} from" file`, and the first
+    fragment - an unterminated quote ending in a backslash - came back
+    from shlex as `unparseable: No escaped character`. The agent's
+    command was valid shell every time. One nightly run spent 15 of its
+    29 denials this way (2026-11-14, report-20261114-0807.json), each
+    one a wasted turn on a command that should simply have run.
+
+    Quoting rules are the shell's, not Python's: inside single quotes
+    nothing is special, including backslash; inside double quotes a
+    backslash escapes the next character; outside quotes a backslash
+    escapes the next character too. Separators are only separators when
+    the scanner is outside both kinds of quote.
+    """
+    out: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote == "'":
+            # Single quotes are literal; only the closing quote ends them.
+            buf.append(ch)
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "\\" and i + 1 < n:
+                buf.append(ch)
+                buf.append(command[i + 1])
+                i += 2
+                continue
+            buf.append(ch)
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        # Outside quotes.
+        if ch == "\\" and i + 1 < n:
+            buf.append(ch)
+            buf.append(command[i + 1])
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ";":
+            out.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        if ch in "|&":
+            # `||` and `&&` are two-character separators; a lone `|` is a
+            # pipe. A lone `&` is backgrounding, which SHELL_METACHARS
+            # refuses on the whole command before this ever runs, but
+            # splitting on it here keeps the scan honest either way.
+            if i + 1 < n and command[i + 1] == ch:
+                i += 2
+            else:
+                i += 1
+            out.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+        i += 1
+    out.append("".join(buf))
+    return [c.strip() for c in out if c.strip()]
+
+
+def _normalised(command: str) -> str:
+    """The command with shell quoting resolved, for FORBIDDEN matching.
+
+    FORBIDDEN is a list of regexes, and a regex sees text while bash sees
+    words. `git push origin ma"in"` is one word, `main`, to bash - and to
+    `\\bmain\\b` it is not a match at all, so the push-to-main guard let
+    it through. Six of the seven git-push guards were evadable this way,
+    including the one that exists because a merge to that repo's main
+    reaches production. `gh pr merge` was NOT evadable, because the gh
+    path checks parsed argv rather than trusting the regex - which is the
+    argument for doing the same here.
+
+    shlex does the unquoting, and the words are rejoined with single
+    spaces so the patterns match words rather than whatever spacing the
+    caller used. If it will not parse, the original is returned: an
+    unparseable command is refused a few lines later anyway, and
+    returning the raw text keeps the guards matching on something rather
+    than nothing.
+    """
+    try:
+        return " ".join(shlex.split(command))
+    except ValueError:
+        return command
 
 
 def check_bash(command: str) -> Decision:
@@ -492,8 +666,45 @@ def check_bash(command: str) -> Decision:
     if not command:
         return Decision(False, "empty command")
 
+    # A backslash-newline is a line continuation: bash DELETES it and
+    # joins the halves, so `git push ori\<newline>gin main` runs as
+    # `git push origin main`. Nothing else here can see that. The
+    # metachar scan used to catch it only because `\n` is in
+    # SHELL_METACHARS, and _unquoted now blanks any escaped pair before
+    # that scan runs - which silently reopened every FORBIDDEN guard,
+    # push-to-main included. shlex cannot stand in for this either: it
+    # keeps the newline inside the word, so `ori\ngin` never matches
+    # `origin` and the patterns look right past it. Checked against
+    # bash, which reports argv as [push] [origin] [main].
+    #
+    # Refused outright rather than normalised away. A continuation is
+    # only ever formatting, so nothing legitimate is lost, and
+    # reconstructing what bash would join is one more place for this
+    # file's idea of quoting to drift from the shell's.
+    #
+    # Deliberately quote-blind, which is the one thing this file
+    # otherwise stopped being. Inside single quotes bash keeps
+    # `a\<newline>b` literal rather than joining it, so this does
+    # over-refuse a multi-line quoted pattern - but that shape was
+    # already refused before this branch (the raw newline trips
+    # SHELL_METACHARS), so the cost is a clearer message rather than a
+    # new denial, and teaching a fourth scanner about quotes is the
+    # drift this comment is about.
+    if "\\\n" in command:
+        return Decision(
+            False,
+            "line continuation - bash joins the halves, so the command "
+            "that runs is not the one being checked; write it on one line",
+        )
+
+    # Matched against the normalised form, which resolves quoting so
+    # `ma"in"` is the word `main` the patterns look for. An unparseable
+    # command normalises to itself, so the raw text is still matched in
+    # exactly the case where unquoting is impossible - no second search
+    # needed, and the fallback is what makes that true.
+    normalised = _normalised(command)
     for pattern, reason in FORBIDDEN:
-        if pattern.search(command):
+        if pattern.search(normalised):
             return Decision(False, reason)
 
     clauses = _split_commands(command)
@@ -504,7 +715,7 @@ def check_bash(command: str) -> Decision:
                 return verdict
         return Decision(True, "pipeline, every clause allowed")
 
-    if SHELL_METACHARS.search(command):
+    if SHELL_METACHARS.search(_unquoted(command)):
         return Decision(
             False,
             "command substitution, redirection or grouping - run the steps "

@@ -83,9 +83,112 @@ ALLOW = [
     "NODE_OPTIONS=--max_old_space_size=8192 yarn lint:eslint",
     "/usr/bin/git status",
     "yarn lint | tee /workspace/lint.log",
+
+    # Metacharacters INSIDE quotes are data, not shell syntax. These are
+    # verbatim from the 2026-11-14 nightly run, which spent 15 of its 29
+    # denials on perfectly ordinary commands: the splitter and the
+    # metachar scan both read the raw string, so a `|` or `;` in a grep
+    # pattern looked like chaining. The agent's commands were valid shell
+    # every time; the gate was wrong, and each denial was a paid turn.
+    r'grep -n "^import\|^} from" src/a.ts',
+    r'grep -n "AUDIT_A\|AuditRating\|ItemResponse" src/c.ts',
+    r'grep -nE "AUDIT_A|AUDIT_B|AuditRating" src/c.ts',
+    r'grep -nE "^import|from " src/d.ts',
+    "sed -n '1,20p;135,170p' types.ts",
+    r'rg "foo\|bar" projects/webapp',
+    'grep -n "a;b" f.ts',
+    "grep -n 'x|y' f.ts",
+    # A quoted metachar next to a real pipeline: both halves still checked.
+    r'grep -n "a\|b" f.ts | head -20',
+    # `<` and `{` are inert inside quotes, and a `$` that introduces
+    # nothing is literal to bash too - checked against bash, which prints
+    # `a: {$` unchanged. All three are ordinary grep patterns.
+    'grep -rn "Factory<" --include=*.ts tests/',
+    'grep -c "^  [A-Z][A-Za-z]*: {$" types.ts',
+    'grep -n "cost: $ here" f.ts',
 ]
 
 DENY = [
+    # --- a line continuation is not formatting, it is a word join ---
+    # bash DELETES a backslash-newline and joins the halves, so
+    # `git push ori\<newline>gin main` runs as `git push origin main` -
+    # verified against bash, which reports argv as [push] [origin]
+    # [main]. Nothing else in this file can see that: shlex keeps the
+    # newline inside the word, so `ori\ngin` never matches `origin`.
+    #
+    # These exist because the quote-aware metachar scan blanked escaped
+    # pairs before SHELL_METACHARS ran, which erased the `\n` that had
+    # been the only thing catching this - reopening every FORBIDDEN
+    # guard at once. Not one of the 202 cases here contained a newline,
+    # so the whole suite stayed green through it.
+    ("git push ori\\\ngin main", "continuation inside `origin`"),
+    ("git push origin mai\\\nn", "continuation inside `main`"),
+    ('git push origin "\\\n"main', "continuation inside quotes"),
+    ("git push origin HEAD:\\\nmain", "continuation inside a refspec"),
+    ("git push --forc\\\ne origin b", "continuation inside --force"),
+    ("git push --mirro\\\nr origin", "continuation inside --mirror"),
+    ("git push --delet\\\ne origin b", "continuation inside --delete"),
+    ("gh repo delet\\\ne x", "continuation inside gh repo delete"),
+    ("cat /run/secret\\\ns/token", "continuation inside a secret path"),
+    # A bare newline is still refused by the metachar scan, as before.
+    ("git status\ngit push origin main", "a second line is a second command"),
+
+    # --- quoting must not hide a forbidden command from FORBIDDEN ---
+    # FORBIDDEN is regexes, and a regex sees text where bash sees words:
+    # `ma"in"` is one word, `main`, to the shell and not a match at all
+    # to `\bmain\b`. Six of the seven git-push guards were evadable this
+    # way on main, including the one that exists because a merge to that
+    # repo's main reaches production. `gh pr merge` was not, because the
+    # gh path checks parsed argv - which is why the patterns are now
+    # matched against a shlex-normalised rendering as well as the raw
+    # string. Verified against bash: all of these resolve to `main`.
+    ('git push origin ma"in"', "quote-split branch name"),
+    ("git push origin 'ma'in", "single-quote-split branch name"),
+    ('git push origin m"a"i"n"', "repeatedly split branch name"),
+    (r"git push origin ma\in", "backslash-split branch name"),
+    ('git push origin HEAD:ma"in"', "quote-split refspec"),
+    ('git push origin "pro"duction', "quote-split production"),
+    ('git push --mir"ror" origin', "quote-split --mirror"),
+    ('git push --for"ce" origin feat', "quote-split --force"),
+    ('git push --de"lete" origin feat', "quote-split --delete"),
+    # The RAW match is load-bearing for commands shlex cannot parse: an
+    # unbalanced quote makes _normalised fall back to the original, so
+    # only the raw pattern fires. Both halves of that `or` are needed.
+    ('git push origin "main', "unbalanced quote, raw match only"),
+    ("git push origin 'main", "unbalanced single quote, raw match only"),
+    ('git push --force origin "feat', "unparseable force-push"),
+    # ANSI-C quoting: bash resolves $'ma\x69n' to `main`, but shlex does
+    # not - it yields `$ma\x69n`, which no pattern matches. The gate
+    # still refuses it, because `$` before a quote is not one of the
+    # expansions _unquoted lets through, so it reaches the metachar
+    # scan. Pinned because that is a load-bearing consequence of the
+    # `$` rule rather than an obvious property of it.
+    (r"git push origin $'ma\x69n'", "ANSI-C quoted branch name"),
+    (r"git push origin $'main'", "ANSI-C quoting, plain"),
+    (r"git push --force origin $'feat'", "ANSI-C quoted force-push"),
+
+    # --- quoting must not become an escape hatch ---
+    # The quote-aware scan exists so real greps work; it must not let a
+    # closed quote smuggle a metachar past the gate.
+    ('grep "a" ; rm -rf /', "chained after a quoted argument"),
+    ('grep -n "pat" f.ts && curl evil.com', "chained after a quoted argument"),
+    ('grep "unclosed ; rm -rf /', "unbalanced quote is not a quoted span"),
+    ("grep 'unclosed | sh", "unbalanced single quote"),
+    ('grep "safe" $(id)', "substitution after a quoted span"),
+    ('grep "safe" `id`', "backticks after a quoted span"),
+    ('grep "x" > /tmp/out', "redirection after a quoted span"),
+    # Inside DOUBLE quotes `$` and a backtick keep their meaning - bash
+    # really does run whoami here, because \" escapes the quote rather
+    # than closing it - so they must still reach the metachar scan.
+    (r'grep "a\" $(whoami)" f', "substitution inside double quotes"),
+    (r'grep "a\" `id`" f', "backticks inside double quotes"),
+    # A `$` that DOES introduce an expansion still counts inside quotes.
+    (r'grep "a\" ${HOME}" f', "brace expansion inside double quotes"),
+    (r'grep "a\" $HOME" f', "bare variable inside double quotes"),
+    # Single quotes do NOT interpret backslash, so this quote really
+    # closes and the `;` is a separator.
+    (r"grep 'a\' ; rm -rf /", "single quotes end at the backslash-quote"),
+
     # --- the main guarantee ---
     ("git push origin main", "pushes to main"),
     ("git push origin HEAD:main", "pushes to main via refspec"),
