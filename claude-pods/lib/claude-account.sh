@@ -83,14 +83,18 @@ use_claude_account() {
 #
 # rate_limit (underscore) as well as rate_limited: run.py:332 greps for
 # the former in subtype, so the two must agree.
-CLAUDE_LIMIT_REASONS='limit_reached|quota_exceeded|rate_limited|rate_limit|insufficient_credits|credit_balance_too_low'
+CLAUDE_LIMIT_REASONS='limit_reached|quota_exceeded|rate_limited|rate_limit|insufficient_credits|credit_balance_too_low|out_of_credits'
 
 claude_terminal_reason_limited() {
   # A bare reason, as jq -r hands back.
   printf '%s' "$1" | grep -qE "^($CLAUDE_LIMIT_REASONS|api_error_429)$" && return 0
   # Or the same as a JSON value, for a caller passing whole output.
+  # api_error_429 belongs in this list as well as the bare one: a 429
+  # usually arrives as its own "api_error_status": 429 field, handled
+  # below, but run.py composes stop_reason="api_error_429" from it
+  # (run.py:413-416) and that form reached neither branch.
   printf '%s' "$1" | grep -qE \
-    "\"(terminal_reason|subtype|stop_reason)\"[[:space:]]*:[[:space:]]*\"($CLAUDE_LIMIT_REASONS)\"" && return 0
+    "\"(terminal_reason|subtype|stop_reason)\"[[:space:]]*:[[:space:]]*\"($CLAUDE_LIMIT_REASONS|api_error_429)\"" && return 0
   printf '%s' "$1" | grep -qE '"api_error_status"[[:space:]]*:[[:space:]]*429'
 }
 
@@ -110,17 +114,39 @@ claude_rate_limited() {
   # account on a run that was never limited. Only the CLI's own
   # "hit your <period> limit" is specific enough to add.
   #
-  # The period is not always numeric. This matched only [0-9]+-hour, and
-  # on 2026-11-14 the CLI said "You've hit your weekly limit · resets
-  # Nov 16, 11am (UTC)" - so the detection missed it, the stage saw a bare
-  # non-zero exit, and the card was parked with a personal token mounted
-  # and unused. Wiring the stages to this wrapper would NOT have saved
-  # that card on its own; the pattern had to grow too. weekly, daily and
-  # monthly are listed explicitly rather than with a wildcard, because a
-  # loose match here switches accounts on runs that were never limited.
+  # Do not enumerate the period. This matched only [0-9]+-hour, and on
+  # 2026-11-14 the CLI said "You've hit your weekly limit · resets Nov 16,
+  # 11am (UTC)" - so detection missed it, the stage read a bare non-zero
+  # exit, and the card was parked with a personal token mounted and
+  # unused. Wiring the stages to this wrapper would NOT have saved that
+  # card on its own.
+  #
+  # The first fix added weekly|daily|monthly, which was the same mistake
+  # one step along. Strings pulled from the 2.1.325 binary show at least
+  # seven shapes, and "weekly" is not even among them - it is assembled at
+  # runtime:
+  #
+  #   hit your limit                          (no period at all)
+  #   hit your session limit
+  #   hit your fast limit
+  #   hit your Fable limit                    (a model name)
+  #   hit your monthly limit
+  #   hit your monthly spend limit
+  #   hit your channel's monthly spend limit
+  #
+  # So match the structure instead: "hit your <anything short> limit",
+  # bounded by [^.!?\n]{0,40} so it cannot run across a sentence into an
+  # unrelated "limit". That is still narrow - the phrase "you have hit
+  # your ... limit" is not something an agent's own output says in
+  # passing - and it survives a model name or a period nobody has seen
+  # yet.
+  #
+  # The structured tokens above are the better signal and are checked
+  # first; this prose branch exists because the stages do not pass
+  # --output-format json, so prose is all there is.
   claude_terminal_reason_limited "$1" && return 0
   printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|you.?(ve|have) hit your ([0-9]+-hour|weekly|daily|monthly) limit'
+    'api_error_429|"?status"?[: ]+429|rate.?limited|rate.?limit (reached|exceeded|error)|usage limit|quota exceeded|out of usage credits|requires usage credits|you.?(ve|have) hit your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?limit'
 }
 
 # run_with_account_failover CMD...
@@ -140,7 +166,25 @@ run_with_account_failover() {
   fi
 
   out="$("$@" 2>&1)"; rc=$?
-  if [ "$rc" -ne 0 ] && claude_rate_limited "$out"; then
+  # Detect on the TAIL, not the whole transcript. The capture is an
+  # hour of agent prose plus the CLI's stderr, and the alternates below
+  # include `rate.?limit` and `429` - so a ticket that merely edits a
+  # file called rate_limit.go and then fails its tests normally reads as
+  # a limited account, and burns a full second run on the reserve one.
+  # Verified: a three-line transcript mentioning rate_limit.go and a
+  # failing test matched. Those alternates predate this wrapper, but
+  # nothing called it before, so this is where the exposure starts.
+  #
+  # A real limit ENDS the run, so its message is the last thing printed.
+  # An agent that merely discusses limits prints something else after -
+  # a test result, a summary - so the last couple of lines separate the
+  # two where tail -5 did not: a transcript reading "the detection
+  # matches 'you have hit your weekly limit'" then "FAIL: 2 assertions"
+  # is ignored, while the same prose followed by the real message is
+  # caught. Two rather than one so a trailing blank or a short epilogue
+  # does not hide it.
+  if [ "$rc" -ne 0 ] \
+     && claude_rate_limited "$(printf '%s' "$out" | tail -2)"; then
     if use_claude_account personal; then
       echo "work account is rate limited; retrying on personal" >&2
       out="$("$@" 2>&1)"; rc=$?

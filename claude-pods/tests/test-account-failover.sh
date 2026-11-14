@@ -123,14 +123,74 @@ preflight_credential >/dev/null 2>&1 && { echo "FAIL: passed with no tokens and 
 # and parked the card - with a personal token mounted and unused. Pinning
 # the real strings here rather than a paraphrase: the whole failure was
 # the gap between what the pattern expected and what the CLI said.
+# Every one of these was pulled out of the 2.1.325 binary with `strings`,
+# except the weekly one, which is what the CLI actually printed on
+# 2026-11-14 and is assembled at runtime. Enumerating periods was the
+# wrong shape twice: first [0-9]+-hour only, then
+# weekly|daily|monthly - and "session", "fast", "monthly spend" and a
+# bare "hit your limit" are all real.
 for msg in \
   "You've hit your weekly limit · resets Nov 16, 11am (UTC)" \
   "You've hit your 5-hour limit · resets 3pm" \
-  "You've hit your daily limit" \
-  "You've hit your monthly limit"; do
+  "You've hit your limit" \
+  "You've hit your session limit" \
+  "You've hit your fast limit" \
+  "You've hit your Fable limit" \
+  "You've hit your monthly limit" \
+  "You've hit your monthly spend limit" \
+  "You've hit your channel's monthly spend limit" \
+  "You're out of usage credits. Switch to another model to continue." \
+  "Opus requires usage credits."; do
   claude_rate_limited "$msg" \
     || { echo "FAIL: not detected as a limit: $msg"; fail=1; }
 done
+
+# The structured tokens are the signal that should matter, and they are
+# checked before any prose. Pinned separately so a prose change cannot
+# quietly become the only thing holding this up.
+for tok in limit_reached quota_exceeded rate_limited out_of_credits api_error_429; do
+  claude_terminal_reason_limited "$tok" \
+    || { echo "FAIL: structured reason not detected: $tok"; fail=1; }
+  claude_terminal_reason_limited "{\"terminal_reason\":\"$tok\"}" \
+    || { echo "FAIL: structured reason not detected in JSON: $tok"; fail=1; }
+done
+claude_terminal_reason_limited "completed" \
+  && { echo "FAIL: 'completed' read as a limit"; fail=1; }
+
+# --- a mention of the concept is not a limit ------------------------------
+# `rate.?limit` on its own matched the FILENAME rate_limit.go. Harmless
+# while nothing called the detection; the moment the stages did, any
+# ticket touching rate-limiting code spent a second full agent run on the
+# reserve account every time its tests failed normally.
+for msg in \
+  "FAIL: 3 assertions failed in rate_limit_test.go" \
+  "Reviewing internal/ratelimit/rate_limit.go for the retry policy" \
+  "added a rate limiter with a 429 backoff test"; do
+  claude_rate_limited "$msg" \
+    && { echo "FAIL: a mention of rate limiting read as a limit: $msg"; fail=1; }
+done
+
+# --- the detection input must stay bounded -------------------------------
+# run_with_account_failover captures an hour of agent prose with 2>&1 and
+# feeds it to the detection. A real limit ENDS the run, so its message is
+# last; an agent merely discussing limits prints a test result after. The
+# wrapper must therefore test the tail, not the transcript - a stage that
+# edits this very file would otherwise fail over on every ordinary
+# failure.
+discussing="the detection matches 'you have hit your weekly limit' exactly
+Running the suite...
+FAIL: 2 assertions failed"
+claude_rate_limited "$(printf '%s' "$discussing" | tail -2)" \
+  && { echo "FAIL: a transcript discussing limits read as a limit"; fail=1; }
+real_last="Reviewing the retry policy.
+You've hit your weekly limit · resets Nov 16, 11am (UTC)"
+claude_rate_limited "$(printf '%s' "$real_last" | tail -2)" \
+  || { echo "FAIL: a real limit at the end of a transcript was missed"; fail=1; }
+# And the wrapper has to actually do that slicing.
+wrapper_src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/claude-account.sh"
+sed 's/[[:space:]]*#.*$//' "$wrapper_src" \
+  | grep -qE 'claude_rate_limited "\$\(printf .* \| tail -[0-9]+\)"' \
+  || { echo "FAIL: run_with_account_failover detects on unbounded output"; fail=1; }
 
 # And the other direction. A loose pattern here is worse than a tight one:
 # it burns the personal account on runs that were never limited.
@@ -156,15 +216,27 @@ for stage in stage-author stage-test stage-merge; do
   grep -q 'run_with_account_failover' "$f" \
     || { echo "FAIL: $stage.sh does not call run_with_account_failover"; fail=1; }
   # A bare `claude -p` left anywhere in the stage is the bug returning.
-  # CODE lines only: these scripts discuss `claude -p` in their comments,
-  # including the comment explaining this very wiring, and matching those
-  # fails on the explanation rather than the behaviour.
-  while IFS=: read -r n _; do
-    prev=$(sed -n "$((n - 1))p" "$f")
-    case "$prev" in *run_with_account_failover*) continue ;; esac
-    echo "FAIL: $stage.sh line $n invokes claude -p outside the wrapper"
+  #
+  # Checked on the logical command, not on line adjacency. Looking at the
+  # PRECEDING line was itself blind: unwiring the stage while leaving the
+  # word `run_with_account_failover` in a comment one line above passed -
+  # a green test certifying an unwired stage, which is the exact defect
+  # this suite exists to catch.
+  #
+  # So: strip comments, join backslash continuations into one line each,
+  # then require every line that invokes `claude -p` to name the wrapper
+  # on that same joined line. Comments are stripped first because these
+  # scripts discuss `claude -p` in prose, including the comment
+  # explaining this wiring.
+  bare=$(sed 's/[[:space:]]*#.*$//' "$f" \
+         | sed -e :a -e '/\\$/N; s/\\\n//; ta' \
+         | grep -nE '(^|[^_[:alnum:]])claude -p' \
+         | grep -v 'run_with_account_failover' || true)
+  if [ -n "$bare" ]; then
+    echo "FAIL: $stage.sh invokes claude -p outside the wrapper:"
+    printf '  %s\n' "$bare" | head -3
     fail=1
-  done < <(grep -nE '(^|[^_[:alnum:]])claude -p' "$f" | grep -v ':[[:space:]]*#')
+  fi
 done
 
 [ "$fail" -eq 0 ] && echo "PASS - work first, personal on a rate limit only, no key leak, CLI login honoured, nothing-at-all refused, real limit messages detected, and all three stages call the wrapper"

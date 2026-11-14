@@ -145,11 +145,15 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # stalled the stack behind it while a personal token sat mounted and
     # unused.
     #
-    # Safe for the verdict string: the wrapper's own messages ("work
-    # account is rate limited; retrying on personal") go to stderr, and
-    # the parse below is anchored with grep -oE '^VERDICT: ...' on stdout.
-    # A retry's output replaces the first attempt's rather than appending,
-    # so there is only ever one VERDICT line to find.
+    # On the verdict string, stated precisely because the obvious claim
+    # is wrong: the WRAPPER's own messages ("retrying on personal") do go
+    # to stderr and escape the capture, but the wrapper runs the command
+    # as `"$@" 2>&1`, so anything CLAUDE writes to stderr lands in
+    # $verdict and a ^-anchored match can reach it. What actually keeps
+    # this correct is the `tail -1` on the parse below: a retry's output
+    # replaces the first attempt's, and the last VERDICT line wins. That
+    # is load-bearing - do not drop the tail -1 believing the streams are
+    # separate.
     verdict=$(run_with_account_failover \
       timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/prompt.txt")
