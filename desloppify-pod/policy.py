@@ -157,6 +157,19 @@ ALLOWED_SUB: dict[str, set[str]] = {
     # need one, rather than reading their absence as a prohibition.
     "gh pr": {"create", "view", "list", "comment", "edit", "checks",
               "diff", "status", "ready", "review"},
+    # Same treatment for two more whole namespaces that were admitted at
+    # the first level and then carved back by regex: `gh auth` had rules
+    # naming token/login/logout/refresh/switch, and `gh repo` had
+    # delete/archive/edit/rename/create. Enumerating what is permitted
+    # inverts that - a verb a future gh release adds is refused because
+    # it is absent, rather than permitted until someone notices and
+    # writes another pattern.
+    #
+    # status and view are what is left because they are read-only and
+    # the only reason to keep the namespaces at all; the audit logs show
+    # the agent has never invoked either namespace.
+    "gh auth": {"status"},
+    "gh repo": {"view"},
 }
 
 # gh's own command aliases, resolved to the canonical verb before any
@@ -229,6 +242,21 @@ def _canonical_verb(namespace: str, sub: str, verb: str) -> str:
 # allowlist stayed denied by the regex while the suite reported PASS,
 # so neither layer's failure was visible through the other.
 SUB_REASONS: dict[tuple[str, str], str] = {
+    # The allowlist refuses these by absence, which is the stronger
+    # mechanism but says only "not allowed for this pod". Where the
+    # reason is worth stating - a boundary rather than a verb nobody
+    # calls - it is stated here, so narrowing a namespace does not cost
+    # the explanation the deleted regex carried.
+    ("gh auth", "token"): "credentials are not readable",
+    ("gh auth", "login"): "the pod does not change its own credential",
+    ("gh auth", "logout"): "the pod does not change its own credential",
+    ("gh auth", "refresh"): "the pod does not change its own credential",
+    ("gh auth", "switch"): "the pod does not change its own credential",
+    ("gh repo", "delete"): "the pod does not alter repositories",
+    ("gh repo", "archive"): "the pod does not alter repositories",
+    ("gh repo", "edit"): "the pod does not alter repositories",
+    ("gh repo", "rename"): "the pod does not alter repositories",
+    ("gh repo", "create"): "the pod does not alter repositories",
     ("git", "push"):
         "pushing is `gh stack`'s job here -- `gh stack submit` puts new "
         "branches and their PRs on the remote, and `gh stack sync` "
@@ -347,27 +375,26 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
 
 
     # --- protection and repository settings ---------------------------
-    # The PAT has no Administration scope, so these would fail anyway.
-    # Refusing them here makes the attempt visible in the audit log
-    # instead of as an opaque 403.
+    # The PAT has no Administration scope - nightly-desloppify.sh
+    # refuses to start if the token can so much as READ main's
+    # protection - so this would fail anyway. Kept because it makes the
+    # attempt visible in the audit log instead of as an opaque 403, and
+    # because it is the one gh api path worth naming.
+    #
+    # Nothing else under `gh` is named here. A subcommand ALLOWED does
+    # not list, or a verb ALLOWED_SUB does not list, is already refused
+    # - and by absence, so it covers the verbs a future gh release adds
+    # as well as today's.
     (re.compile(r"\bbranches/[^/\s]+/protection\b"), "branch protection is not the pod's to change"),
     (re.compile(r"^gh\s+api\b.*-X\s*(DELETE|PUT|PATCH|POST)\b.*\bprotection\b"),
      "branch protection is not the pod's to change"),
-    (re.compile(r"^gh\s+repo\s+(delete|archive|edit|rename|create)\b"),
-     "the pod does not alter repositories"),
-    (re.compile(r"^gh\s+(workflow|run|secret|variable|release|ruleset)\b"),
-     "workflows, secrets and releases are out of scope"),
-    (re.compile(r"^gh\s+(auth\s+)?token\b"), "credentials are not readable"),
-    (re.compile(r"^gh\s+auth\s+(login|logout|refresh|switch)\b"),
-     "the pod does not change its own credential"),
 
     # --- history and remotes ------------------------------------------
-    (re.compile(r"^git\s+(rebase|cherry-pick|revert|filter-branch|filter-repo)\b"),
-     "the pod does not rewrite history"),
+    # Only verbs that ARE in ALLOWED need a rule: each of these narrows
+    # something the agent legitimately does to exclude one dangerous
+    # shape. A verb ALLOWED omits needs no pattern.
     (re.compile(r"^git\s+reset\b.*--hard\b.*\borigin/(main|master)\b"),
      "resetting onto a protected branch"),
-    (re.compile(r"^git\s+(remote|tag)\s+(add|remove|rm|set-url|delete|-d)\b"),
-     "the pod does not reconfigure remotes or tags"),
     (re.compile(r"^git\s+config\b.*(user\.email|user\.name|url\..*insteadOf|"
                 r"credential\.|http\..*extraheader)"),
      "identity and credential config are fixed by the runner"),
@@ -376,19 +403,17 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
      "recreating a protected branch"),
     (re.compile(r"^git\s+branch\s+.*(-D|-d|--delete|-M|-m|--move|-C|--copy)\b"),
      "the pod does not delete or rename branches"),
-    (re.compile(r"^git\s+update-ref\b"), "writing refs directly"),
 
     # --- host and credentials ------------------------------------------
-    (re.compile(r"^(sudo|su|shutdown|reboot|mkfs|dd|vault|aws|gcloud|"
-                r"systemctl|mount|umount|kubectl|helm|tofu|terraform|docker)\b"),
-     "not available to this pod"),
-    (re.compile(r"^(chown|chgrp|useradd|usermod|passwd|crontab|ssh|scp|nc|"
-                r"ncat|socat|telnet)\b"),
-     "the pod does not administer hosts or open connections"),
+    # No binary blocklist here: ALLOWED is an allowlist, so sudo, ssh,
+    # kubectl and the rest are refused by not being on it. Blocklisting
+    # them too meant maintaining the list that did not matter.
+    #
+    # What remains is about CONTENT rather than which binary is running,
+    # so it holds for `cat`, `grep`, `sed` or anything else permitted.
     (re.compile(r"\.claude/\.credentials\.json"), "credentials are not readable"),
     (re.compile(r"/run/secrets/"), "secrets are not readable"),
     (re.compile(r"\.git/config\b"), "git config is not read or written directly"),
-    (re.compile(r"\b(curl|wget)\b.*\|\s*(ba)?sh\b"), "piping a download into a shell"),
     (re.compile(r"^rm\s+.*(-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])"),
      "recursive force-delete"),
     # Any URL carrying credentials, not just a push's. This was scoped
