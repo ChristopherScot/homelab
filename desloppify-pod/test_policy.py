@@ -496,6 +496,15 @@ EXPECTED_STACK_SUBS = {"init", "add", "submit", "sync", "checkout", "view",
                        "top"}
 EXPECTED_PR_SUBS = {"create", "view", "list", "comment", "edit", "checks",
                     "diff", "status", "ready", "review"}
+# `gh auth` is the one namespace where widening the list reaches a
+# credential rather than a repository: `gh auth refresh -s admin:org`
+# re-issues the pod's own PAT with scopes it was deliberately not given,
+# and nightly-desloppify.sh refuses to start precisely because that
+# token cannot read main's protection. `gh repo` reaches the repository
+# itself. Both were denylisted by regex before they were allowlisted
+# here, so without these pins the conversion is a net loss of coverage.
+EXPECTED_AUTH_SUBS = {"status"}
+EXPECTED_REPO_SUBS = {"view"}
 
 
 def main() -> int:
@@ -538,6 +547,22 @@ def main() -> int:
             f"ALLOWED_SUB['gh stack'] changed: added [{extra}], "
             f"removed [{missing}]. The allowlist is the whole gate -- "
             f"widening it grants the agent that capability outright")
+
+    for ns, expected, why in (
+        ("gh auth", EXPECTED_AUTH_SUBS,
+         "a verb here reaches the pod's own credential -- `refresh -s` "
+         "re-scopes the PAT the runner checks is under-scoped"),
+        ("gh repo", EXPECTED_REPO_SUBS,
+         "a verb here reaches the repository -- delete, archive, "
+         "rename and edit are all one word away"),
+    ):
+        got_ns = policy.ALLOWED_SUB.get(ns, set())
+        if got_ns != expected:
+            extra = ", ".join(sorted(got_ns - expected)) or "none"
+            missing = ", ".join(sorted(expected - got_ns)) or "none"
+            failures.append(
+                f"ALLOWED_SUB[{ns!r}] changed: added [{extra}], "
+                f"removed [{missing}]. {why}")
 
     for cmd, expected in REASON:
         d = policy.check_bash(cmd)

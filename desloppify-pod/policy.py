@@ -252,6 +252,12 @@ SUB_REASONS: dict[tuple[str, str], str] = {
     ("gh auth", "logout"): "the pod does not change its own credential",
     ("gh auth", "refresh"): "the pod does not change its own credential",
     ("gh auth", "switch"): "the pod does not change its own credential",
+    # The seventh verb, and the one that is not obviously about the
+    # credential: it rewrites git's credential helper config, which is
+    # the same hazard `git config ... credential.` and the `.git/config`
+    # rule below exist for.
+    ("gh auth", "setup-git"):
+        "the pod does not rewrite git's credential configuration",
     ("gh repo", "delete"): "the pod does not alter repositories",
     ("gh repo", "archive"): "the pod does not alter repositories",
     ("gh repo", "edit"): "the pod does not alter repositories",
@@ -408,6 +414,14 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # No binary blocklist here: ALLOWED is an allowlist, so sudo, ssh,
     # kubectl and the rest are refused by not being on it. Blocklisting
     # them too meant maintaining the list that did not matter.
+    #
+    # One of those deletions is contingent rather than unconditional:
+    # `curl ... | sh` had its own pattern, and it is dead only because
+    # neither `curl` nor `sh` is on ALLOWED - each clause of a pipeline
+    # is checked alone. Put any of curl, wget, sh or bash on the
+    # allowlist and that shape is live again, which the set-equality
+    # pins in test_policy.py do not cover because they guard
+    # ALLOWED_SUB, not ALLOWED itself.
     #
     # What remains is about CONTENT rather than which binary is running,
     # so it holds for `cat`, `grep`, `sed` or anything else permitted.
