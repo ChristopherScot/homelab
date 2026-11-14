@@ -109,6 +109,31 @@ ALLOW = [
 ]
 
 DENY = [
+    # --- quoting must not hide a forbidden command from FORBIDDEN ---
+    # FORBIDDEN is regexes, and a regex sees text where bash sees words:
+    # `ma"in"` is one word, `main`, to the shell and not a match at all
+    # to `\bmain\b`. Six of the seven git-push guards were evadable this
+    # way on main, including the one that exists because a merge to that
+    # repo's main reaches production. `gh pr merge` was not, because the
+    # gh path checks parsed argv - which is why the patterns are now
+    # matched against a shlex-normalised rendering as well as the raw
+    # string. Verified against bash: all of these resolve to `main`.
+    ('git push origin ma"in"', "quote-split branch name"),
+    ("git push origin 'ma'in", "single-quote-split branch name"),
+    ('git push origin m"a"i"n"', "repeatedly split branch name"),
+    (r"git push origin ma\in", "backslash-split branch name"),
+    ('git push origin HEAD:ma"in"', "quote-split refspec"),
+    ('git push origin "pro"duction', "quote-split production"),
+    ('git push --mir"ror" origin', "quote-split --mirror"),
+    ('git push --for"ce" origin feat', "quote-split --force"),
+    ('git push --de"lete" origin feat', "quote-split --delete"),
+    # The RAW match is load-bearing for commands shlex cannot parse: an
+    # unbalanced quote makes _normalised fall back to the original, so
+    # only the raw pattern fires. Both halves of that `or` are needed.
+    ('git push origin "main', "unbalanced quote, raw match only"),
+    ("git push origin 'main", "unbalanced single quote, raw match only"),
+    ('git push --force origin "feat', "unparseable force-push"),
+
     # --- quoting must not become an escape hatch ---
     # The quote-aware scan exists so real greps work; it must not let a
     # closed quote smuggle a metachar past the gate.

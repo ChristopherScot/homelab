@@ -632,13 +632,44 @@ def _split_commands(command: str) -> list[str]:
     return [c.strip() for c in out if c.strip()]
 
 
+def _normalised(command: str) -> str:
+    """The command with shell quoting resolved, for FORBIDDEN matching.
+
+    FORBIDDEN is a list of regexes, and a regex sees text while bash sees
+    words. `git push origin ma"in"` is one word, `main`, to bash - and to
+    `\\bmain\\b` it is not a match at all, so the push-to-main guard let
+    it through. Six of the seven git-push guards were evadable this way,
+    including the one that exists because a merge to that repo's main
+    reaches production. `gh pr merge` was NOT evadable, because the gh
+    path checks parsed argv rather than trusting the regex - which is the
+    argument for doing the same here.
+
+    shlex does the unquoting, and the words are rejoined with single
+    spaces so the patterns match words rather than whatever spacing the
+    caller used. If it will not parse, the original is returned: an
+    unparseable command is refused a few lines later anyway, and
+    returning the raw text keeps the guards matching on something rather
+    than nothing.
+    """
+    try:
+        return " ".join(shlex.split(command))
+    except ValueError:
+        return command
+
+
 def check_bash(command: str) -> Decision:
     command = command.strip()
     if not command:
         return Decision(False, "empty command")
 
+    # Matched against the normalised form, which resolves quoting so
+    # `ma"in"` is the word `main` the patterns look for. An unparseable
+    # command normalises to itself, so the raw text is still matched in
+    # exactly the case where unquoting is impossible - no second search
+    # needed, and the fallback is what makes that true.
+    normalised = _normalised(command)
     for pattern, reason in FORBIDDEN:
-        if pattern.search(command):
+        if pattern.search(normalised):
             return Decision(False, reason)
 
     clauses = _split_commands(command)
