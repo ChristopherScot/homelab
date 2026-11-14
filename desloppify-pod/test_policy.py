@@ -133,6 +133,15 @@ DENY = [
     ('git push origin "main', "unbalanced quote, raw match only"),
     ("git push origin 'main", "unbalanced single quote, raw match only"),
     ('git push --force origin "feat', "unparseable force-push"),
+    # ANSI-C quoting: bash resolves $'ma\x69n' to `main`, but shlex does
+    # not - it yields `$ma\x69n`, which no pattern matches. The gate
+    # still refuses it, because `$` before a quote is not one of the
+    # expansions _unquoted lets through, so it reaches the metachar
+    # scan. Pinned because that is a load-bearing consequence of the
+    # `$` rule rather than an obvious property of it.
+    (r"git push origin $'ma\x69n'", "ANSI-C quoted branch name"),
+    (r"git push origin $'main'", "ANSI-C quoting, plain"),
+    (r"git push --force origin $'feat'", "ANSI-C quoted force-push"),
 
     # --- quoting must not become an escape hatch ---
     # The quote-aware scan exists so real greps work; it must not let a
