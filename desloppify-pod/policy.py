@@ -65,13 +65,20 @@ ALLOWED: dict[str, set[str]] = {
     # Both are closed, so this is not removing a broken guard; it is
     # removing the need to keep getting that question right.
     #
-    # And this layer was never the last one. `timeout git push ...`,
-    # `xargs git push ...` and anything via node or python reach a real
-    # push on either side of this change, because the allowlist only
-    # inspects argv[0]. What stops those is the pre-push hook in the
-    # clone, which nightly-desloppify.sh installs and verifies refuses
-    # main before it will run at all. This gate narrows the surface; the
-    # hook is the guarantee.
+    # And this layer was never the last one, nor the strongest.
+    # `timeout git push ...`, `xargs git push ...` and anything via node
+    # or python reach a real push on either side of this change, because
+    # the allowlist only inspects argv[0]. The pre-push hook that
+    # nightly-desloppify.sh installs catches those - but it is itself
+    # reachable: `--no-verify`, `-c core.hooksPath=/dev/null`, or simply
+    # `rm .git/hooks/pre-push` are all allowed here, so it is a speed
+    # bump for an agent that is trying, not a wall.
+    #
+    # What actually holds is outside this repo: branch protection on
+    # main and the scopes on the PAT. Worth saying plainly, because
+    # every layer in here is easier to overrate than to measure, and a
+    # comment claiming one of them is the guarantee is how the next
+    # person stops looking.
     "git": {
         "fetch", "log", "diff", "show", "status", "rev-parse", "describe",
         "branch", "checkout", "switch", "restore", "stash", "worktree",
