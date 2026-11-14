@@ -109,6 +109,27 @@ if [ -z "$resume_at" ] || [ -z "$prevpr_at" ] || [ "$resume_at" -ge "$prevpr_at"
   fail=1
 fi
 
+# `git clean -qfd` deletes untracked files, and on a resumed branch those
+# ARE the unfinished work. The fixture this was first run against held
+# four new source files - three tests and a util - that an unconditional
+# clean would have destroyed before the agent started. It must be gated
+# on not resuming.
+clean_line=$(grep -vn '^ *#' "$script" | grep 'git -C "\$dir" clean -qfd' \
+             | head -1 | cut -d: -f1)
+if [ -z "$clean_line" ]; then
+  echo "FAIL: cannot find the git clean call to check it is gated"
+  fail=1
+else
+  guard=$(sed -n "$((clean_line - 1))p" "$script")
+  case "$guard" in
+    *'-z "$resume_branch"'*) ;;
+    *)
+      echo "FAIL: git clean -qfd is not gated on a fresh branch"
+      echo "      a resumed run would delete its own untracked work"
+      fail=1 ;;
+  esac
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo "PASS: resume adopts an unsubmitted top branch, ignores every other shape, and runs before the open-PR lookup"
 fi

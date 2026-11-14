@@ -72,9 +72,10 @@ pod_for() {
 script_for() {
   case "$1" in
     desloppify) echo "/usr/local/bin/nightly-desloppify.sh" ;;
-    author) echo "/usr/local/bin/nightly-author" ;;
-    test) echo "/usr/local/bin/nightly-test" ;;
-    merge) echo "/usr/local/bin/nightly-merge" ;;
+    # Dockerfile installs these as stage-*, not nightly-*.
+    author) echo "/usr/local/bin/stage-author" ;;
+    test) echo "/usr/local/bin/stage-test" ;;
+    merge) echo "/usr/local/bin/stage-merge" ;;
     *) echo "" ;;
   esac
 }
@@ -90,13 +91,22 @@ replicas_for() {
   esac
 }
 
+# Decided ONCE, before the trap is installed, and never re-queried.
+# release() used to call have_scaledobject itself, so a transient
+# `kubectl get` failure at cleanup time - an API blip, throttling, a
+# control-plane restart - made it take the non-KEDA branch, print a
+# reassuring message naming the wrong subsystem, and leave the pod
+# pinned at 1 replica forever. The cleanup path is exactly where a
+# failed call is least recoverable, so it does not make one.
+KEDA_BACKED=unknown
+
 have_scaledobject() {
   kubectl get scaledobject "$1" -n "$NS" >/dev/null 2>&1
 }
 
 hold() {
   local so=$1 want=$2
-  if have_scaledobject "$so"; then
+  if [ "$KEDA_BACKED" = yes ]; then
     kubectl annotate scaledobject "$so" -n "$NS" \
       "autoscaling.keda.sh/paused-replicas=$want" --overwrite >/dev/null
     echo "hold: KEDA pinned $so at $want replica(s)"
@@ -112,7 +122,7 @@ hold() {
 
 release() {
   local so=$1
-  if have_scaledobject "$so"; then
+  if [ "$KEDA_BACKED" = yes ]; then
     kubectl annotate scaledobject "$so" -n "$NS" \
       autoscaling.keda.sh/paused-replicas- >/dev/null 2>&1 || true
     echo "release: KEDA scheduling restored for $so"
@@ -166,7 +176,10 @@ if kubectl get pod "$pod" -n "$NS" >/dev/null 2>&1; then
     for p in /proc/[0-9]*; do
       [ -r "$p/comm" ] || continue
       read -r c < "$p/comm" 2>/dev/null
-      [ "$c" = claude ] && { echo busy; exit 0; }
+      # claude* not claude: the shipped binary is claude.exe, so comm
+      # is `claude.exe` and an exact match never fires. Verified in the
+      # pod by running the real binary and reading /proc/PID/comm.
+      case "$c" in claude*) echo busy; exit 0 ;; esac
     done
     echo idle' 2>/dev/null || echo unknown)
   if [ "$busy" = busy ]; then
@@ -175,17 +188,39 @@ if kubectl get pod "$pod" -n "$NS" >/dev/null 2>&1; then
   fi
 fi
 
+if have_scaledobject "$sts"; then KEDA_BACKED=yes; else KEDA_BACKED=no; fi
+
 trap 'release "$sts"' EXIT INT TERM
 
 hold "$sts" "$want"
 wait_ready "$pod" 600 || { echo "hold-run: $pod never became ready" >&2; exit 1; }
 
-echo "running: ${*:+env $* }$script"
+# Split what follows into env assignments and positional arguments.
+# `env` executes the first word that is not NAME=VALUE, so splicing them
+# together ran `env mytask myrepo /usr/local/bin/stage-author` and died
+# with "env: mytask: No such file or directory". The stage scripts take
+# positionals (stage-author.sh reads ONLY_TASK="${1:-}"); desloppify
+# takes none and is configured by environment.
+envs=()
+args=()
+for a in "$@"; do
+  case "$a" in
+    [A-Za-z_]*=*) envs+=("$a") ;;
+    *) args+=("$a") ;;
+  esac
+done
+
+echo "running: ${envs[*]:+env ${envs[*]} }$script${args[*]:+ ${args[*]}}"
 echo "---"
 # Not detached: the point is to hold the pod open for exactly as long as
 # the run takes, so this blocks and the trap releases when it returns.
-kubectl exec -n "$NS" "$pod" -- env "${@}" "$script"
-rc=$?
+#
+# `|| rc=$?` rather than a bare call: under `set -e` a failing exec
+# aborts the script before any following line, so the rc report was
+# unreachable on exactly the failures worth reporting.
+rc=0
+kubectl exec -n "$NS" "$pod" -- \
+  env "${envs[@]}" "$script" "${args[@]}" || rc=$?
 echo "---"
 echo "hold-run: $kind finished rc=$rc"
 exit "$rc"

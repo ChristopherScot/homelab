@@ -261,7 +261,18 @@ else
   fi
   echo "work branch: $branch (new stack on $INTEGRATION_BRANCH)"
 fi
-git -C "$dir" clean -qfd
+# Not on the resume path. `clean -qfd` deletes untracked files, and on a
+# resumed branch those ARE the unfinished work - the fixture this was
+# first tested against held four new source files (three tests and a new
+# util) that this line would have destroyed before the agent started,
+# which is the opposite of resuming. On a fresh branch it is still
+# wanted: the clone is reused between runs and a previous run's debris
+# must not look like this run's output.
+if [ -z "$resume_branch" ]; then
+  git -C "$dir" clean -qfd
+else
+  echo "keeping $(git -C "$dir" status --porcelain | grep -c '^??') untracked file(s) from the unfinished run"
+fi
 
 # desloppify keeps its queue in .desloppify. The clone is reset between
 # runs, so the real directory lives on the PVC and is linked in - that is
