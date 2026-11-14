@@ -166,6 +166,56 @@ fi
 # can even see main's protection settings.
 branch="desloppify/webapp-$(date +%Y%m%d-%H%M)"
 
+# Resume an unfinished run before starting a new one.
+#
+# A run that dies between `gh stack add` and `gh stack submit` leaves a
+# branch that is in the stack locally and has no PR on GitHub. Every
+# lookup below goes through open PRs, so that branch is invisible to
+# them: the run falls through to `gh stack init` and dies on "current
+# branch is already part of a stack", and so does every run after it.
+# Reachable by any interruption, not just the KEDA scale-to-0 at 06:30
+# that exposed it on 2026-11-14 - a node eviction or an OOM does the
+# same.
+#
+# `gh stack view --json` is the authority here precisely because it is
+# local: it lists the stack's branches with `pr: null` on the ones never
+# submitted. If the TOP of the stack is such a branch, this run adopts
+# it rather than creating a sibling - the work already committed on it
+# stays, and the agent continues on the queue it was working.
+#
+# Only the top, and only when it has no PR. A gap lower down is somebody
+# mid-review, not an unfinished run, and claiming it would rewrite work
+# a human is reading.
+resume_branch=""
+if stack_json=$( (cd "$dir" && GH_PAGER=cat gh stack view --json) 2>/dev/null ); then
+  resume_branch=$(printf '%s' "$stack_json" | jq -r '
+    .branches
+    | last
+    | select(.pr == null)
+    | select(.name | startswith("desloppify/"))
+    | .name // empty' 2>/dev/null)
+fi
+# `pr: null` is necessary but not sufficient. A branch whose PR was
+# CLOSED rather than merged reads the same: gh stack re-resolves a
+# tracked PR through a query scoped to states:[OPEN], gets nothing back,
+# and drops the pr field. Adopting one of those would pile commits on
+# work a human deliberately closed.
+#
+# A remote ref separates them without an API call. Never submitted means
+# never pushed, so no origin/<branch> exists; a closed PR was pushed, so
+# one does. Checked against the live fixture: the wedged branch has no
+# origin ref and its submitted neighbour has one.
+if [ -n "$resume_branch" ]    && git -C "$dir" rev-parse --verify -q "origin/$resume_branch" >/dev/null 2>&1; then
+  echo "not resuming $resume_branch: it has a remote ref, so it was pushed"
+  echo "  (a closed PR looks like an unsubmitted branch to gh stack; this one was submitted)"
+  resume_branch=""
+fi
+
+if [ -n "$resume_branch" ]; then
+  echo "resuming unfinished branch $resume_branch (in the stack, never pushed)"
+  branch="$resume_branch"
+fi
+
 # checkout finds the stack CONTAINING a branch, and the trunk is not a
 # member of its own stack - so look up the newest open desloppify PR and
 # check that out instead. Any member reaches the whole stack.
@@ -177,7 +227,29 @@ prev_pr=$(gh pr list --repo "$REPO" --base "$INTEGRATION_BRANCH" --state open \
 # gh stack has no -C; it acts on the repo in the current directory, and
 # this script otherwise never leaves its starting cwd (every git call
 # passes -C "$dir"). So each of these runs in a subshell that cd's first.
-if [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
+if [ -n "$resume_branch" ]; then
+  # The branch is already in the stack, so there is nothing to add - just
+  # stand on it. No `gh stack sync` either: sync rebases the whole stack
+  # and force-pushes it, and this branch has never been pushed, so there
+  # is nothing to reconcile and a conflict here would strand the run
+  # again in the state we are recovering from. The next `gh stack
+  # submit` pushes it for the first time.
+  # Checkout, not checkout -f: if a tracked file was modified in a way
+  # that conflicts with the branch, git refuses and so do we. Failing
+  # closed is the point - the alternative discards work nobody has
+  # seen. When HEAD is already on the branch this is a no-op and the
+  # whole dirty tree carries through, which is the common case for a
+  # run killed mid-flight.
+  if ! co_err=$( (cd "$dir" && git checkout "$branch") 2>&1 ); then
+    echo "FATAL: cannot check out $branch to resume it"
+    echo "$co_err" | head -5
+    echo "  the clone has local changes that conflict with this branch."
+    echo "  commit or stash them in $dir, then rerun; nothing here will"
+    echo "  discard them for you."
+    exit 1
+  fi
+  echo "work branch: $branch (resumed; picking up where the last run stopped)"
+elif [ -n "$prev_pr" ] && [ "$prev_pr" != "null" ] \
    && (cd "$dir" && gh stack checkout "$prev_pr" >/dev/null 2>&1); then
   echo "found the existing stack via PR #$prev_pr"
   # Not a warning. sync is what rebases the stack onto its trunk, and
@@ -214,7 +286,18 @@ else
   fi
   echo "work branch: $branch (new stack on $INTEGRATION_BRANCH)"
 fi
-git -C "$dir" clean -qfd
+# Not on the resume path. `clean -qfd` deletes untracked files, and on a
+# resumed branch those ARE the unfinished work - the fixture this was
+# first tested against held four new source files (three tests and a new
+# util) that this line would have destroyed before the agent started,
+# which is the opposite of resuming. On a fresh branch it is still
+# wanted: the clone is reused between runs and a previous run's debris
+# must not look like this run's output.
+if [ -z "$resume_branch" ]; then
+  git -C "$dir" clean -qfd
+else
+  echo "keeping $(git -C "$dir" status --porcelain | grep -c '^??') untracked file(s) from the unfinished run"
+fi
 
 # desloppify keeps its queue in .desloppify. The clone is reset between
 # runs, so the real directory lives on the PVC and is linked in - that is
