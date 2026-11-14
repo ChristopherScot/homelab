@@ -127,7 +127,13 @@ release() {
       autoscaling.keda.sh/paused-replicas- >/dev/null 2>&1 || true
     echo "release: KEDA scheduling restored for $so"
   else
-    echo "release: $so left at its current scale (session-sleep owns it)"
+    # Deliberately does not scale down. session-sleep-cron runs every
+    # 30 minutes and scales claude-session to 0 once its idle signals
+    # clear, and it checks /tmp/nightly.lock first, so it will not pull
+    # the floor out from under a live stage. Scaling down here would
+    # race that check. Say so plainly: --release is documented as the
+    # undo for a stuck hold, and on this path there is nothing stuck.
+    echo "release: nothing to release for $so; session-sleep reclaims it within 30m"
   fi
 }
 

@@ -115,7 +115,11 @@ check "--release unpins even when the lookup fails" 1 "$(unpins)"
 #    called claude.exe - the real binary's name. A test that greps the
 #    probe's source passes on any spelling; this one only passes if the
 #    matcher actually fires.
-probe=$(sed -n '/flock -n \/tmp\/nightly.lock/,/echo idle/p' "$script" \
+# Anchored on the probe's own first line, not on the phrase as it also
+# appears in the top-of-file comment - that range started at line 15 and
+# swallowed most of the script, and only worked because the next sed
+# narrowed it back down.
+probe=$(sed -n '/flock -n \/tmp\/nightly.lock true/,/echo idle/p' "$script" \
         | sed -e 's/^ *//' -e '/^#/d')
 fakeproc="$tmp/proc"; mkdir -p "$fakeproc/4242"
 printf 'claude.exe\n' > "$fakeproc/4242/comm"

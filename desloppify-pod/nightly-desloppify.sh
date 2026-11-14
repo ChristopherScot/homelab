@@ -234,9 +234,18 @@ if [ -n "$resume_branch" ]; then
   # is nothing to reconcile and a conflict here would strand the run
   # again in the state we are recovering from. The next `gh stack
   # submit` pushes it for the first time.
+  # Checkout, not checkout -f: if a tracked file was modified in a way
+  # that conflicts with the branch, git refuses and so do we. Failing
+  # closed is the point - the alternative discards work nobody has
+  # seen. When HEAD is already on the branch this is a no-op and the
+  # whole dirty tree carries through, which is the common case for a
+  # run killed mid-flight.
   if ! co_err=$( (cd "$dir" && git checkout "$branch") 2>&1 ); then
     echo "FATAL: cannot check out $branch to resume it"
     echo "$co_err" | head -5
+    echo "  the clone has local changes that conflict with this branch."
+    echo "  commit or stash them in $dir, then rerun; nothing here will"
+    echo "  discard them for you."
     exit 1
   fi
   echo "work branch: $branch (resumed; picking up where the last run stopped)"
