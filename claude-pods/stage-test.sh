@@ -101,7 +101,13 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     export dir repo pr VERDICT_FILE
     render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
 
-    out=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
+    # Through the failover wrapper: a work account at its limit otherwise
+    # ends the run with no verdict, which stage-merge correctly reads as
+    # "not tested" and the card lands in needs-human-review. The personal
+    # token was mounted and unused. This stage already captured the output,
+    # so the wrapper changes nothing else.
+    out=$(run_with_account_failover \
+      timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/test-prompt.txt")
     rc=$?
     printf '%s\n' "$out" | tail -25 | redact

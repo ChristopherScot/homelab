@@ -108,10 +108,19 @@ claude_rate_limited() {
   # limit resets after timeout" - any of which an agent could print
   # while discussing unrelated code, silently burning the personal
   # account on a run that was never limited. Only the CLI's own
-  # "hit your N-hour limit" is specific enough to add.
+  # "hit your <period> limit" is specific enough to add.
+  #
+  # The period is not always numeric. This matched only [0-9]+-hour, and
+  # on 2026-11-14 the CLI said "You've hit your weekly limit · resets
+  # Nov 16, 11am (UTC)" - so the detection missed it, the stage saw a bare
+  # non-zero exit, and the card was parked with a personal token mounted
+  # and unused. Wiring the stages to this wrapper would NOT have saved
+  # that card on its own; the pattern had to grow too. weekly, daily and
+  # monthly are listed explicitly rather than with a wildcard, because a
+  # loose match here switches accounts on runs that were never limited.
   claude_terminal_reason_limited "$1" && return 0
   printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|you.?(ve|have) hit your [0-9]+-hour limit'
+    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|you.?(ve|have) hit your ([0-9]+-hour|weekly|daily|monthly) limit'
 }
 
 # run_with_account_failover CMD...

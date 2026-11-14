@@ -20,6 +20,24 @@ fi
 # NOT touched; user shell customization belongs in $ZSH_CUSTOM, also untouched.)
 cp -f /opt/home-skel/.tmux.conf "$HOME/.tmux.conf" 2>/dev/null || true
 cp -f /opt/home-skel/.zshrc     "$HOME/.zshrc"     2>/dev/null || true
+# Claude Code's own settings, re-synced for the same reason and then some: it
+# carries DISABLE_UPDATES, and a PVC holding a copy without it would let the
+# pod self-update again. Merged rather than overwritten - this file is also
+# where a session's own `/config` changes land, and clobbering those on every
+# boot would silently undo them.
+if [ -f /opt/home-skel/.claude/settings.json ]; then
+  mkdir -p "$HOME/.claude"
+  if [ -f "$HOME/.claude/settings.json" ] && command -v jq >/dev/null 2>&1; then
+    # Image wins on keys it sets; everything else the user has is kept.
+    jq -s '.[0] * .[1]' "$HOME/.claude/settings.json" \
+      /opt/home-skel/.claude/settings.json > "$HOME/.claude/settings.json.new" \
+      2>/dev/null \
+      && mv "$HOME/.claude/settings.json.new" "$HOME/.claude/settings.json" \
+      || cp -f /opt/home-skel/.claude/settings.json "$HOME/.claude/settings.json"
+  else
+    cp -f /opt/home-skel/.claude/settings.json "$HOME/.claude/settings.json"
+  fi
+fi
 git config --global credential.helper store
 cp /run/secrets/git/.git-credentials "$HOME/.git-credentials" 2>/dev/null || true
 chmod 600 "$HOME/.git-credentials" 2>/dev/null || true

@@ -116,5 +116,56 @@ preflight_credential >/dev/null 2>&1 || { echo "FAIL: refused a pod that has the
 rm -f "$HOME/.claude/.credentials.json"
 preflight_credential >/dev/null 2>&1 && { echo "FAIL: passed with no tokens and no CLI login"; fail=1; }
 
-[ "$fail" -eq 0 ] && echo "PASS - work first, personal on a rate limit only, no key leak, CLI login honoured, nothing-at-all refused"
+# --- the message the CLI actually prints ----------------------------------
+# The pattern matched only "[0-9]+-hour limit", and on 2026-11-14 the CLI
+# said "You've hit your weekly limit · resets Nov 16, 11am (UTC)". The
+# detection missed it, so the stage saw a bare non-zero exit, found no PR,
+# and parked the card - with a personal token mounted and unused. Pinning
+# the real strings here rather than a paraphrase: the whole failure was
+# the gap between what the pattern expected and what the CLI said.
+for msg in \
+  "You've hit your weekly limit · resets Nov 16, 11am (UTC)" \
+  "You've hit your 5-hour limit · resets 3pm" \
+  "You've hit your daily limit" \
+  "You've hit your monthly limit"; do
+  claude_rate_limited "$msg" \
+    || { echo "FAIL: not detected as a limit: $msg"; fail=1; }
+done
+
+# And the other direction. A loose pattern here is worse than a tight one:
+# it burns the personal account on runs that were never limited.
+for msg in \
+  "the docs say the limit resets daily" \
+  "error: compilation failed" \
+  "FAIL: 3 assertions failed" \
+  "weekly report generated"; do
+  claude_rate_limited "$msg" \
+    && { echo "FAIL: false positive, would switch accounts: $msg"; fail=1; }
+done
+
+# --- the stages must actually CALL the wrapper ----------------------------
+# This suite passed for weeks while all three stages invoked `claude -p`
+# bare, because it only ever exercised the helper directly. A green run
+# here plus a mounted personal token looked exactly like working failover.
+# lib/claude-account.sh said as much in prose ("Do not read this as the
+# stages being covered"); prose does not fail a build.
+here_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+for stage in stage-author stage-test stage-merge; do
+  f="$here_dir/../$stage.sh"
+  [ -f "$f" ] || { echo "FAIL: cannot find $stage.sh to check"; fail=1; continue; }
+  grep -q 'run_with_account_failover' "$f" \
+    || { echo "FAIL: $stage.sh does not call run_with_account_failover"; fail=1; }
+  # A bare `claude -p` left anywhere in the stage is the bug returning.
+  # CODE lines only: these scripts discuss `claude -p` in their comments,
+  # including the comment explaining this very wiring, and matching those
+  # fails on the explanation rather than the behaviour.
+  while IFS=: read -r n _; do
+    prev=$(sed -n "$((n - 1))p" "$f")
+    case "$prev" in *run_with_account_failover*) continue ;; esac
+    echo "FAIL: $stage.sh line $n invokes claude -p outside the wrapper"
+    fail=1
+  done < <(grep -nE '(^|[^_[:alnum:]])claude -p' "$f" | grep -v ':[[:space:]]*#')
+done
+
+[ "$fail" -eq 0 ] && echo "PASS - work first, personal on a rate limit only, no key leak, CLI login honoured, nothing-at-all refused, real limit messages detected, and all three stages call the wrapper"
 exit "$fail"

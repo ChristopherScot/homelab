@@ -140,7 +140,18 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # this script. Exported so render_prompt's subprocess can see them.
     export dir repo pr
     render_prompt "$PROMPT_DIR/review.md" > "$STATE_DIR/prompt.txt"
-    verdict=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
+    # Through the failover wrapper. A limited work account produced no
+    # verdict at all, and no verdict means no merge - correct, but it
+    # stalled the stack behind it while a personal token sat mounted and
+    # unused.
+    #
+    # Safe for the verdict string: the wrapper's own messages ("work
+    # account is rate limited; retrying on personal") go to stderr, and
+    # the parse below is anchored with grep -oE '^VERDICT: ...' on stdout.
+    # A retry's output replaces the first attempt's rather than appending,
+    # so there is only ever one VERDICT line to find.
+    verdict=$(run_with_account_failover \
+      timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/prompt.txt")
     rc=$?
     [ $rc -eq 124 ] && { echo "TIMEOUT on $repo#$pr"; continue; }

@@ -202,11 +202,32 @@ for t in "${TICKETS[@]}"; do
   # this script. Exported so render_prompt's subprocess can see them.
   export dir repo task ROUNDS
   render_prompt "$PROMPT_DIR/$mode.md" > "$STATE_DIR/prompt.txt"
-  timeout "$PER_TICKET_TIMEOUT" claude -p --model "$MODEL" \
+  # Through the failover wrapper, not bare. A work account that has hit
+  # its weekly limit used to end the ticket: the stage saw a non-zero exit,
+  # found no PR, and parked the card - with a personal token mounted and
+  # unused the whole time. lib/claude-account.sh said so in as many words
+  # ("the stage scripts invoke `claude -p` bare ... Do not read this as the
+  # stages being covered"), and on 2026-11-14 that cost a card three
+  # attempts: "You've hit your weekly limit · resets Nov 16, 11am (UTC)".
+  #
+  # The wrapper captures the output to inspect it for a limit, so this is
+  # no longer streamed live into the log. For a run that can last an hour
+  # that is a real loss of progress visibility, so the output is written
+  # through as soon as the wrapper returns, and `tee` keeps it on stdout
+  # for the Loki tee in log_to. The alternative - teeing to a file inside
+  # the wrapper - would hide the retry's output behind the first attempt's.
+  #
+  # --output-format is deliberately NOT set here. The wrapper's detection
+  # reads prose as well as JSON (claude_rate_limited matches "hit your
+  # N-hour limit" and "usage limit"), and the prompt's report parsing
+  # downstream expects the human-readable form. Moving the stages to JSON
+  # is a separate change with its own output contract.
+  out=$(run_with_account_failover \
+    timeout "$PER_TICKET_TIMEOUT" claude -p --model "$MODEL" \
     --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" \
-    --add-dir "$dir" < "$STATE_DIR/prompt.txt"
-
+    --add-dir "$dir" < "$STATE_DIR/prompt.txt")
   rc=$?
+  printf '%s\n' "$out"
 
   # Belt and braces on the push, the same way the old flow verified the
   # issue link: the prompt asks for a push after each round, but a prompt
