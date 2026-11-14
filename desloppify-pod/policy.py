@@ -677,6 +677,15 @@ def check_bash(command: str) -> Decision:
     # only ever formatting, so nothing legitimate is lost, and
     # reconstructing what bash would join is one more place for this
     # file's idea of quoting to drift from the shell's.
+    #
+    # Deliberately quote-blind, which is the one thing this file
+    # otherwise stopped being. Inside single quotes bash keeps
+    # `a\<newline>b` literal rather than joining it, so this does
+    # over-refuse a multi-line quoted pattern - but that shape was
+    # already refused before this branch (the raw newline trips
+    # SHELL_METACHARS), so the cost is a clearer message rather than a
+    # new denial, and teaching a fourth scanner about quotes is the
+    # drift this comment is about.
     if "\\\n" in command:
         return Decision(
             False,
