@@ -662,6 +662,28 @@ def check_bash(command: str) -> Decision:
     if not command:
         return Decision(False, "empty command")
 
+    # A backslash-newline is a line continuation: bash DELETES it and
+    # joins the halves, so `git push ori\<newline>gin main` runs as
+    # `git push origin main`. Nothing else here can see that. The
+    # metachar scan used to catch it only because `\n` is in
+    # SHELL_METACHARS, and _unquoted now blanks any escaped pair before
+    # that scan runs - which silently reopened every FORBIDDEN guard,
+    # push-to-main included. shlex cannot stand in for this either: it
+    # keeps the newline inside the word, so `ori\ngin` never matches
+    # `origin` and the patterns look right past it. Checked against
+    # bash, which reports argv as [push] [origin] [main].
+    #
+    # Refused outright rather than normalised away. A continuation is
+    # only ever formatting, so nothing legitimate is lost, and
+    # reconstructing what bash would join is one more place for this
+    # file's idea of quoting to drift from the shell's.
+    if "\\\n" in command:
+        return Decision(
+            False,
+            "line continuation - bash joins the halves, so the command "
+            "that runs is not the one being checked; write it on one line",
+        )
+
     # Matched against the normalised form, which resolves quoting so
     # `ma"in"` is the word `main` the patterns look for. An unparseable
     # command normalises to itself, so the raw text is still matched in

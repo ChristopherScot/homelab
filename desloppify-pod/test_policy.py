@@ -109,6 +109,30 @@ ALLOW = [
 ]
 
 DENY = [
+    # --- a line continuation is not formatting, it is a word join ---
+    # bash DELETES a backslash-newline and joins the halves, so
+    # `git push ori\<newline>gin main` runs as `git push origin main` -
+    # verified against bash, which reports argv as [push] [origin]
+    # [main]. Nothing else in this file can see that: shlex keeps the
+    # newline inside the word, so `ori\ngin` never matches `origin`.
+    #
+    # These exist because the quote-aware metachar scan blanked escaped
+    # pairs before SHELL_METACHARS ran, which erased the `\n` that had
+    # been the only thing catching this - reopening every FORBIDDEN
+    # guard at once. Not one of the 202 cases here contained a newline,
+    # so the whole suite stayed green through it.
+    ("git push ori\\\ngin main", "continuation inside `origin`"),
+    ("git push origin mai\\\nn", "continuation inside `main`"),
+    ('git push origin "\\\n"main', "continuation inside quotes"),
+    ("git push origin HEAD:\\\nmain", "continuation inside a refspec"),
+    ("git push --forc\\\ne origin b", "continuation inside --force"),
+    ("git push --mirro\\\nr origin", "continuation inside --mirror"),
+    ("git push --delet\\\ne origin b", "continuation inside --delete"),
+    ("gh repo delet\\\ne x", "continuation inside gh repo delete"),
+    ("cat /run/secret\\\ns/token", "continuation inside a secret path"),
+    # A bare newline is still refused by the metachar scan, as before.
+    ("git status\ngit push origin main", "a second line is a second command"),
+
     # --- quoting must not hide a forbidden command from FORBIDDEN ---
     # FORBIDDEN is regexes, and a regex sees text where bash sees words:
     # `ma"in"` is one word, `main`, to the shell and not a match at all
