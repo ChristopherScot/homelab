@@ -195,8 +195,24 @@ if stack_json=$( (cd "$dir" && GH_PAGER=cat gh stack view --json) 2>/dev/null );
     | select(.name | startswith("desloppify/"))
     | .name // empty' 2>/dev/null)
 fi
+# `pr: null` is necessary but not sufficient. A branch whose PR was
+# CLOSED rather than merged reads the same: gh stack re-resolves a
+# tracked PR through a query scoped to states:[OPEN], gets nothing back,
+# and drops the pr field. Adopting one of those would pile commits on
+# work a human deliberately closed.
+#
+# A remote ref separates them without an API call. Never submitted means
+# never pushed, so no origin/<branch> exists; a closed PR was pushed, so
+# one does. Checked against the live fixture: the wedged branch has no
+# origin ref and its submitted neighbour has one.
+if [ -n "$resume_branch" ]    && git -C "$dir" rev-parse --verify -q "origin/$resume_branch" >/dev/null 2>&1; then
+  echo "not resuming $resume_branch: it has a remote ref, so it was pushed"
+  echo "  (a closed PR looks like an unsubmitted branch to gh stack; this one was submitted)"
+  resume_branch=""
+fi
+
 if [ -n "$resume_branch" ]; then
-  echo "resuming unfinished branch $resume_branch (in the stack, never submitted)"
+  echo "resuming unfinished branch $resume_branch (in the stack, never pushed)"
   branch="$resume_branch"
 fi
 

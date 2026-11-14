@@ -49,13 +49,18 @@ check() {
 
 # Resume: the top of the stack is a desloppify branch with no PR. This is
 # the shape the 2026-11-14 kill left behind.
+# gh stack omits the pr key entirely when a branch has no PR - verified
+# against the installed binary, which emits
+# {"name":...,"isCurrent":true,"isMerged":false,...} with no pr field.
+# Fixtures that say "pr": null would also pass a selector written as
+# `has("pr") and .pr == null`, which never fires in production.
 check "resumes an unsubmitted top branch" \
   '{"branches":[{"name":"desloppify/webapp-1","pr":17094},
-                {"name":"desloppify/webapp-2","pr":null}]}' \
+                {"name":"desloppify/webapp-2","isCurrent":true}]}' \
   "desloppify/webapp-2"
 
 check "resumes when it is the only branch" \
-  '{"branches":[{"name":"desloppify/webapp-1","pr":null}]}' \
+  '{"branches":[{"name":"desloppify/webapp-1","isCurrent":true}]}' \
   "desloppify/webapp-1"
 
 # Do NOT resume. Each of these would be a different bug if it did.
@@ -67,14 +72,14 @@ check "leaves a fully submitted stack alone" \
 # A PR-less branch BELOW the top is somebody mid-review or a closed PR,
 # not an unfinished run. Adopting it would rewrite work being read.
 check "ignores a gap below the top" \
-  '{"branches":[{"name":"desloppify/webapp-1","pr":null},
+  '{"branches":[{"name":"desloppify/webapp-1","isCurrent":true},
                 {"name":"desloppify/webapp-2","pr":17095}]}' \
   ""
 
 # A human branch at the top of the stack is not this pod's to take over.
 check "ignores a non-desloppify branch at the top" \
   '{"branches":[{"name":"desloppify/webapp-1","pr":17094},
-                {"name":"chris/wip","pr":null}]}' \
+                {"name":"chris/wip","isCurrent":true}]}' \
   ""
 
 check "handles an empty stack" '{"branches":[]}' ""
@@ -106,6 +111,24 @@ prevpr_at=$(grep -n '^elif \[ -n "\$prev_pr" \]' "$script" | head -1 | cut -d: -
 if [ -z "$resume_at" ] || [ -z "$prevpr_at" ] || [ "$resume_at" -ge "$prevpr_at" ]; then
   echo "FAIL: the resume check must precede the prev_pr check"
   echo "      resume at [$resume_at], prev_pr at [$prevpr_at]"
+  fail=1
+fi
+
+# A branch whose PR was CLOSED is indistinguishable from one never
+# submitted: gh stack re-resolves tracked PRs through a states:[OPEN]
+# query, gets nothing, and drops the pr field. Adopting one would pile
+# commits onto work a human deliberately closed. The discriminator is a
+# remote ref - never submitted means never pushed.
+if ! grep -q 'rev-parse --verify -q "origin/\$resume_branch"' "$script"; then
+  echo "FAIL: no remote-ref check, so a closed-PR branch would be adopted"
+  fail=1
+fi
+# It has to run BEFORE the branch is adopted, or it guards nothing.
+refcheck_at=$(grep -n 'rev-parse --verify -q "origin/\$resume_branch"' "$script" | head -1 | cut -d: -f1)
+adopt_at=$(grep -n 'branch="\$resume_branch"' "$script" | head -1 | cut -d: -f1)
+if [ -z "$refcheck_at" ] || [ -z "$adopt_at" ] || [ "$refcheck_at" -ge "$adopt_at" ]; then
+  echo "FAIL: the remote-ref check must precede adopting the branch"
+  echo "      check at [$refcheck_at], adopt at [$adopt_at]"
   fail=1
 fi
 
