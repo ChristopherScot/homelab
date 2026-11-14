@@ -214,9 +214,10 @@ def _canonical_verb(namespace: str, sub: str, verb: str) -> str:
 # so neither layer's failure was visible through the other.
 SUB_REASONS: dict[tuple[str, str], str] = {
     ("git", "push"):
-        "pushing is `gh stack`'s job here -- `gh stack submit` puts the "
-        "branch and its PR on the remote. The agent has not needed a "
-        "direct push since gh stack landed",
+        "pushing is `gh stack`'s job here -- `gh stack submit` puts new "
+        "branches and their PRs on the remote, and `gh stack sync` "
+        "fetches, rebases and pushes a stack that is already up there. "
+        "Between them there is no run that needs a direct push",
     ("gh stack", "merge"):
         "merging is the runner's after its checks, not the agent's -- and "
         "`gh stack merge` merges every PR up to the one named, without "
