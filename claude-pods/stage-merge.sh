@@ -155,11 +155,12 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # is load-bearing - do not drop the tail -1 believing the streams are
     # separate.
     verdict=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
-      timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
+      timeout "$PER_PR_TIMEOUT" claude -p --output-format json --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir")
     rc=$?
     [ $rc -eq 124 ] && { echo "TIMEOUT on $repo#$pr"; continue; }
 
+    verdict=$(claude_result_text "$verdict")
     echo "$verdict" | tail -20
     decision=$(printf '%s' "$verdict" | grep -oE '^VERDICT: (MERGE|NO-MERGE|RISKY)' | tail -1 | awk '{print $2}')
 

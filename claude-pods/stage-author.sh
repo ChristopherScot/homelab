@@ -233,11 +233,11 @@ for t in "${TICKETS[@]}"; do
   # downstream expects the human-readable form. Moving the stages to JSON
   # is a separate change with its own output contract.
   out=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
-    timeout "$PER_TICKET_TIMEOUT" claude -p --model "$MODEL" \
+    timeout "$PER_TICKET_TIMEOUT" claude -p --output-format json --model "$MODEL" \
     --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" \
     --add-dir "$dir")
   rc=$?
-  printf '%s\n' "$out"
+  printf '%s\n' "$(claude_result_text "$out")"
 
   # Belt and braces on the push, the same way the old flow verified the
   # issue link: the prompt asks for a push after each round, but a prompt
