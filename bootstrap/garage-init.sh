@@ -252,7 +252,7 @@ if [ "${#created[@]}" -gt 0 ]; then
       -o jsonpath='{.spec.data[0].remoteRef.key}' 2>/dev/null || true)"
     echo "--- $k ---"
     g key info "$k" --show-secret | grep -iE '^(Key ID|Secret key):'
-    echo "  vault kv put kv/${path:-garage/<path the consumer's ExternalSecret reads>} \\"
+    echo "  vault kv put kv/${path:-garage/<path the ExternalSecret reads>} \\"
     echo "    access-key-id=<Key ID> secret-access-key=<Secret key>"
   done
 fi
