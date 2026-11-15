@@ -1,0 +1,35 @@
+name: garage tests
+
+# garage/tests/manifests.sh checks the invariants that let three Garage
+# nodes survive one k8s node - replica counts, the storage class, the
+# probe, the names two files must agree on. Nothing at apply time catches
+# an edit that undoes one of them; this does. cluster-smoke.sh needs a
+# cluster and SKIPs here, saying so.
+on:
+  pull_request:
+    paths:
+      - 'garage/**'
+      - 'bootstrap/garage-init.sh'
+      - '.github/workflows/garage-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'garage/**'
+      - 'bootstrap/garage-init.sh'
+      - '.github/workflows/garage-tests.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run garage/tests
+        run: |
+          set -e
+          for t in garage/tests/*.sh; do
+            echo "== $t"
+            bash "$t"
+          done

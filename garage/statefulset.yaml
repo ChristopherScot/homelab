@@ -1,58 +1,72 @@
 # Garage: S3-compatible object storage, in-cluster.
 #
 # Here to serve reference material (books, skills, plugins) to the
-# claude worker pods without a shared filesystem. A read-only RWX mount
-# would also work, but object storage gives stronger isolation for free:
-# there is no filesystem for one worker to see another through, only
-# HTTP against a bucket. It also leaves nothing attached between tasks,
-# so workers really do scale to zero.
+# claude worker pods without a shared filesystem, and to be the place
+# anything else that wants a bucket goes. A read-only RWX mount would
+# also work for the first job, but object storage gives stronger
+# isolation for free: there is no filesystem for one worker to see
+# another through, only HTTP against a bucket. It also leaves nothing
+# attached between tasks, so workers really do scale to zero.
 #
 # MinIO was tried here before and never worked; its Services are still
 # orphaned in the minio namespace with no endpoints. Garage is a single
 # small daemon by comparison - one binary, SQLite metadata, no operator.
 #
-# Single node, replication_factor 1. Garage's docs warn that this gives
-# no redundancy and is not for production data, which is the right
-# trade here: everything in it is reference material seeded by hand and
-# re-seedable in seconds.
+# Three nodes, one per k8s node, replication_factor 3. The first cut was
+# one node with no redundancy, which was fine for re-seedable books and
+# wrong for a store meant to hold more than that. Losing any one node
+# now leaves the other two serving reads AND writes; the pod on the lost
+# node simply waits for it to return. Where the redundancy lives is the
+# decision worth understanding, and storageclass.yaml spells it out:
+# Garage replicates across nodes, so each node's volumes are
+# single-replica and pinned to that node, rather than paying Longhorn to
+# replicate the replicas.
 #
-# Be precise about what survives a disk loss, because the two volumes
-# differ and the weaker one is the one that matters. data-garage-0 is
-# on longhorn (numberOfReplicas 2). meta-garage-0 is on
-# longhorn-single-ssd, which is numberOfReplicas 1 - a single replica,
-# on the same node the pod runs on. Meta holds the bucket, the alias,
-# the access key and its grant, and the object-to-block mappings, so
-# the replicated data volume is unreadable without it.
-#
-# Recovery from a meta loss is therefore not "Longhorn has a copy": it
-# is re-run bootstrap/garage-init.sh and re-upload. That mints a NEW
-# access key, which makes kv/garage/s3-reference stale - every worker
-# fails to authenticate until Vault is re-seeded. Both volumes are in
-# Longhorn's default recurring-job group, so there are daily snapshots
-# and weekly backups to fall back on first.
+# Named garage-node, not garage. volumeClaimTemplates are immutable, so
+# the move from one storage class to another could not be an edit of
+# the old StatefulSet - Argo would have sat at SyncFailed on the
+# Forbidden. A new name lets Argo prune the old object and create this
+# one in a single sync. The S3 Service keeps the name garage, which is
+# the only name clients know.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
-  name: garage
+  name: garage-node
   namespace: garage
 spec:
-  serviceName: garage
-  replicas: 1
+  serviceName: garage-node
+  replicas: 3
+  # Parallel because Ready means "healthy with quorum", and no pod can
+  # have quorum until the others exist. OrderedReady would wait forever
+  # on garage-node-0.
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
-      app: garage
+      app: garage-node
   template:
     metadata:
       labels:
-        app: garage
+        app: garage-node
       annotations:
         # Restart when the rpc secret rotates.
         reloader.stakater.com/auto: "true"
     spec:
+      serviceAccountName: garage-node
       securityContext:
         fsGroup: 1000
         runAsUser: 1000
         runAsGroup: 1000
+      # One pod per k8s node, as a hard rule. This is what gives "a node
+      # going out" its meaning - three pods on one node would be three
+      # copies behind one power cable. Longhorn adds PV node affinity
+      # after attachment to keep later restarts on the same host.
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app: garage-node
       containers:
         - name: garage
           # v2.5.0, not a commit tag: the floating tags on this repo are
@@ -90,26 +104,22 @@ spec:
               memory: 128Mi
             limits:
               memory: 512Mi
-          # /health reports unhealthy until a cluster layout is applied,
-          # which is a one-time manual step (bootstrap/garage-init.sh) --
-          # so a fresh deploy would sit unready forever behind this
-          # probe and never let anyone in to run it. Probe the S3 port
-          # for liveness of the process instead, and leave "is the
-          # cluster laid out" to the init script, which says so plainly.
-          #
-          # What that costs: this reports Ready as soon as the listener
-          # binds, which is before garage can serve an object. A pod
-          # that restarts into an unlaid-out state looks Ready and
-          # fails every client instead of failing itself. Free while
-          # nothing consumes the bucket; once the workers pull their
-          # reference material at boot, switch readiness back to
-          # /health -- by then the layout is a permanent fixture and
-          # the lockout this avoids cannot happen.
+          # Ready is Garage's own /health: 200 only when this node has a
+          # layout and can reach a quorum of its peers. That is exactly
+          # the set of pods the S3 Service should send traffic to - a node
+          # cut off from the other two cannot complete a write and should
+          # not be asked to. A fresh cluster is therefore not Ready until
+          # the layout is applied (bootstrap/garage-init.sh); that script
+          # uses exec, which does not wait on readiness, so there is no
+          # lockout.
           readinessProbe:
-            tcpSocket:
-              port: s3
+            httpGet:
+              path: /health
+              port: admin
             periodSeconds: 10
-            failureThreshold: 6
+            failureThreshold: 3
+          # Liveness is only "is the process answering": losing quorum is
+          # not fixed by restarting the one node that still has power.
           livenessProbe:
             tcpSocket:
               port: s3
@@ -120,33 +130,45 @@ spec:
           configMap:
             name: garage-config
   volumeClaimTemplates:
-    # Metadata on SSD: it is small and latency-sensitive (SQLite).
+    # Both volumes on longhorn-garage: single replica, pinned to this
+    # pod's node. The redundancy is the other two pods.
+    #
+    # Metadata: SQLite, small, latency-sensitive. Also holds this node's
+    # identity (its key pair), so losing it makes the node a stranger to
+    # the cluster - see garage/README.md for the re-admit step.
     - metadata:
         name: meta
       spec:
         accessModes: [ReadWriteOnce]
-        storageClassName: longhorn-single-ssd
+        storageClassName: longhorn-garage
         resources:
           requests:
-            storage: 2Gi
-    # Object data. 10Gi is far more than the ~74MB of reference material
-    # needs, leaving room for anything else that wants a bucket later.
-    #
-    # Growing this means growing garage's advertised capacity too -
-    # GARAGE_CAPACITY in bootstrap/garage-init.sh, re-applied with a new
-    # layout version. Garage refuses writes past the capacity it was
-    # told about, regardless of how much disk is actually free.
-    #
-    # Note the live cluster currently advertises 9.3 GiB, not 10: the
-    # layout was applied while that default was still 10G (decimal).
-    # The default is 10Gi now, but garage-init.sh skips the layout step
-    # on an already-assigned cluster, so the stale value stands until
-    # someone runs an explicit re-layout.
+            storage: 3Gi
+    # Object data. 30Gi per node is 30Gi usable (every node holds every
+    # object). Sized to the node that has the least headroom: Longhorn
+    # schedules against the full requested size and node2's SSD had 47Gi
+    # left to schedule when this was written.
+    # bootstrap/garage-init.sh reads this size off the PVC when it first
+    # assigns a node, so it is declared once. To grow a running cluster
+    # see garage/README.md: expand the PVCs, then a new layout version.
     - metadata:
         name: data
       spec:
         accessModes: [ReadWriteOnce]
-        storageClassName: longhorn
+        storageClassName: longhorn-garage
         resources:
           requests:
-            storage: 10Gi
+            storage: 30Gi
+---
+# Voluntary disruptions - a drain, a Longhorn upgrade - may take one node
+# at a time. Two would be below quorum.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: garage-node
+  namespace: garage
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: garage-node
