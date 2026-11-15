@@ -41,6 +41,16 @@ func TestSettledMatchesRolloutStatus(t *testing.T) {
 		{"NeverObserved", func(s *appsv1.StatefulSet) { s.Status.ObservedGeneration = 0 }, false},
 		{"ScaleNotYetObserved", func(s *appsv1.StatefulSet) { s.Generation = 5 }, false},
 		{"PodsStillStarting", func(s *appsv1.StatefulSet) { s.Status.ReadyReplicas = 1 }, false},
+		{"HeldRevision", func(s *appsv1.StatefulSet) {
+			n := int32(3)
+			s.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateStatefulSetStrategy{Partition: &n}
+			s.Status.UpdateRevision = "new"
+		}, true},
+		{"PartialPartitionUnready", func(s *appsv1.StatefulSet) {
+			n := int32(2)
+			s.Spec.UpdateStrategy.RollingUpdate = &appsv1.RollingUpdateStatefulSetStrategy{Partition: &n}
+			s.Status.UpdateRevision = "new"
+		}, false},
 		{"MidRollout", func(s *appsv1.StatefulSet) { s.Status.UpdateRevision = "claude-session-8" }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

@@ -25,7 +25,7 @@ endif
 # -o and the package are load-bearing.
 .PHONY: build
 build:
-	go build -o kaneo-dispatcher .
+	CGO_ENABLED=0 go build -o bin/app .
 
 # The grep refuses ogen's api.NewClient; its message says why. It
 # matches api.NewClient( as a whole token, so otherapi.NewClient(

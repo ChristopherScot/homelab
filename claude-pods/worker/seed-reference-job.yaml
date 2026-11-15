@@ -1,0 +1,63 @@
+# Seeds the Garage bucket with reference material from a session pod's
+# home volume. Run once, and again whenever a book is added.
+#
+# Reads from home-claude-session-0 (ReadWriteOnce), so the session pods
+# must be scaled to 0 or this Job will not schedule - the volume cannot
+# be attached twice. session-sleep scales them down when idle, so in
+# practice: check, then run.
+#
+#   kubectl scale statefulset claude-session -n claude-pods --replicas=0
+#   kubectl apply -f claude-pods/worker/seed-reference-job.yaml
+#   kubectl logs -n claude-pods job/seed-reference -f
+#
+# Uses the READ-WRITE key (claude-seed), which is deliberately not the
+# one the workers get. Seed kv/garage/s3-seed with it, or pass it in by
+# hand for a one-off.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-reference
+  namespace: claude-pods
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: seed
+          image: amazon/aws-cli:2.17.0
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -eu
+              E="$AWS_ENDPOINT_URL"
+              for d in books skills plugins; do
+                src="/src/.claude/$d"
+                if [ ! -d "$src" ]; then
+                  echo "skip $d: not present on the source volume"
+                  continue
+                fi
+                echo "uploading $d ($(du -sh "$src" | cut -f1))..."
+                aws --endpoint-url "$E" s3 sync "$src" "s3://claude-reference/$d/" \
+                  --only-show-errors --delete
+              done
+              echo "=== bucket now holds ==="
+              aws --endpoint-url "$E" s3 ls s3://claude-reference/ \
+                --recursive --summarize | tail -3
+          envFrom:
+            - secretRef:
+                name: garage-s3-seed
+          volumeMounts:
+            - name: src
+              mountPath: /src
+              readOnly: true
+      volumes:
+        # The source of truth for reference material today: whatever a
+        # session pod has in its home. Once workers are ephemeral this
+        # becomes the ONLY copy outside the bucket, which is the point -
+        # books live here and in Garage, never in git or an image.
+        - name: src
+          persistentVolumeClaim:
+            claimName: home-claude-session-0
+            readOnly: true

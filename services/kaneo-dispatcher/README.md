@@ -35,16 +35,17 @@ step with the column graph written down in
    network blip. It is handed the task id and the repo, since
    `stage-author` refuses a named task without one.
 
-`POST /reconcile`, behind the same signature, sweeps the three dispatching
-columns for cards that sat there longer than `RECONCILE_STALE` (4h) and
-whose work does not exist on GitHub - no pull request, no
-`nightly/integration` status, no merge - and re-dispatches them. It also
-sweeps `in-progress`, where the author parks a card before working it: a
-card stale there was stranded by an author that died, and goes back to
-the author without the GitHub check, because judging whatever work exists
-is the author's own job. `POST /reconcile?dry` reports without launching
-or waking. The hourly `kaneo-reconcile` CronJob in `claude-pods/` is the
-caller.
+`POST /reconcile`, behind the same signature, checks active and human-review
+cards for a merged PR and moves them to Done. It uses the newest matching
+same-repository PR, re-reads the card before updating, and verifies the result.
+Backlog and Done remain untouched. Kaneo has no conditional update operation;
+a concurrent edit between the final read and PUT can still be overwritten.
+
+Unfinished work in dispatching columns is retried after `RECONCILE_STALE`
+(4h). Stale In Progress cards return to the author, whose mode logic decides
+how to resume. Unmerged human-review cards remain parked. Busy workers are
+reported as skipped, and failed launches as errors. `POST /reconcile?dry`
+performs reads only. The hourly `kaneo-reconcile` CronJob remains the caller.
 
 ## Layout
 
@@ -81,7 +82,7 @@ fakes all three and records what the dispatcher asked a pod to run.
 
 ## Deploy
 
-Push to main. CI builds the image; argocd-image-updater sees the new
+Follow the first-deployment handoff below before merging. Subsequently, CI builds the image; argocd-image-updater sees the new
 digest and the `kaneo-dispatcher` Application syncs it. The Service
 answers on 80 (what the generated Ingress routes to) and on 8080, which
 is the port Kaneo's webhook integration and the reconcile CronJob post
@@ -91,3 +92,29 @@ to: `http://kaneo-dispatcher.claude-pods.svc.cluster.local:8080`.
 keyed by resource kind, rather than editing the manifests. The copy of
 `argocd.json` at the repo root is what registers the service with Argo;
 a test keeps it identical to the rendered one.
+
+### First deployment handoff
+
+This PR transfers the existing Deployment, Service and Ingress from the
+`claude-pods` Argo Application to `kaneo-dispatcher`. A normal automated sync
+could prune them before the replacement image or Vault role is ready.
+
+1. Publish the service image from this branch using the workflow's manual
+   trigger. It publishes a SHA tag; verify that image before selecting it for
+   the first rollout. The default branch publishes `latest` after merging.
+2. From this directory, run `homelabctl vault --apply` with an authenticated
+   Vault administrator. This creates the new role for ServiceAccount
+   `kaneo-dispatcher`; retain the existing `claude-pods` policy and role.
+3. Pause automated sync on `claude-pods` and the root app while transferring
+   ownership. Record their existing sync settings first. Merge, then sync the
+   new Application with the verified image digest. Confirm the ExternalSecret
+   is Ready, the Deployment is Available and both Service ports work.
+4. Confirm Argo tracking on Deployment, Service and Ingress now names
+   `kaneo-dispatcher` before allowing the old Application to prune. Restore
+   the recorded sync settings and confirm both Applications are healthy.
+5. Verify a signed dry reconcile and a controlled dispatch through client-go
+   against the real kubelet. Keep the card open until these checks pass.
+
+If the new deployment fails, stop its automatic sync before restoring the
+previous Deployment/Service/Ingress from the pre-merge revision. Preserve the
+Kaneo webhook URL and existing secrets throughout the handoff.

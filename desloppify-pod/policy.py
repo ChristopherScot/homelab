@@ -46,12 +46,45 @@ ALLOWED_REPO = "schoolhouse-world/app"
 SHELL_METACHARS = re.compile(r"[;&|<>`$(){}\n]|\breval\b")
 
 ALLOWED: dict[str, set[str]] = {
+    # No "push". The agent does not need it: `gh stack` is what puts work
+    # on the remote, and it spawns its own git as a subprocess of the gh
+    # binary, which this hook never sees. Checked against the audit logs
+    # rather than assumed - the 2026-11-14 run opened PR #17094 via
+    # `gh stack add` and `gh stack submit` with zero `git push` calls,
+    # and across all history the agent pushed exactly twice, both on
+    # 2026-11-04/05 to its own desloppify/* branch, before gh stack
+    # existed here. The runner's own one-time push of the integration
+    # branch lives in nightly-desloppify.sh, outside this gate entirely.
+    #
+    # The point is not that pushing is dangerous in itself; it is that
+    # every guard protecting main has to decide what a push TARGETS, and
+    # that means reading a branch name out of a command line. Doing that
+    # correctly means agreeing with bash about quoting, escaping and
+    # line continuations - and each of those was a bypass here in turn
+    # (`ma"in"`, then `ori\<newline>gin`), each needing its own fix.
+    # Both are closed, so this is not removing a broken guard; it is
+    # removing the need to keep getting that question right.
+    #
+    # And this layer was never the last one, nor the strongest.
+    # `timeout git push ...`, `xargs git push ...` and anything via node
+    # or python reach a real push on either side of this change, because
+    # the allowlist only inspects argv[0]. The pre-push hook that
+    # nightly-desloppify.sh installs catches those - but it is itself
+    # reachable: `--no-verify`, `-c core.hooksPath=/dev/null`, or simply
+    # `rm .git/hooks/pre-push` are all allowed here, so it is a speed
+    # bump for an agent that is trying, not a wall.
+    #
+    # What actually holds is outside this repo: branch protection on
+    # main and the scopes on the PAT. Worth saying plainly, because
+    # every layer in here is easier to overrate than to measure, and a
+    # comment claiming one of them is the guarantee is how the next
+    # person stops looking.
     "git": {
         "fetch", "log", "diff", "show", "status", "rev-parse", "describe",
         "branch", "checkout", "switch", "restore", "stash", "worktree",
         "ls-files", "ls-tree", "blame", "shortlog", "merge-base", "add",
         "cat-file", "for-each-ref", "config", "clean", "reset", "commit",
-        "push", "rm", "mv", "apply", "symbolic-ref",
+        "rm", "mv", "apply", "symbolic-ref",
     },
     "gh": {"pr", "issue", "label", "repo", "api", "search", "auth",
            "browse", "stack"},
@@ -86,7 +119,12 @@ ALLOWED: dict[str, set[str]] = {
 # would otherwise be the one that admits a whole namespace, because
 # check_bash stops at the first level. gh-stack v0.2.0 ships 20
 # subcommands and is still a 0.x: enumerating the ones the runner's
-# prompt actually instructs means a version bump cannot widen this gate
+# prompt actually instructs means a version bump cannot widen this gate.
+# `top` was missing from the first list and three nightly runs died on
+# it - the runner needs it between checkout and add, because checkout
+# lands on the PR's own branch and add only works from the top of the
+# stack. Navigation verbs are not dangerous; the reason the others are
+# absent is that nothing calls them
 # without someone adding a line here. The refusals below are kept as
 # well, so a reader greping for `merge` finds the reason and not just
 # an absence.
@@ -96,7 +134,8 @@ ALLOWED: dict[str, set[str]] = {
 # itself, and --force-with-lease bounds it to branches this pod owns; a
 # bare rebase has neither the lease nor the runner's sequencing.
 ALLOWED_SUB: dict[str, set[str]] = {
-    "gh stack": {"init", "add", "submit", "sync", "checkout", "view"},
+    "gh stack": {"init", "add", "submit", "sync", "checkout", "view",
+                 "top"},
     # Same argument for `gh pr`: 18 verbs are exposed and the runner's
     # prompt instructs a handful. Refusing the dangerous ones by name
     # left `gh pr new` allowed -- gh's own documented alias for create,
@@ -118,6 +157,19 @@ ALLOWED_SUB: dict[str, set[str]] = {
     # need one, rather than reading their absence as a prohibition.
     "gh pr": {"create", "view", "list", "comment", "edit", "checks",
               "diff", "status", "ready", "review"},
+    # Same treatment for two more whole namespaces that were admitted at
+    # the first level and then carved back by regex: `gh auth` had rules
+    # naming token/login/logout/refresh/switch, and `gh repo` had
+    # delete/archive/edit/rename/create. Enumerating what is permitted
+    # inverts that - a verb a future gh release adds is refused because
+    # it is absent, rather than permitted until someone notices and
+    # writes another pattern.
+    #
+    # status and view are what is left because they are read-only and
+    # the only reason to keep the namespaces at all; the audit logs show
+    # the agent has never invoked either namespace.
+    "gh auth": {"status"},
+    "gh repo": {"view"},
 }
 
 # gh's own command aliases, resolved to the canonical verb before any
@@ -190,6 +242,32 @@ def _canonical_verb(namespace: str, sub: str, verb: str) -> str:
 # allowlist stayed denied by the regex while the suite reported PASS,
 # so neither layer's failure was visible through the other.
 SUB_REASONS: dict[tuple[str, str], str] = {
+    # The allowlist refuses these by absence, which is the stronger
+    # mechanism but says only "not allowed for this pod". Where the
+    # reason is worth stating - a boundary rather than a verb nobody
+    # calls - it is stated here, so narrowing a namespace does not cost
+    # the explanation the deleted regex carried.
+    ("gh auth", "token"): "credentials are not readable",
+    ("gh auth", "login"): "the pod does not change its own credential",
+    ("gh auth", "logout"): "the pod does not change its own credential",
+    ("gh auth", "refresh"): "the pod does not change its own credential",
+    ("gh auth", "switch"): "the pod does not change its own credential",
+    # The seventh verb, and the one that is not obviously about the
+    # credential: it rewrites git's credential helper config, which is
+    # the same hazard `git config ... credential.` and the `.git/config`
+    # rule below exist for.
+    ("gh auth", "setup-git"):
+        "the pod does not rewrite git's credential configuration",
+    ("gh repo", "delete"): "the pod does not alter repositories",
+    ("gh repo", "archive"): "the pod does not alter repositories",
+    ("gh repo", "edit"): "the pod does not alter repositories",
+    ("gh repo", "rename"): "the pod does not alter repositories",
+    ("gh repo", "create"): "the pod does not alter repositories",
+    ("git", "push"):
+        "pushing is `gh stack`'s job here -- `gh stack submit` puts new "
+        "branches and their PRs on the remote, and `gh stack sync` "
+        "fetches, rebases and pushes a stack that is already up there. "
+        "Between them there is no run that needs a direct push",
     ("gh stack", "merge"):
         "merging is the runner's after its checks, not the agent's -- and "
         "`gh stack merge` merges every PR up to the one named, without "
@@ -267,13 +345,29 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
     # PR that targets one. The pod's base is always the integration
     # branch; a PR with no explicit --base inherits the repo default,
     # which is main, so a bare `gh pr create` is refused too.
-    (re.compile(r"^git\s+push\b.*\b(origin\s+)?(HEAD:)?(refs/heads/)?"
-                r"(main|master|production|prod|release)\b"),
-     "pushing to a protected branch"),
-    (re.compile(r"^git\s+push\b.*--mirror\b"), "mirror push rewrites every ref"),
-    (re.compile(r"^git\s+push\b.*(--force|--force-with-lease|-f)\b"),
-     "force-push"),
-    (re.compile(r"^git\s+push\b.*--delete\b"), "deleting a remote branch"),
+    #
+    # There are no `git push` patterns here any more. They were all
+    # anchored `^git\s+push\b`, so with the verb gone from ALLOWED the
+    # subcommand check refuses every string they could match before they
+    # are ever consulted. Verified rather than assumed: re-inserting all
+    # four changes no verdict anywhere in the suite.
+    #
+    # They are deleted rather than kept "just in case" someone re-adds
+    # push, but NOT because they are evadable - #182's _normalised()
+    # closed that, and with `push` restored they correctly refuse
+    # `ma"in"`, `'main'` and `ma""in` today. They are deleted because
+    # dead code in a security gate is a liability: it reads as active
+    # protection, so the next person weighing whether to re-add the verb
+    # would count a guard that is not running. Re-adding push means
+    # re-adding these deliberately and re-testing them.
+    #
+    # The reason the verb went rather than the guards is still the
+    # targeting problem: a regex has to decide what a push TARGETS,
+    # which means reading a branch name out of a command line and
+    # agreeing with bash about quoting, escaping and line
+    # continuations. `ma"in"` and `ori\<newline>gin` each defeated these
+    # patterns at some point, and each needed its own fix. An allowlist
+    # matches argv, so the question does not arise.
     (re.compile(r"^gh\s+pr\s+merge\b"),
      "merging is done by the runner after its checks, not by the agent"),
     # Overnight PRs open as drafts so a human reads them before they are
@@ -287,27 +381,26 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
 
 
     # --- protection and repository settings ---------------------------
-    # The PAT has no Administration scope, so these would fail anyway.
-    # Refusing them here makes the attempt visible in the audit log
-    # instead of as an opaque 403.
+    # The PAT has no Administration scope - nightly-desloppify.sh
+    # refuses to start if the token can so much as READ main's
+    # protection - so this would fail anyway. Kept because it makes the
+    # attempt visible in the audit log instead of as an opaque 403, and
+    # because it is the one gh api path worth naming.
+    #
+    # Nothing else under `gh` is named here. A subcommand ALLOWED does
+    # not list, or a verb ALLOWED_SUB does not list, is already refused
+    # - and by absence, so it covers the verbs a future gh release adds
+    # as well as today's.
     (re.compile(r"\bbranches/[^/\s]+/protection\b"), "branch protection is not the pod's to change"),
     (re.compile(r"^gh\s+api\b.*-X\s*(DELETE|PUT|PATCH|POST)\b.*\bprotection\b"),
      "branch protection is not the pod's to change"),
-    (re.compile(r"^gh\s+repo\s+(delete|archive|edit|rename|create)\b"),
-     "the pod does not alter repositories"),
-    (re.compile(r"^gh\s+(workflow|run|secret|variable|release|ruleset)\b"),
-     "workflows, secrets and releases are out of scope"),
-    (re.compile(r"^gh\s+(auth\s+)?token\b"), "credentials are not readable"),
-    (re.compile(r"^gh\s+auth\s+(login|logout|refresh|switch)\b"),
-     "the pod does not change its own credential"),
 
     # --- history and remotes ------------------------------------------
-    (re.compile(r"^git\s+(rebase|cherry-pick|revert|filter-branch|filter-repo)\b"),
-     "the pod does not rewrite history"),
+    # Only verbs that ARE in ALLOWED need a rule: each of these narrows
+    # something the agent legitimately does to exclude one dangerous
+    # shape. A verb ALLOWED omits needs no pattern.
     (re.compile(r"^git\s+reset\b.*--hard\b.*\borigin/(main|master)\b"),
      "resetting onto a protected branch"),
-    (re.compile(r"^git\s+(remote|tag)\s+(add|remove|rm|set-url|delete|-d)\b"),
-     "the pod does not reconfigure remotes or tags"),
     (re.compile(r"^git\s+config\b.*(user\.email|user\.name|url\..*insteadOf|"
                 r"credential\.|http\..*extraheader)"),
      "identity and credential config are fixed by the runner"),
@@ -316,22 +409,41 @@ FORBIDDEN: list[tuple[re.Pattern[str], str]] = [
      "recreating a protected branch"),
     (re.compile(r"^git\s+branch\s+.*(-D|-d|--delete|-M|-m|--move|-C|--copy)\b"),
      "the pod does not delete or rename branches"),
-    (re.compile(r"^git\s+update-ref\b"), "writing refs directly"),
 
     # --- host and credentials ------------------------------------------
-    (re.compile(r"^(sudo|su|shutdown|reboot|mkfs|dd|vault|aws|gcloud|"
-                r"systemctl|mount|umount|kubectl|helm|tofu|terraform|docker)\b"),
-     "not available to this pod"),
-    (re.compile(r"^(chown|chgrp|useradd|usermod|passwd|crontab|ssh|scp|nc|"
-                r"ncat|socat|telnet)\b"),
-     "the pod does not administer hosts or open connections"),
+    # No binary blocklist here: ALLOWED is an allowlist, so sudo, ssh,
+    # kubectl and the rest are refused by not being on it. Blocklisting
+    # them too meant maintaining the list that did not matter.
+    #
+    # One of those deletions is contingent rather than unconditional:
+    # `curl ... | sh` had its own pattern, and it is dead only because
+    # neither `curl` nor `sh` is on ALLOWED - each clause of a pipeline
+    # is checked alone. Put any of curl, wget, sh or bash on the
+    # allowlist and that shape is live again, which the set-equality
+    # pins in test_policy.py do not cover because they guard
+    # ALLOWED_SUB, not ALLOWED itself.
+    #
+    # What remains is about CONTENT rather than which binary is running,
+    # so it holds for `cat`, `grep`, `sed` or anything else permitted.
     (re.compile(r"\.claude/\.credentials\.json"), "credentials are not readable"),
     (re.compile(r"/run/secrets/"), "secrets are not readable"),
     (re.compile(r"\.git/config\b"), "git config is not read or written directly"),
-    (re.compile(r"\b(curl|wget)\b.*\|\s*(ba)?sh\b"), "piping a download into a shell"),
     (re.compile(r"^rm\s+.*(-[a-zA-Z]*[rR][a-zA-Z]*f|-[a-zA-Z]*f[a-zA-Z]*[rR])"),
      "recursive force-delete"),
-    (re.compile(r"\bgit\s+push\b.*\bhttps?://[^@\s]*:[^@\s]*@"),
+    # Any URL carrying credentials, not just a push's. This was scoped
+    # to `git push` and that verb is gone, which would have left it
+    # matching nothing - but the hazard was never about the verb. The
+    # gap was real before the verb was removed: `git fetch
+    # https://user:token@...` was allowed on main while the same URL in
+    # a push was refused.
+    # Userinfo in an https URL at all, with or without a colon. The
+    # bare form is the common one for a GitHub PAT
+    # (https://ghp_xxx@github.com/...), and this pod holds a token, so
+    # omitting it would leave the likeliest shape open: `git fetch
+    # https://ghp_xxx@github.com/a/b` was allowed until this pattern
+    # dropped the `:`. The class stops at `/` and whitespace so a
+    # host:port URL, a path, or a later email address is not userinfo.
+    (re.compile(r"\bhttps?://[^@\s/]+@"),
      "a URL with inline credentials"),
 ]
 
@@ -470,15 +582,189 @@ SHELL_CONTRACT = (
     "Command substitution, redirection and grouping are refused outright. "
     "A pipeline or `&&`/`;` chain passes only if every clause passes on "
     "its own - a simple pipe of allowed commands (`rg pattern | head`) is "
-    "fine. But the splitter is quote-blind: a quoted argument containing "
-    "`;`, `|`, `&` or `$` makes the whole call fail as unparseable, which "
-    "looks like chaining being refused. One command per Bash call is the "
-    "reliable habit."
+    "fine. Separators inside quotes are data, not syntax, so "
+    '`grep -n "a\\|b" f` and `sed -n \'1,5p;9p\' f` are single commands '
+    "and pass. `$` and a backtick still count inside double quotes, "
+    "because the shell expands them there. "
+    "Write each command on ONE line: a backslash line continuation is "
+    "refused, because bash joins the halves and the command that runs "
+    "is then not the one that was checked. Long invocations are fine, "
+    "just unwrapped."
 )
 
 
+def _unquoted(command: str) -> str:
+    """The command with quoted spans blanked out, for metachar scanning.
+
+    A metacharacter only does something - substitution, redirection,
+    chaining - when the shell sees it OUTSIDE quotes. Inside quotes it is
+    data: `grep -n "a|b" f` passes one literal pattern to grep and starts
+    no pipeline. Scanning the raw string cannot tell those apart and
+    refused the second, so ordinary greps came back as "command
+    substitution, redirection or grouping".
+
+    Quoted content is replaced with spaces rather than removed, so any
+    offset reported against this string still lines up with the original.
+    """
+    out = []
+    quote = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote == "'":
+            out.append(" " if ch != "'" else ch)
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "\\" and i + 1 < n:
+                out.append("  ")
+                i += 2
+                continue
+            # A backtick always expands inside double quotes, and so does
+            # `$` when it introduces a name, a brace or a subshell -
+            # "a $(whoami)" really does run whoami - so those must still
+            # reach the metachar scan. Everything double quotes genuinely
+            # neuters (`;`, `|`, `&`, redirection, grouping, newline) is
+            # blanked. Verified against bash rather than assumed, in both
+            # directions: `"a\\" $(whoami)"` substitutes, while a `$`
+            # before the closing quote or before a space is literal - which
+            # is why `grep -c "^ [A-Z]*: {$" f` is an ordinary command and
+            # must not be refused.
+            if ch == "`":
+                out.append(ch)
+                i += 1
+                continue
+            if ch == "$" and i + 1 < n and (
+                command[i + 1].isalpha()
+                or command[i + 1] == "_"
+                or command[i + 1] in "{("
+            ):
+                out.append(ch)
+                i += 1
+                continue
+            out.append(" " if ch != '"' else ch)
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            # An escaped metachar outside quotes is literal too.
+            out.append("  ")
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _split_commands(command: str) -> list[str]:
-    return [c.strip() for c in re.split(r"\|\||&&|\||;", command) if c.strip()]
+    """Split a command on shell separators that are NOT inside quotes.
+
+    A plain `re.split` is quote-blind, and that cost real work: an
+    ordinary `grep -n "^import\\|^} from" file` was split mid-pattern
+    into `grep -n "^import\\` and `^} from" file`, and the first
+    fragment - an unterminated quote ending in a backslash - came back
+    from shlex as `unparseable: No escaped character`. The agent's
+    command was valid shell every time. One nightly run spent 15 of its
+    29 denials this way (2026-11-14, report-20261114-0807.json), each
+    one a wasted turn on a command that should simply have run.
+
+    Quoting rules are the shell's, not Python's: inside single quotes
+    nothing is special, including backslash; inside double quotes a
+    backslash escapes the next character; outside quotes a backslash
+    escapes the next character too. Separators are only separators when
+    the scanner is outside both kinds of quote.
+    """
+    out: list[str] = []
+    buf: list[str] = []
+    quote: str | None = None
+    i = 0
+    n = len(command)
+    while i < n:
+        ch = command[i]
+        if quote == "'":
+            # Single quotes are literal; only the closing quote ends them.
+            buf.append(ch)
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            if ch == "\\" and i + 1 < n:
+                buf.append(ch)
+                buf.append(command[i + 1])
+                i += 2
+                continue
+            buf.append(ch)
+            if ch == '"':
+                quote = None
+            i += 1
+            continue
+        # Outside quotes.
+        if ch == "\\" and i + 1 < n:
+            buf.append(ch)
+            buf.append(command[i + 1])
+            i += 2
+            continue
+        if ch in "'\"":
+            quote = ch
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ";":
+            out.append("".join(buf))
+            buf = []
+            i += 1
+            continue
+        if ch in "|&":
+            # `||` and `&&` are two-character separators; a lone `|` is a
+            # pipe. A lone `&` is backgrounding, which SHELL_METACHARS
+            # refuses on the whole command before this ever runs, but
+            # splitting on it here keeps the scan honest either way.
+            if i + 1 < n and command[i + 1] == ch:
+                i += 2
+            else:
+                i += 1
+            out.append("".join(buf))
+            buf = []
+            continue
+        buf.append(ch)
+        i += 1
+    out.append("".join(buf))
+    return [c.strip() for c in out if c.strip()]
+
+
+def _normalised(command: str) -> str:
+    """The command with shell quoting resolved, for FORBIDDEN matching.
+
+    FORBIDDEN is a list of regexes, and a regex sees text while bash sees
+    words. `git push origin ma"in"` is one word, `main`, to bash - and to
+    `\\bmain\\b` it is not a match at all, so the push-to-main guard let
+    it through. Six of the seven git-push guards were evadable this way,
+    including the one that exists because a merge to that repo's main
+    reaches production. `gh pr merge` was NOT evadable, because the gh
+    path checks parsed argv rather than trusting the regex - which is the
+    argument for doing the same here.
+
+    shlex does the unquoting, and the words are rejoined with single
+    spaces so the patterns match words rather than whatever spacing the
+    caller used. If it will not parse, the original is returned: an
+    unparseable command is refused a few lines later anyway, and
+    returning the raw text keeps the guards matching on something rather
+    than nothing.
+    """
+    try:
+        return " ".join(shlex.split(command))
+    except ValueError:
+        return command
 
 
 def check_bash(command: str) -> Decision:
@@ -486,8 +772,45 @@ def check_bash(command: str) -> Decision:
     if not command:
         return Decision(False, "empty command")
 
+    # A backslash-newline is a line continuation: bash DELETES it and
+    # joins the halves, so `git push ori\<newline>gin main` runs as
+    # `git push origin main`. Nothing else here can see that. The
+    # metachar scan used to catch it only because `\n` is in
+    # SHELL_METACHARS, and _unquoted now blanks any escaped pair before
+    # that scan runs - which silently reopened every FORBIDDEN guard,
+    # push-to-main included. shlex cannot stand in for this either: it
+    # keeps the newline inside the word, so `ori\ngin` never matches
+    # `origin` and the patterns look right past it. Checked against
+    # bash, which reports argv as [push] [origin] [main].
+    #
+    # Refused outright rather than normalised away. A continuation is
+    # only ever formatting, so nothing legitimate is lost, and
+    # reconstructing what bash would join is one more place for this
+    # file's idea of quoting to drift from the shell's.
+    #
+    # Deliberately quote-blind, which is the one thing this file
+    # otherwise stopped being. Inside single quotes bash keeps
+    # `a\<newline>b` literal rather than joining it, so this does
+    # over-refuse a multi-line quoted pattern - but that shape was
+    # already refused before this branch (the raw newline trips
+    # SHELL_METACHARS), so the cost is a clearer message rather than a
+    # new denial, and teaching a fourth scanner about quotes is the
+    # drift this comment is about.
+    if "\\\n" in command:
+        return Decision(
+            False,
+            "line continuation - bash joins the halves, so the command "
+            "that runs is not the one being checked; write it on one line",
+        )
+
+    # Matched against the normalised form, which resolves quoting so
+    # `ma"in"` is the word `main` the patterns look for. An unparseable
+    # command normalises to itself, so the raw text is still matched in
+    # exactly the case where unquoting is impossible - no second search
+    # needed, and the fallback is what makes that true.
+    normalised = _normalised(command)
     for pattern, reason in FORBIDDEN:
-        if pattern.search(command):
+        if pattern.search(normalised):
             return Decision(False, reason)
 
     clauses = _split_commands(command)
@@ -498,7 +821,7 @@ def check_bash(command: str) -> Decision:
                 return verdict
         return Decision(True, "pipeline, every clause allowed")
 
-    if SHELL_METACHARS.search(command):
+    if SHELL_METACHARS.search(_unquoted(command)):
         return Decision(
             False,
             "command substitution, redirection or grouping - run the steps "
@@ -562,6 +885,9 @@ def check_bash(command: str) -> Decision:
     if sub is None:
         return Decision(True, f"{binary} with no subcommand")
     if sub not in subcommands:
+        why = SUB_REASONS.get((binary, sub))
+        if why:
+            return Decision(False, why)
         return Decision(False, f"{binary} {sub} is not allowed for this pod")
 
     # A namespace that carries its own subcommands (`gh stack`) is

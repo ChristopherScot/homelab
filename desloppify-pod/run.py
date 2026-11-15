@@ -217,6 +217,19 @@ not use `gh pr create` -- a PR made that way is not part of the stack,
 so nothing retargets it when the PR below it merges, and GitHub will not
 let it merge once its base closes.
 
+If you amend or add commits after submitting, push them with:
+
+    gh stack sync
+
+which fetches, cascade-rebases the stack onto its updated parents, and
+pushes every branch atomically. `git push` is not available to you --
+these two are the only ways work reaches the remote.
+
+If `gh stack sync` hits a rebase conflict it restores every branch and
+stops. You cannot resolve that yourself: `gh stack rebase` and
+`git rebase --continue` are both refused, deliberately. Report BLOCKED
+and name the branches that conflicted, so a human can untangle it.
+
 These open as drafts, deliberately. A non-interactive terminal -- which
 this pod is -- makes `gh stack submit` behave as `--auto`, and with
 `--auto` new PRs are created as drafts unless `--open` is passed. Do not

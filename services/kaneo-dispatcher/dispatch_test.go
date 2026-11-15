@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"io"
 	"maps"
@@ -346,5 +347,18 @@ func TestWebhookAcceptsAnyPath(t *testing.T) {
 	}
 	if len(f.pods.launches()) != 1 {
 		t.Error("a delivery on a sub-path did not dispatch")
+	}
+}
+
+func TestNonzeroLaunchIsAnError(t *testing.T) {
+	f := newFixture(t)
+	f.d.exec = func(ctx context.Context, pod string, argv []string) (int, error) {
+		if argv[2] == launchLine {
+			return 7, nil
+		}
+		return 0, nil
+	}
+	if err := f.d.runStage(t.Context(), "TestOwner/testrepo", routes[authorColumn], card{ID: "t1"}); err == nil || !strings.Contains(err.Error(), "exited 7") {
+		t.Fatalf("launch error=%v", err)
 	}
 }

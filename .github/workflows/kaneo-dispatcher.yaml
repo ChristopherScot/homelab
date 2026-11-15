@@ -1,6 +1,6 @@
 # Builds and pushes the image. Deployment happens in-cluster:
-# argocd-image-updater watches the registry and commits the new digest to
-# the homelab repo itself, so this workflow needs no homelab credential -
+# argocd-image-updater watches the registry and writes the digest to
+# the live Argo Application, so this workflow needs no homelab credential -
 # GITHUB_TOKEN is issued per run and can only push packages.
 #
 # This is the specless variant (`homelabctl init --no-spec`). Two jobs the
@@ -21,7 +21,7 @@ on:
     # edit to it alone must run the tests too.
     paths: ['services/kaneo-dispatcher/**', 'kaneo-dispatcher/argocd.json', '.github/workflows/kaneo-dispatcher.yaml']
   pull_request:
-    paths: ['services/kaneo-dispatcher/**', 'kaneo-dispatcher/argocd.json']
+    paths: ['services/kaneo-dispatcher/**', 'kaneo-dispatcher/argocd.json', '.github/workflows/kaneo-dispatcher.yaml', 'claude-pods/session-sleep-cron.yaml', 'claude-pods/lib/pod-common.sh']
   workflow_dispatch:
 
 # Two pushes in quick succession otherwise race to publish :latest, and

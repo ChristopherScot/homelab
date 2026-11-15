@@ -87,6 +87,18 @@ spec:
       # startingDeadlineSeconds above.
       activeDeadlineSeconds: 11400
       template:
+        metadata:
+          # This label is what keeps the pod alive past the cron window.
+          # The ScaledObject counts pods carrying it (kubernetes-workload
+          # trigger), and this pod exists for exactly as long as the run:
+          # the container below is a blocking `kubectl exec` with no `&`,
+          # so it does not exit until nightly-desloppify.sh returns.
+          #
+          # Without it, KEDA's cron trigger scaled the StatefulSet to 0 at
+          # 06:30 regardless of what was happening - which killed a run
+          # 17 minutes in on 2026-11-14 and wedged the next three.
+          labels:
+            desloppify.homelab/run: active
         spec:
           serviceAccountName: desloppify-runner
           restartPolicy: Never

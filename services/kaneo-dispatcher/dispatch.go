@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -306,7 +307,7 @@ func (d *dispatcher) dispatch(ctx context.Context, column string, st stage, c ca
 		slog.Warn("skip", "task", c.name(), "column", column, "reason", skip)
 		return
 	}
-	if err := d.runStage(ctx, repo, st, c); err != nil {
+	if err := d.runStage(ctx, repo, st, c); err != nil && !errors.Is(err, errPodBusy) {
 		slog.Error("dispatch failed", "task", c.name(), "column", column, "repo", repo, "err", err)
 	}
 }
@@ -334,8 +335,10 @@ func (d *dispatcher) repoFor(ctx context.Context, id string, st stage) (repo, sk
 
 // runStage wakes the session pods and launches the stage in its pod,
 // unless a run is already there. The error is a wake or a launch that
-// could not be done, which the caller reports in its own way: a busy pod
-// is not one, because the card is simply waiting its turn.
+// could not be done. errPodBusy is a skipped launch, reported separately
+// so the sweep never counts a busy worker as dispatched.
+var errPodBusy = errors.New("pod busy or unreachable")
+
 func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card) error {
 	// The set sleeps at 0 replicas when idle; the session-sleep CronJob in
 	// claude-pods/ puts it there and this is the matching wake. Always
@@ -354,7 +357,7 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 		// moving it again once the current run finishes is the retry. A
 		// queue here would silently stack up work nobody asked for twice.
 		slog.Warn("busy", "task", c.name(), "repo", repo, "pod", pod, "hint", "move the card again later")
-		return nil
+		return errPodBusy
 	}
 	slog.Info("start", "task", c.name(), "repo", repo, "pod", pod, "script", path.Base(st.script))
 	// Bounded like the busy probe. The shell returns as soon as the run is
@@ -365,6 +368,9 @@ func (d *dispatcher) runStage(ctx context.Context, repo string, st stage, c card
 	rc, err := d.exec(ctx, pod, []string{"sh", "-c", launchLine, st.script, c.ID, repo})
 	if err != nil {
 		return fmt.Errorf("launch in %s: %w", pod, err)
+	}
+	if rc != 0 {
+		return fmt.Errorf("launch in %s exited %d", pod, rc)
 	}
 	// "launched", not "finished": the run is detached and outlives this.
 	// The log in the pod and the card are where the outcome lives.

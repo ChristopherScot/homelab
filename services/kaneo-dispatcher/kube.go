@@ -152,15 +152,23 @@ func wakeSet(ctx context.Context, sets typedappsv1.StatefulSetInterface, want in
 	}
 }
 
-// settled is kubectl rollout status's test for a StatefulSet, minus the
-// partition case this set does not use: the controller has seen the
-// current spec, every wanted replica is ready, and they are all on the
-// current revision. The last clause means a wake that lands mid-rollout
-// of a new image waits for the rollout, as kubectl would.
+// settled respects a partition that intentionally holds running workers on
+// an older revision. Waiting for revision equality there would time out
+// every dispatch after an image update.
 func settled(s *appsv1.StatefulSet, want int32) bool {
 	st := s.Status
-	return st.ObservedGeneration != 0 &&
-		st.ObservedGeneration >= s.Generation &&
-		st.ReadyReplicas >= want &&
-		st.UpdateRevision == st.CurrentRevision
+	if st.ObservedGeneration < s.Generation || st.ObservedGeneration == 0 || st.ReadyReplicas < want {
+		return false
+	}
+	if s.Spec.UpdateStrategy.Type == appsv1.OnDeleteStatefulSetStrategyType {
+		return true
+	}
+	if r := s.Spec.UpdateStrategy.RollingUpdate; r != nil && r.Partition != nil && *r.Partition > 0 {
+		replicas := want
+		if s.Spec.Replicas != nil {
+			replicas = *s.Spec.Replicas
+		}
+		return st.UpdatedReplicas >= max(int32(0), replicas-*r.Partition)
+	}
+	return st.UpdateRevision == st.CurrentRevision
 }

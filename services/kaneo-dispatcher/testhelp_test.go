@@ -115,12 +115,15 @@ func (r *recorder) launches() []execCall {
 // stubKaneo answers the three API calls the dispatcher makes. Empty
 // answers are encoded as [] rather than null, as the real API does.
 type stubKaneo struct {
-	mu       sync.Mutex
-	labels   map[string][]string // task id -> label names
-	labelErr int                 // non-zero: answer every label lookup with this status
-	activity map[string][]map[string]string
-	board    any // what /task/tasks/{project} returns
-	hits     int
+	mu        sync.Mutex
+	labels    map[string][]string // task id -> label names
+	labelErr  int                 // non-zero: answer every label lookup with this status
+	activity  map[string][]map[string]string
+	board     any // what /task/tasks/{project} returns
+	hits      int
+	tasks     map[string]map[string]any
+	puts      int
+	putStatus int
 }
 
 func (s *stubKaneo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -149,6 +152,23 @@ func (s *stubKaneo) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(acts)
 	case strings.HasPrefix(r.URL.Path, "/api/task/tasks/"):
 		_ = json.NewEncoder(w).Encode(s.board)
+	case strings.HasPrefix(r.URL.Path, "/api/task/"):
+		id := strings.TrimPrefix(r.URL.Path, "/api/task/")
+		if r.Method == http.MethodPut {
+			s.puts++
+			if s.putStatus != 0 {
+				w.WriteHeader(s.putStatus)
+				return
+			}
+			var task map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			s.tasks[id] = task
+		}
+		_ = json.NewEncoder(w).Encode(s.tasks[id])
+
 	default:
 		http.NotFound(w, r)
 	}
@@ -241,7 +261,7 @@ func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
 		t:      t,
-		kaneo:  &stubKaneo{labels: map[string][]string{}, activity: map[string][]map[string]string{}},
+		kaneo:  &stubKaneo{tasks: map[string]map[string]any{}, labels: map[string][]string{}, activity: map[string][]map[string]string{}},
 		github: &stubGitHub{prs: map[string][]map[string]any{}, statuses: map[string][]string{}},
 		pods:   &recorder{},
 		log:    &lockedBuffer{},

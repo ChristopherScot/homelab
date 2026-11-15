@@ -214,3 +214,47 @@ assert '"required": ["outcome", "findings_resolved", "pr_numbers"]' in _run_src,
     "fill in a field that can contradict the list")
 
 print("test_report: pr field agreement pinned")
+
+# The runner must run `gh stack top` between checkout and add. checkout
+# lands on the PR's own branch, which for prev_pr is the BOTTOM of the
+# stack, and add refuses anywhere but the top:
+#   can only add branches to the top of the stack
+# Three nightly runs died there (2026-11-11 to 13) before anything
+# asserted the ordering. Reproduced against the real stack: checkout
+# 17027 lands on ...0524 of four branches, add fails verbatim, and
+# `gh stack top` then add succeeds.
+_runner = (pathlib.Path(__file__).parent / "nightly-desloppify.sh").read_text()
+_co = _runner.index("gh stack checkout")
+# Anchor on the executable call, not the bare words: "gh stack top"
+# also appears in the FATAL echo one line below, so matching the phrase
+# passed even with the command replaced by `if false`. That is the same
+# "test the string, not a word in it" failure this file documents
+# elsewhere - reproduced here by the fix for it.
+_top = _runner.index('gh stack top) 2>&1')
+_add = _runner.index('gh stack add "$branch"')
+assert _co < _top < _add, (
+    "nightly-desloppify.sh must call `gh stack top` between checkout and "
+    "add: checkout lands on the bottom of the stack and add only works "
+    "from the top")
+
+# The retry must consult claude_rate_limited, not an equality test.
+# Reverting that one line - undoing the whole point of this fix - left
+# every suite green: the reason list was well tested in isolation and
+# nothing checked that the runner actually calls it. An unwired
+# function is exactly what no unit test catches, which is the defect
+# this file now guards against twice.
+# Both halves: the call must be present AND the equality it replaced
+# must be gone. The presence check alone can be satisfied by a comment
+# quoting the call - the same comment-satisfiability flaw as the stack
+# ordering pin had, verified by reverting the line and adding one
+# comment that mentions it.
+assert '= "api_error_429" ]' not in _runner, (
+    "nightly-desloppify.sh must not decide the retry by equality with "
+    "api_error_429: that misses limit_reached and quota_exceeded")
+assert 'claude_rate_limited "$(jq -r' in _runner, (
+    "nightly-desloppify.sh must decide the retry with claude_rate_limited: "
+    "an equality test against api_error_429 misses limit_reached and "
+    "quota_exceeded, which is what run.py writes when an account runs out")
+
+print("test_report: stack checkout->top->add ordering pinned")
+print("test_report: retry wiring pinned")

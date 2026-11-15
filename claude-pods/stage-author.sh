@@ -28,6 +28,12 @@ echo "=== stage-author $(date -Is) model=$MODEL max=$MAX_TICKETS rounds=$ROUNDS 
 require_gh_token || exit 1
 require_kaneo_key || exit 1
 take_pod_lock || exit 0
+
+# Prune on the way out, however this run ends. A stage that fails or
+# times out is the one most likely to have filled the disk, so a tidy
+# ending is exactly when this would not run.
+trap prune_build_caches EXIT
+warn_if_home_tight
 preflight_credential || exit 1
 
 # No board, no queue. Refuse rather than run: a pod that silently does

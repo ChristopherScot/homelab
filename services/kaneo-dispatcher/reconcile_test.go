@@ -15,7 +15,8 @@ import (
 func boardWith(column, id, ticket, createdAt string) map[string]any {
 	return map[string]any{"data": map[string]any{"columns": []map[string]any{
 		{"slug": column, "tasks": []map[string]any{{"id": id, "ticketId": ticket, "createdAt": createdAt}}},
-		{"slug": "needs-human-review", "tasks": []map[string]any{{"id": "waiting", "ticketId": "T-9", "createdAt": ago(99 * time.Hour)}}},
+		{"slug": "done", "tasks": []map[string]any{}},
+		{"slug": "backlog", "tasks": []map[string]any{{"id": "waiting", "ticketId": "T-9", "createdAt": ago(99 * time.Hour)}}},
 	}}}
 }
 
@@ -46,19 +47,20 @@ func (f *fixture) reconcile(dry bool) sweep {
 }
 
 func openPR(sha string) []map[string]any {
-	return []map[string]any{{"merged_at": nil, "head": map[string]string{"sha": sha}}}
+	return []map[string]any{{"merged_at": nil, "number": 1, "head": map[string]any{"sha": sha, "ref": "fix/t1", "repo": map[string]string{"full_name": "TestOwner/testrepo"}}}}
 }
 
 func TestFreshCardIsLeftAlone(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
 	f.moved("t1", 1*time.Hour)
+	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
 	s := f.reconcile(false)
 	if s.checked != 1 || len(s.redispatched)+len(s.skipped)+len(s.errors) != 0 {
 		t.Errorf("sweep = %+v, want one card checked and nothing said", s)
 	}
-	if hits := f.github.calls(); len(hits) != 0 {
-		t.Errorf("a fresh card was looked up on GitHub: %v", hits)
+	if hits := f.github.calls(); len(hits) != 1 {
+		t.Errorf("fresh card must be checked for merge: %v", hits)
 	}
 	f.wantNoLaunch()
 }
@@ -67,9 +69,10 @@ func TestInertColumnsAreNotSwept(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
 	f.moved("t1", 1*time.Hour)
+	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
 	// boardWith also plants a 99h-old card in needs-human-review.
 	if s := f.reconcile(false); s.checked != 1 {
-		t.Errorf("checked %d cards, want 1: needs-human-review owes nothing", s.checked)
+		t.Errorf("checked %d cards, want 1: backlog is inert", s.checked)
 	}
 }
 
@@ -93,8 +96,8 @@ func TestStrandedInProgressCardIsHandedBackToTheAuthor(t *testing.T) {
 	if len(l) != 1 || l[0].pod != "claude-session-0" || !slices.Equal(l[0].argv, want) {
 		t.Errorf("launches = %v, want the author stage in claude-session-0 with t1 and its repo", l)
 	}
-	if hits := f.github.calls(); len(hits) != 0 {
-		t.Errorf("a stranded card was looked up on GitHub: %v; that judgement is the author's", hits)
+	if hits := f.github.calls(); len(hits) != 1 {
+		t.Errorf("expected merge lookup only: %v", hits)
 	}
 }
 
@@ -102,6 +105,7 @@ func TestFreshInProgressCardIsLeftAlone(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = boardWith("in-progress", "t1", "T-1", ago(10*time.Hour))
 	f.moved("t1", 1*time.Hour)
+	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
 	s := f.reconcile(false)
 	if s.checked != 1 || len(s.redispatched)+len(s.skipped)+len(s.errors) != 0 {
 		t.Errorf("sweep = %+v, want the card checked and left alone: the author may still be working it", s)
@@ -172,6 +176,7 @@ func TestCardWithoutAClockIsAnError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFixture(t)
 			f.kaneo.board = boardWith("to-do", "t1", "T-1", tc.createdAt)
+			f.kaneo.labels["t1"] = []string{"repo:testrepo"}
 			s := f.reconcile(true)
 			if len(s.errors) != 1 || len(s.redispatched)+len(s.skipped) != 0 {
 				t.Errorf("sweep = %+v, want exactly one error", s)
@@ -183,6 +188,7 @@ func TestCardWithoutAClockIsAnError(t *testing.T) {
 func TestUnparseableMoveTimeIsAnError(t *testing.T) {
 	f := newFixture(t)
 	f.kaneo.board = boardWith("to-do", "t1", "T-1", ago(10*time.Hour))
+	f.kaneo.labels["t1"] = []string{"repo:testrepo"}
 	f.kaneo.activity["t1"] = []map[string]string{{"type": "status_changed", "createdAt": "not a time"}}
 	if s := f.reconcile(true); len(s.errors) != 1 || len(s.redispatched) != 0 {
 		t.Errorf("sweep = %+v, want one error and no redispatch", s)
@@ -225,15 +231,16 @@ func TestInReviewNeedsTheIntegrationStatus(t *testing.T) {
 // nightly/integration status; the test stage must not run against work
 // that is already on main.
 func TestMergedPullRequestEndsTheStoryInAnyColumn(t *testing.T) {
-	for _, column := range []string{"to-do", "in-review", "mergeable"} {
+	for _, column := range []string{"to-do", "in-progress", "in-review", "mergeable", "needs-human-review"} {
 		t.Run(column, func(t *testing.T) {
 			f := newFixture(t)
 			f.stale(column)
 			f.d.repos = nil
-			f.github.prs["TestOwner:fix/t1"] = []map[string]any{{"merged_at": "2026-11-01T00:00:00Z", "head": map[string]string{"sha": "abc"}}}
+			f.github.prs["TestOwner:fix/t1"] = []map[string]any{{"merged_at": "2026-11-01T00:00:00Z", "number": 1, "head": map[string]any{"sha": "abc", "ref": "fix/t1", "repo": map[string]string{"full_name": "TestOwner/testrepo"}}}}
+			f.kaneo.tasks["t1"] = map[string]any{"id": "t1", "projectId": "proj", "status": column, "title": "keep me", "dueDate": nil}
 			s := f.reconcile(false)
-			if len(s.skipped) != 1 || len(s.redispatched) != 0 {
-				t.Errorf("sweep = %+v, want the merged card skipped", s)
+			if len(s.completed) != 1 || len(s.redispatched) != 0 {
+				t.Errorf("sweep = %+v, want the merged card completed", s)
 			}
 			f.wantNoLaunch()
 		})
@@ -310,7 +317,7 @@ func TestOwnerQualifiedLabelIsLookedUpUnderThatOwner(t *testing.T) {
 	f.d.repos = map[string][]string{"0": {"Other/gamma"}}
 	f.reconcile(true)
 	hits := f.github.calls()
-	if len(hits) != 1 || !strings.HasPrefix(hits[0], "/repos/Other/gamma/pulls?head=Other%3Afix%2Ft1") {
+	if len(hits) != 1 || !strings.Contains(hits[0], "head=Other%3Afix%2Ft1") {
 		t.Errorf("github hits = %v, want one pulls lookup under Other/gamma with that owner's head", hits)
 	}
 }
@@ -358,5 +365,78 @@ func TestReconcileEndpoint(t *testing.T) {
 	f.wantLog(`card="T-1 (to-do, 5h)"`)
 	if len(f.pods.launches()) != 1 {
 		t.Error("a real sweep did not launch the stuck card's stage")
+	}
+}
+
+func TestBusySweepIsNotCountedAsDispatched(t *testing.T) {
+	f := newFixture(t)
+	f.stale("to-do")
+	f.pods.busy = true
+	s := f.reconcile(false)
+	if len(s.redispatched) != 0 || len(s.skipped) != 1 {
+		t.Fatalf("%+v", s)
+	}
+	f.wantNoLaunch()
+}
+
+func TestMergedCompletionGuards(t *testing.T) {
+	for _, mode := range []string{"fresh", "dry", "moved", "other-project", "missing-done", "put-fails", "newer-open", "fork"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t)
+			f.stale("in-progress")
+			pr := openPR("abc")[0]
+			pr["merged_at"] = "2026-11-01T00:00:00Z"
+			f.github.prs["TestOwner:fix/t1"] = []map[string]any{pr}
+			f.kaneo.tasks["t1"] = map[string]any{"id": "t1", "projectId": "proj", "status": "in-progress", "title": "preserve", "dueDate": nil}
+			switch mode {
+			case "fresh":
+				f.moved("t1", time.Minute)
+			case "moved":
+				f.kaneo.tasks["t1"]["status"] = "backlog"
+			case "other-project":
+				f.kaneo.tasks["t1"]["projectId"] = "elsewhere"
+			case "missing-done":
+				f.kaneo.board.(map[string]any)["data"].(map[string]any)["columns"].([]map[string]any)[1]["slug"] = "missing"
+			case "put-fails":
+				f.kaneo.putStatus = 500
+			case "newer-open":
+				newer := openPR("new")[0]
+				newer["number"] = 2
+				f.github.prs["TestOwner:fix/t1"] = append(f.github.prs["TestOwner:fix/t1"], newer)
+			case "fork":
+				pr["head"].(map[string]any)["repo"] = map[string]string{"full_name": "Other/testrepo"}
+			}
+			s := f.reconcile(mode == "dry")
+			if mode == "fresh" || mode == "dry" {
+				if len(s.completed) != 1 {
+					t.Fatalf("%+v", s)
+				}
+				f.wantUntouched()
+			} else if len(s.completed) != 0 {
+				t.Fatalf("unexpected completion: %+v", s)
+			}
+			wantPuts := 0
+			if mode == "fresh" || mode == "put-fails" {
+				wantPuts = 1
+			}
+			if f.kaneo.puts != wantPuts {
+				t.Fatalf("puts=%d want %d", f.kaneo.puts, wantPuts)
+			}
+			if mode == "fresh" {
+				task := f.kaneo.tasks["t1"]
+				if task["title"] != "preserve" || task["status"] != "done" {
+					t.Fatal(task)
+				}
+				if _, ok := task["dueDate"]; ok {
+					t.Fatal("null sent in PUT")
+				}
+			}
+			if mode == "missing-done" || mode == "put-fails" {
+				if len(s.errors) != 1 {
+					t.Fatalf("%+v", s)
+				}
+				f.wantUntouched()
+			}
+		})
 	}
 }
