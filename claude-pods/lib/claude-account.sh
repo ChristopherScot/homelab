@@ -84,8 +84,9 @@ use_claude_account() {
 # exact thing PR 187 changed - tests/test-account-failover.sh now fails
 # the build if any stage stops calling the wrapper.)
 #
-# rate_limit (underscore) as well as rate_limited: run.py:332 greps for
-# the former in subtype, so the two must agree.
+# rate_limit (underscore) as well as rate_limited: run.py greps for
+# `rate_limit` in `message.subtype`, so the two must agree. (Cited by
+# symbol, not line: the line number was already wrong by 13 lines.)
 CLAUDE_LIMIT_REASONS='limit_reached|quota_exceeded|rate_limited|rate_limit|insufficient_credits|credit_balance_too_low|out_of_credits'
 
 claude_terminal_reason_limited() {
@@ -94,141 +95,71 @@ claude_terminal_reason_limited() {
   # Or the same as a JSON value, for a caller passing whole output.
   # api_error_429 belongs in this list as well as the bare one: a 429
   # usually arrives as its own "api_error_status": 429 field, handled
-  # below, but run.py composes stop_reason="api_error_429" from it
-  # (run.py:413-416) and that form reached neither branch.
+  # below, but run.py composes stop_reason="api_error_429" from its
+  # api_error_status (see the report dict in run.py) and that form
+  # reached neither branch.
   printf '%s' "$1" | grep -qE \
     "\"(terminal_reason|subtype|stop_reason)\"[[:space:]]*:[[:space:]]*\"($CLAUDE_LIMIT_REASONS|api_error_429)\"" && return 0
   printf '%s' "$1" | grep -qE '"api_error_status"[[:space:]]*:[[:space:]]*429'
 }
 
 claude_rate_limited() {
-  # Structured first, because it is the stronger signal - but the prose
-  # branch below is now the HOT PATH, not a fallback waiting for a
-  # caller. All three stages pass ~40 lines of transcript through it on
-  # every run, and it is the only thing standing between a genuinely
-  # exhausted account and a parked card. Read the rest of this comment
-  # with that cost in mind: a miss here pings @chris, and a false match
-  # spends the reserve account.
+  # True when CMD's output says the account is out of quota. Takes the
+  # text to examine - a bare reason word, a JSON blob, or a window of
+  # transcript - and checks the structured signals first because they
+  # are unambiguous, then the CLI's prose.
   #
-  # The prose set stays deliberately narrow. A first draft of this fix
-  # also matched `limit[ ·]+resets`, which looked like a safe
-  # generalisation of the CLI's wording and instead matched "the limit
-  # resets daily", "cache limit · resets on deploy" and "connection
-  # limit resets after timeout" - any of which an agent could print
-  # while discussing unrelated code, silently burning the personal
-  # account on a run that was never limited. Only the CLI's own
-  # "hit your <period> limit" is specific enough to add.
+  # This is the HOT PATH, not a fallback: all three stages pass ~40
+  # lines of transcript through it on every run, and it is the only
+  # thing between a genuinely exhausted account and a parked card. A
+  # miss pings @chris; a false match spends the reserve account on a
+  # run that was never limited.
   #
-  # Do not enumerate the period. This matched only [0-9]+-hour, and on
-  # 2026-11-14 the CLI said "You've hit your weekly limit · resets Nov 16,
-  # 11am (UTC)" - so detection missed it, the stage read a bare non-zero
-  # exit, and the card was parked with a personal token mounted and
-  # unused. Wiring the stages to this wrapper would NOT have saved that
-  # card on its own.
+  # The prose alternates are a PORT of the CLI's own exhaustion
+  # predicate, not a guess at its wording - two earlier versions
+  # guessed and both were wrong in production.
   #
-  # The first fix added weekly|daily|monthly, which was the same mistake
-  # one step along. Strings pulled from the 2.1.325 binary show at least
-  # seven shapes, and "weekly" is not even among them - it is assembled at
-  # runtime:
+  # yvs() is only HALF that predicate, which is the third time a reading
+  # of this binary has come up short. Its real call site is
+  # `dailyCapPaused === true || yvs(rt)`, and the left disjunct is a
+  # separate rate_limit branch with a message sharing no vocabulary with
+  # the right one:
   #
-  #   hit your limit                          (no period at all)
-  #   hit your session limit
-  #   hit your fast limit
-  #   hit your Fable limit                    (a model name)
-  #   hit your monthly limit
-  #   hit your monthly spend limit
-  #   hit your channel's monthly spend limit
+  #   case "api_error": if (e.errorKind === "rate_limit") {
+  #     if (e.quotaLimits?.dailyCapPaused === true)
+  #       return {kind:"pause", cause:"daily_cap"};
   #
-  # So match the structure instead: "hit your <up to three short words>
-  # limit". The word bound keeps it from running across a sentence into
-  # an unrelated "limit", and the shape survives a model name (Opus,
-  # Sonnet, Fable) or a period nobody has seen yet. Verified against the
-  # 2.1.323 binary's own composer -
+  #   "Usage is paused for your organization. For help, please contact
+  #    support."                                     (bNe in the binary)
+  #   "This service is disabled for your org"        (vVi, a sibling)
   #
-  #   function H(e,n,r,s){let d=s?.progressSavedSuffix?" \xB7 progress saved":"";
-  #                       return `You've hit your ${e}${n}${d}`}
+  # Both are matched below. An org daily-cap pause would otherwise park
+  # the card with the reserve token mounted and unused - the 2026-11-14
+  # failure with a different trigger. Every alternate is
+  # anchored to the start of a line, which is what separates the CLI
+  # printing its own message from an agent quoting one; that matters
+  # because these stages edit THIS repository.
   #
-  # - over the 14 labels in its qbe/label maps (5-hour, session, weekly,
-  # monthly, monthly spend, team's/channel's monthly spend, org's
-  # monthly usage, usage credit, fast, Opus, Sonnet, Fable, and the bare
-  # "limit") times the five suffixes: all 70 match.
+  # The shape is incomplete by construction: it matches on how the
+  # sentence ENDS while the CLI matches how it BEGINS, so a new label
+  # ending differently will be missed - `team's shared budget` already
+  # was. Adding a newly-seen terminator here, plus a pinned shape in
+  # tests/test-account-failover.sh, is expected maintenance.
   #
-  # Those maps are NOT the whole label set, and an earlier version of
-  # this comment claimed they were. H() also takes literal labels at its
-  # call sites, and one of them does not end in the word "limit":
+  # Claims here were verified against the binary on the maintainer's
+  # machine, 2.1.323 (~/.local/share/claude/versions/2.1.323), which is
+  # NOT the version the image pins (CLAUDE_CODE_VERSION in the
+  # Dockerfile). Re-verify against the pin when it is available.
   #
-  #   You've hit your team's shared budget. /model to switch models.
+  # Full reasoning - the three attempts, what was ported and why, the
+  # deliberately excluded alternates, and the detection window - is in
+  # claude-pods/designNotes.md under "Limit detection". It lives there
+  # because it spans the CLI binary, run.py, nightly-desloppify.sh and
+  # three stage scripts, so no one function is its home.
   #
-  # The shape below required the sentence to end in "limit", so that
-  # message - which the binary really does compose, in the group_pool
-  # branch - was read as an ordinary failure: a card parked and @chris
-  # pinged, the expensive direction. Hence `(limit|shared budget)`.
-  #
-  # The lesson is narrower than "enumerate harder". The CLI's own test is
-  # a PREFIX match on "You've hit your" and ignores what follows, so any
-  # shape derived from the tail of the sentence will keep losing labels
-  # this way. A bare prefix match is what the CLI can afford because it
-  # tests one message string; here it would also match an agent's own
-  # line "You have hit your configured per-project eslint file count
-  # limit", which tests/test-account-failover.sh pins as a negative. So
-  # this stays shape-based and therefore INCOMPLETE BY CONSTRUCTION -
-  # treat a newly-seen terminator as expected maintenance, not a
-  # surprise, and add it here with a pinned shape in the test.
-  #
-  # EVERY alternate is anchored to the start of a line, and that is the
-  # whole specificity mechanism now that the window is 40 lines rather
-  # than 2. The CLI prints these as its own message, so they begin a
-  # line; an agent discussing them does not. The distinction is not
-  # hypothetical here - these stages edit THIS repository, so an agent
-  # working on this very function is the likely false positive, and
-  # unanchored alternates produced two:
-  #
-  #   {"status": 429, "body": "slow down"}        a 429 test fixture
-  #   now covers "you have hit your weekly limit" a quoted mention
-  #
-  # The second is why the leading-junk allowance is {0,2} and not {0,4}:
-  # it has to admit the CLI's own prefixes but not a quote plus
-  # indentation. A limit message indented more than two characters is
-  # not something the CLI emits.
-  #
-  # The first could not be fixed by anchoring at all, because `{"status":
-  # 429, ...}` on its own line is precisely what a fixture looks like. It
-  # was dropped instead, along with a bare `api_error_429`, after
-  # checking the 2.1.323 binary: it contains ZERO occurrences of
-  # `"status": 429` (the only quoted-key 429 in it is `"headline":"429`)
-  # and no `api_error_429` anywhere - that token is composed by our own
-  # run.py, not by the CLI. So neither alternate could ever match real
-  # CLI output, while both matched an agent writing a 429 test fixture.
-  # Every genuine 429 arrives structured and is caught above, by
-  # `"api_error_status": 429` or by api_error_429 as a named key's value.
-  # tests/test-account-failover.sh pins the fixture case.
-  #
-  # The prose set is ported from the CLI's own exhaustion predicate
-  # rather than guessed at, since guessing is what failed twice here:
-  #
-  #   function yvs(e){return gvs.some((n)=>e.startsWith(n))
-  #     ||_vs.some((n)=>n.test(e))}
-  #   gvs=["You've hit your","You've reached your","You're out of usage
-  #     credits","Your org is out of usage \xB7 add funds to continue",
-  #     ... 12 entries ...]
-  #   _vs=[/^(?:Fable|Haiku|Mythos|Opus|Sonnet)(?: [^\u00B7\n]{1,40})?
-  #     requires usage credits\./]
-  #
-  # Two deliberate differences from that source. `fast mode` is added to
-  # the model alternation: the binary emits "Fast mode requires usage
-  # credits" but it is in neither gvs nor _vs, so a direct port missed
-  # it - the pinned-shapes loop in the test caught that. And the
-  # startsWith prefixes become ^-anchored line matches, because the CLI
-  # tests one message string while we search a 40-line transcript.
-  #
-  # Keep this branch free of anything the CLI does not itself print. A
-  # token that only ever appears in test data is not a weak signal here,
-  # it is an inverted one: these stages edit this repository, so the
-  # agent most likely to print it is the one working on this function.
-  #
-  # The structured tokens above are the better signal and are checked
-  # first; this prose branch exists because the stages do not pass
-  # --output-format json, so prose is all there is.
+  # $CLAUDE_LIMIT_REASONS is INTERPOLATED, never retyped: it was
+  # retyped once and the copy had already lost two values, so the bare
+  # and key=value forms silently disagreed.
   claude_terminal_reason_limited "$1" && return 0
   #
   # $CLAUDE_LIMIT_REASONS is INTERPOLATED, not retyped. It was retyped
@@ -239,7 +170,34 @@ claude_rate_limited() {
   # home of that list (nightly-desloppify.sh:380 says so); reaching
   # around it is how the two forms diverge silently.
   printf '%s' "$1" | grep -qiE \
-    "^[^[:alnum:]]*(error|warning)?:?[[:space:]]*rate.?limit(ed|[[:space:]]+(reached|exceeded))|(^|[[:space:]])(stop_)?reason=($CLAUDE_LIMIT_REASONS|api_error_429)([[:space:]]|\$)|^[^[:alnum:]]{0,2}you.?(ve|have) (hit|reached) your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?(limit|shared budget)|^[^[:alnum:]]{0,2}you.?(re|are) out of (usage credits|extra usage)|^[^[:alnum:]]{0,2}your org is out of usage|^[^[:alnum:]]{0,2}your seat type does ?n.?t include (usage|extra usage)|^[^[:alnum:]]{0,2}your usage allocation has been disabled|^[^[:alnum:]]{0,2}your group.?s usage limit is set to \\\$0|^[^[:alnum:]]{0,2}(fable|haiku|mythos|opus|sonnet|fast mode)( [^\xB7]{1,40})? requires usage credits"
+    "^[^[:alnum:]]*(error|warning)?:?[[:space:]]*rate.?limit(ed|[[:space:]]+(reached|exceeded))|(^|[[:space:]])(stop_)?reason=($CLAUDE_LIMIT_REASONS|api_error_429)([[:space:]]|\$)|^[^[:alnum:]]{0,2}you.?(ve|have) (hit|reached) your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?(limit|shared budget)|^[^[:alnum:]]{0,2}you.?(re|are) out of (usage credits|extra usage)|^[^[:alnum:]]{0,2}your org is out of usage|^[^[:alnum:]]{0,2}your seat type does ?n.?t include (usage|extra usage)|^[^[:alnum:]]{0,2}your usage allocation has been disabled|^[^[:alnum:]]{0,2}your group.?s usage limit is set to \\\$0|^[^[:alnum:]]{0,2}usage is paused for your organi[sz]ation|^[^[:alnum:]]{0,2}this service is disabled for your org|^[^[:alnum:]]{0,2}(fable|haiku|mythos|opus|sonnet|fast mode)( [^\xB7]{1,40})? requires usage credits"
+}
+
+# _claude_attempt STDIN_FILE_OR_EMPTY CMD...
+# Runs CMD once, with stdin from STDIN_FILE when non-empty, merging
+# stderr into stdout. Returns CMD's exit status.
+#
+# Defined at file scope, not nested inside run_with_account_failover.
+# Bash has no local functions: a nested definition is installed in the
+# CALLER's global namespace the first time the enclosing function runs
+# and outlives the call, so `_attempt` read as private while being
+# visible to every stage script that sources this file. Verified:
+# `type -t _attempt` is undefined before the first call and `function`
+# after it. Nothing collided, but the privacy was apparent rather than
+# real, and a nested version also closed over $stdin_file - so neither
+# half could be read without the other.
+#
+# No pipeline in here. Adding `| tee` to restore live streaming cost
+# the command's exit status ($? becomes tee's, which is 0 whatever the
+# command did) and silently disabled the failover. Streaming is a
+# separate change; this helper does one thing.
+_claude_attempt() {
+  local stdin_file=$1; shift
+  if [ -n "$stdin_file" ]; then
+    "$@" < "$stdin_file" 2>&1
+  else
+    "$@" 2>&1
+  fi
 }
 
 # run_with_account_failover [--stdin FILE] CMD...
@@ -270,37 +228,16 @@ run_with_account_failover() {
       echo "FATAL: --stdin $stdin_file is not readable" >&2; return 1; }
   fi
 
-  # One attempt, under whichever account is selected. The redirect is
-  # HERE, per call, and never once around this whole function - see the
-  # --stdin note above for what the latter cost.
-  #
-  # No pipeline, deliberately. An earlier version of this wrote
-  # `"$@" 2>&1 | tee /dev/stderr` to restore stage-author's live
-  # streaming as well, and the pipeline cost the command's exit status:
-  # `$?` became tee's, which is 0 whatever the command did, so rc was
-  # never non-zero and the failover went silently dead. PIPESTATUS can
-  # recover it, but needing that is the signal the helper was doing too
-  # much - it was redirecting, teeing AND classifying. Streaming is a
-  # separate change from the stdin contract and belongs in its own
-  # commit; this one keeps the capture exactly as it was.
-  _attempt() {
-    if [ -n "$stdin_file" ]; then
-      "$@" < "$stdin_file" 2>&1
-    else
-      "$@" 2>&1
-    fi
-  }
-
   if ! use_claude_account work; then
     echo "no work token; trying personal" >&2
     use_claude_account personal || {
       echo "FATAL: no Claude token for either account" >&2; return 1; }
-    out="$(_attempt "$@")"; rc=$?
+    out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?
     printf '%s\n' "$out"
     return "$rc"
   fi
 
-  out="$(_attempt "$@")"; rc=$?
+  out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?
   # Detect on a WINDOW of the tail, not the whole transcript and not a
   # needle at the very end. Both extremes were tried here and both were
   # wrong, in opposite directions:
@@ -340,7 +277,7 @@ run_with_account_failover() {
      && claude_rate_limited "$(printf '%s' "$out" | tail -40)"; then
     if use_claude_account personal; then
       echo "work account is rate limited; retrying on personal" >&2
-      out="$(_attempt "$@")"; rc=$?
+      out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?
     else
       echo "work account is rate limited and no personal token is mounted" >&2
     fi

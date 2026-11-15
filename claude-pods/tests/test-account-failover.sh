@@ -93,6 +93,10 @@ for text in \
   "Your usage allocation has been disabled by your admin" \
   "Your group's usage limit is set to \$0" \
   'Opus requires usage credits.' \
+  "You've hit your team's shared budget. /model to switch models." \
+  "You've hit your team's shared budget" \
+  "Usage is paused for your organization. For help, please contact support." \
+  "This service is disabled for your org" \
   'Fable 5 requires usage credits.' \
   'Fast mode requires usage credits'
 do
@@ -272,7 +276,7 @@ preflight_credential >/dev/null 2>&1 && { echo "FAIL: passed with no tokens and 
 # and parked the card - with a personal token mounted and unused. Pinning
 # the real strings here rather than a paraphrase: the whole failure was
 # the gap between what the pattern expected and what the CLI said.
-# Every one of these was pulled out of the 2.1.325 binary with `strings`,
+# Every one of these was pulled out of the CLI binary with `strings`,
 # except the weekly one, which is what the CLI actually printed on
 # 2026-11-14 and is assembled at runtime. Enumerating periods was the
 # wrong shape twice: first [0-9]+-hour only, then
@@ -297,7 +301,28 @@ done
 # The structured tokens are the signal that should matter, and they are
 # checked before any prose. Pinned separately so a prose change cannot
 # quietly become the only thing holding this up.
-for tok in limit_reached quota_exceeded rate_limited out_of_credits api_error_429; do
+#
+# TWO gates, because drift and deletion are different failures and one
+# mechanism cannot catch both.
+#
+# The required set is written out HERE, independently of the library.
+# That is deliberate duplication: a loop that reads
+# $CLAUDE_LIMIT_REASONS cannot notice a token being deleted from it,
+# because deleting the token also shrinks the loop - the gate stops
+# asking about exactly the thing that was removed. Verified: with a
+# derived-only loop, dropping `rate_limit`, `out_of_credits` or
+# `credit_balance_too_low` from the variable left the suite green.
+# `rate_limit` is the token the commit that introduced the variable was
+# written to rescue, so its gate had a hole shaped like its own fix.
+#
+# So: this list pins WHICH reasons must be exhaustion signals, and the
+# cross-check below pins that the library knows no more than these -
+# which is what catches an addition that nobody pinned.
+# One line: a newline inside this string breaks the `case` matches
+# below, which match on " $tok " and would see "...rate_limit\ninsufficient..."
+# as one word. The gate caught that in itself on first run.
+REQUIRED_REASONS="limit_reached quota_exceeded rate_limited rate_limit insufficient_credits credit_balance_too_low out_of_credits"
+for tok in $REQUIRED_REASONS api_error_429; do
   claude_terminal_reason_limited "$tok" \
     || { echo "FAIL: structured reason not detected: $tok"; fail=1; }
   claude_terminal_reason_limited "{\"terminal_reason\":\"$tok\"}" \
@@ -305,6 +330,26 @@ for tok in limit_reached quota_exceeded rate_limited out_of_credits api_error_42
 done
 claude_terminal_reason_limited "completed" \
   && { echo "FAIL: 'completed' read as a limit"; fail=1; }
+
+# The other direction: the library must not carry a reason this file has
+# not pinned. Without this, adding a token to $CLAUDE_LIMIT_REASONS and
+# pinning nothing would be invisible, and the list above would drift
+# into a stale subset - which is how it got to five of seven.
+for tok in $(printf '%s' "$CLAUDE_LIMIT_REASONS" | tr '|' ' '); do
+  case " $REQUIRED_REASONS " in
+    *" $tok "*) ;;
+    *) echo "FAIL: CLAUDE_LIMIT_REASONS has '$tok', which this suite does not pin"
+       echo "      add it to REQUIRED_REASONS above, with a shape in the loops"
+       fail=1 ;;
+  esac
+done
+for tok in $REQUIRED_REASONS; do
+  case "|$CLAUDE_LIMIT_REASONS|" in
+    *"|$tok|"*) ;;
+    *) echo "FAIL: '$tok' was removed from CLAUDE_LIMIT_REASONS"
+       fail=1 ;;
+  esac
+done
 
 # --- a mention of the concept is not a limit ------------------------------
 # `rate.?limit` on its own matched the FILENAME rate_limit.go. Harmless
@@ -384,7 +429,9 @@ done
 # the cost is asymmetric: a missed exhaustion reason ends the night on
 # one account with the other untouched, and a false one spends a second
 # full run for nothing.
-for r in limit_reached quota_exceeded rate_limited out_of_credits api_error_429; do
+# Also derived: desloppify passes the bare word, so every reason in the
+# single home has to work through its call shape too.
+for r in $(printf '%s' "$CLAUDE_LIMIT_REASONS" | tr '|' ' ') api_error_429; do
   claude_rate_limited "$r" \
     || { echo "FAIL: desloppify would not fail over on stop_reason=$r"; fail=1; }
 done
