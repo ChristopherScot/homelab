@@ -214,19 +214,31 @@ revert_pr() {
 # would be lost entirely on a restart. The lock lives with the thing it
 # protects.
 #
-# TWO readers probe it with `flock -n <path> true`, both hardcoding
-# /tmp/nightly.lock: the dispatcher before launching a stage
-# (dispatch.mjs podIsBusy) and the session-sleep cron before scaling the
-# pods to 0. The stakes differ: a dispatcher misread starts a duplicate
-# agent; a reaper misread TERMINATES a live run as "idle". So the
-# NIGHTLY_LOCK override below must never be set in a session pod — a run
-# holding a different path is invisible to both readers.
+# TWO readers probe it with `flock -n <path> true`: the dispatcher before
+# launching a stage (podIsBusy in github.com/ChristopherScot/kaneo-dispatcher, which uses
+# the same expression as below, override included, and has a test
+# holding the two together) and the session-sleep cron before scaling
+# the pods to 0, which hardcodes /tmp/nightly.lock. The stakes differ: a
+# dispatcher misread starts a duplicate agent; a reaper misread
+# TERMINATES a live run as "idle". So the NIGHTLY_LOCK override below
+# must never be set in a session pod — a run holding a different path is
+# invisible to the reaper.
+# The dispatcher gives each launch a private acknowledgment path. A timeout
+# removes its directory; failing to acknowledge must stop this worker too.
+acknowledge_launch() {
+  [ -n "${NIGHTLY_LAUNCH_ACK:-}" ] || return 0
+  printf '%s\n' "$1" > "${NIGHTLY_LAUNCH_ACK}.tmp" &&
+    mv "${NIGHTLY_LAUNCH_ACK}.tmp" "$NIGHTLY_LAUNCH_ACK"
+}
+
 take_pod_lock() {
   exec 9>"${NIGHTLY_LOCK:-/tmp/nightly.lock}"
   if ! flock -n 9; then
+    acknowledge_launch busy || true
     echo "another nightly stage is already running in this pod; exiting" >&2
     return 1
   fi
+  acknowledge_launch accepted
 }
 
 # --- Kaneo -----------------------------------------------------------------
@@ -257,9 +269,11 @@ KANEO_REQUIRED_COLUMNS="backlog to-do in-progress in-review needs-human-review m
 # The branch a card's work lives on.
 #
 # One fact, one place. This convention is the join between a pull request
-# and the card it came from, and it is read by four things: the author
+# and the card it came from, and it is read by five things: the author
 # (creating it), the author prompt (told to use it), kaneo_task_for_pr
-# (parsing it back), and the PR filters in the test and merge pods. It was
+# (parsing it back), the PR filters in the test and merge pods, and the
+# dispatcher's reconcile sweep (github.com/ChristopherScot/kaneo-dispatcher, which carries
+# the same default and reads the same variable). It was
 # previously written out at each of those sites, and when the prefix changed
 # from fix/issue-<n> to fix/<task> two of them were missed — so the test and
 # merge pods matched nothing and every card stopped dead in In Review while
@@ -275,7 +289,7 @@ kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
 # The dispatcher decides which columns START work; these scripts decide
 # which columns they may move a card TO. Both halves are the same graph, and
 # with only one half visible it is impossible to see a cycle. Keep this in
-# step with ROUTES in dispatcher/dispatch.mjs.
+# step with routes in github.com/ChristopherScot/kaneo-dispatcher/dispatch.go.
 #
 #   backlog             inert — holding area, nothing reads it
 #   to-do        -> author  -> in-progress -> {in-review, backlog*, needs-human-review}
@@ -399,6 +413,20 @@ kaneo_link_pr() {
   fi
   kaneo task link add "$task" "$url" --title "$title" \
     >/dev/null 2>&1 || echo "   kaneo: FAILED to link $url to $task" >&2
+}
+
+# Durable start receipt for the reconciler. Call only after taking the pod
+# lock and selecting actual task work. A failed receipt must stop the work.
+kaneo_work_started() {
+  local task="$1" stage="$2" result marker
+  marker="Work started: $stage"
+  [ -n "$task" ] || { echo "kaneo: cannot start work without a task" >&2; return 1; }
+  result="$(kaneo task comment "$task" "$marker" --json)" || return 1
+  if ! printf '%s' "$result" | jq -e --arg task "$task" --arg marker "$marker" \
+    '(.error == null) and (.taskId == $task) and (.content == $marker) and (.id | type == "string") and (.createdAt | type == "string")' >/dev/null; then
+    echo "kaneo: failed to record work started for $task" >&2
+    return 1
+  fi
 }
 
 # Posts a comment and @-mentions a human.

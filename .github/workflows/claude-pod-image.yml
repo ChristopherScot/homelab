@@ -14,7 +14,6 @@ on:
       - 'claude-pods/*.sh'
       - 'claude-pods/*.lua'
       - 'claude-pods/tmux.conf'
-      - 'claude-pods/dispatcher/**'
       - 'claude-pods/lib/**'
       - 'claude-pods/prompts/**'
       - 'claude-pods/skills/**'

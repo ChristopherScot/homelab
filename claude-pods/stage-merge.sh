@@ -131,6 +131,8 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     name="$(basename "$repo")"
     dir="/workspace/$name"
     [ -d "$dir" ] || { echo "SKIP $repo#$pr: no clone"; continue; }
+    task="$(kaneo_task_for_pr "$repo" "$pr")" || continue
+    kaneo_work_started "$task" stage-merge || continue
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- reviewing $repo#$pr ($(date -Is))"
