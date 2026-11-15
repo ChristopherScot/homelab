@@ -11,7 +11,7 @@
 # deployed - claude-pods/tests/image-pinning.sh fails on exactly that.
 # Subdirectories (lib/, prompts/, skills/, tests/) hold source, not
 # manifests, and were never applied. The dispatcher is not here at all:
-# it is its own service (services/kaneo-dispatcher) with its own image
+# it is its own service (github.com/ChristopherScot/kaneo-dispatcher) with its own image
 # and Application.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

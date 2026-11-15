@@ -2,7 +2,7 @@
 #
 # Not KEDA: these pods wake on Kaneo card moves, not on a clock (no cron
 # window fits) and receive no HTTP (nothing for the interceptor to see).
-# The dispatcher is the wake (ensureAwake in services/kaneo-dispatcher:
+# The dispatcher is the wake (ensureAwake in github.com/ChristopherScot/kaneo-dispatcher:
 # scale to 3, wait ready, exec); this cron is the matching sleep.
 #
 # "In use" is four different things, checked per existing pod:

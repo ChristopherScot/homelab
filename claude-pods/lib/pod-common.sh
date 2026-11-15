@@ -215,7 +215,7 @@ revert_pr() {
 # protects.
 #
 # TWO readers probe it with `flock -n <path> true`: the dispatcher before
-# launching a stage (podIsBusy in services/kaneo-dispatcher, which uses
+# launching a stage (podIsBusy in github.com/ChristopherScot/kaneo-dispatcher, which uses
 # the same expression as below, override included, and has a test
 # holding the two together) and the session-sleep cron before scaling
 # the pods to 0, which hardcodes /tmp/nightly.lock. The stakes differ: a
@@ -262,7 +262,7 @@ KANEO_REQUIRED_COLUMNS="backlog to-do in-progress in-review needs-human-review m
 # and the card it came from, and it is read by five things: the author
 # (creating it), the author prompt (told to use it), kaneo_task_for_pr
 # (parsing it back), the PR filters in the test and merge pods, and the
-# dispatcher's reconcile sweep (services/kaneo-dispatcher, which carries
+# dispatcher's reconcile sweep (github.com/ChristopherScot/kaneo-dispatcher, which carries
 # the same default and reads the same variable). It was
 # previously written out at each of those sites, and when the prefix changed
 # from fix/issue-<n> to fix/<task> two of them were missed — so the test and
@@ -279,7 +279,7 @@ kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
 # The dispatcher decides which columns START work; these scripts decide
 # which columns they may move a card TO. Both halves are the same graph, and
 # with only one half visible it is impossible to see a cycle. Keep this in
-# step with routes in services/kaneo-dispatcher/dispatch.go.
+# step with routes in github.com/ChristopherScot/kaneo-dispatcher/dispatch.go.
 #
 #   backlog             inert — holding area, nothing reads it
 #   to-do        -> author  -> in-progress -> {in-review, backlog*, needs-human-review}
