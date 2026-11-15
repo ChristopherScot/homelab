@@ -42,8 +42,11 @@ if ! command -v yq >/dev/null 2>&1; then
   exit 1
 fi
 
-# The ScaledObject is a multi-document file (it carries a RoleBinding
-# too), so select by kind rather than taking the first document.
+# Select by kind rather than by document position. Both files are single
+# documents today - the earlier claim here that the ScaledObject carried a
+# RoleBinding was simply wrong, that lives in the CronJob file - but
+# selecting by kind keeps working if a document is ever appended, and
+# costs nothing.
 so_doc() { yq eval-all "select(.kind == \"ScaledObject\") | $1" "$so" 2>/dev/null; }
 cj_doc() { yq eval-all "select(.kind == \"CronJob\") | $1" "$cj" 2>/dev/null; }
 
@@ -113,6 +116,32 @@ if [ -n "$start_hr" ] && [ -n "$cj_hr" ]; then
   fi
 fi
 
+# 5b. Both schedules must be read in the SAME timezone.
+#     Gates 5 and 6 do clock arithmetic across two files that each carry
+#     their own timezone - the cron trigger's metadata.timezone and the
+#     CronJob's spec.timeZone. Nothing checked they agree, so deleting
+#     either, or setting one to UTC, shifted one schedule ~5 hours
+#     against the other and both gates still passed: the wake could
+#     land after the exec, or the deadline outside the window, with a
+#     green suite. Same category of fact as the label/selector pair -
+#     one truth written in two files - and the last instance of it left
+#     unpinned.
+so_tz=$(so_doc '.spec.triggers[] | select(.type == "cron") | .metadata.timezone')
+cj_tz=$(cj_doc '.spec.timeZone')
+if [ -z "$so_tz" ] || [ "$so_tz" = "null" ]; then
+  echo "FAIL: the cron trigger has no timezone; KEDA would read it as UTC"
+  fail=1
+elif [ -z "$cj_tz" ] || [ "$cj_tz" = "null" ]; then
+  echo "FAIL: the CronJob has no timeZone; the API would read it as UTC"
+  echo "      while KEDA wakes on $so_tz - the two schedules would diverge"
+  fail=1
+elif [ "$so_tz" != "$cj_tz" ]; then
+  echo "FAIL: the wake and the exec are scheduled in different zones"
+  echo "      KEDA: $so_tz, CronJob: $cj_tz"
+  echo "      every comparison in gates 5 and 6 assumes one clock"
+  fail=1
+fi
+
 # 6. The hold's only bound. shouldCountPod in KEDA excludes just
 #    Succeeded and Failed, so Pending, Running AND Unknown all hold the
 #    set up - a pod on a lost node keeps phase Running, and so does one
@@ -141,8 +170,14 @@ else
   end_min=${cron_end%% *}; end_hr=$(echo "$cron_end" | awk '{print $2}')
   sd=${start_deadline:-0}; [ "$sd" = "null" ] && sd=0
   if [ -n "$end_hr" ] && [ -n "$cj_hr" ]; then
-    window_end=$((10#$end_hr * 60 + 10#$end_min))
-    needs=$((exec_at + (sd + deadline) / 60))
+    # In seconds, not minutes. `(sd + deadline) / 60` truncated, so a
+    # sub-minute remainder was discarded: startingDeadlineSeconds 29 with
+    # activeDeadlineSeconds 12600 really ends at 06:30:29, past a 06:30
+    # window, and the gate called it fine. Both current values are
+    # multiples of 60 so it was not reachable, but comparing in the unit
+    # the fields are written in removes the class.
+    window_end=$(( (10#$end_hr * 60 + 10#$end_min) * 60 ))
+    needs=$(( exec_at * 60 + sd + deadline ))
     if [ "$needs" -gt "$window_end" ]; then
       echo "FAIL: the job can outlive the cron window"
       echo "      exec $cj_sched + ${sd}s + ${deadline}s ends past $cron_end"

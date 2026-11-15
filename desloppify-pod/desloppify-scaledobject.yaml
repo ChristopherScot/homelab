@@ -50,10 +50,21 @@ spec:
   # than left to the default so the two numbers that decide when the pod
   # dies are both visible here.
   cooldownPeriod: 300
-  # Two triggers, and the HPA takes max() across them - that is what
-  # makes this an OR. The cron wakes the pod on schedule; the workload
-  # trigger keeps it awake while a run is in flight, including past the
-  # cron's end time.
+  # Two triggers, OR'd together: the cron wakes the pod on schedule, and
+  # the workload trigger keeps it awake while a run is in flight,
+  # including past the cron's end time.
+  #
+  # The OR is the KEDA OPERATOR's, not the HPA's - worth naming correctly
+  # because this file is where the cron-window pattern is documented for
+  # other instances, and a reader sent to the HPA finds nothing that
+  # explains it. The live keda-hpa-desloppify is pinned minReplicas 1,
+  # maxReplicas 1: it cannot express 0, and the ScaledObject reports
+  # "scaling is disabled since the replica count of the target is zero".
+  # The 0<->1 move belongs to the operator: getScaledObjectState ORs
+  # across trigger results into isScaledObjectActive, and RequestScale
+  # calls scaleToZeroOrIdle only when that is false, scaleFromZeroOrIdle
+  # when it is true and replicas are 0. The HPA handles 1..N, which here
+  # is a single value.
   triggers:
     # The wake. Starts 5 minutes before the 03:00 CronJob so the pod is
     # ready when the trigger job execs into it.
