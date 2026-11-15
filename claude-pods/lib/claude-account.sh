@@ -224,29 +224,32 @@ run_with_account_failover() {
   fi
 
   out="$("$@" 2>&1)"; rc=$?
-  # Detect on the TAIL, not the whole transcript. The capture is an
-  # hour of agent prose plus the CLI's stderr, and the alternates below
-  # include `rate.?limit` and `429` - so a ticket that merely edits a
-  # file called rate_limit.go and then fails its tests normally reads as
-  # a limited account, and burns a full second run on the reserve one.
-  # Verified: a three-line transcript mentioning rate_limit.go and a
-  # failing test matched. Those alternates predate this wrapper, but
-  # nothing called it before, so this is where the exposure starts.
+  # Detect on a WINDOW of the tail, not the whole transcript and not a
+  # needle at the very end. Both extremes were tried here and both were
+  # wrong, in opposite directions:
   #
-  # A window, not a needle. An earlier draft used tail -2 on the theory
-  # that a real limit is the last thing printed - which is false: the CLI
-  # appends "· progress saved" to the limit line, and a -p run prints its
-  # own epilogue after ("Session ended after N turns", "Total cost: $X").
-  # Driven through this wrapper with a fake command, a real limit three
-  # lines from the end was missed entirely and the reserve account was
-  # never tried - the exact 2026-11-14 failure, reintroduced by the fix
-  # for it.
+  # Whole transcript: the capture is an hour of agent prose plus the
+  # CLI's stderr, so a ticket that merely edited a file named
+  # rate_limit.go and then failed its tests read as a limited account
+  # and burned a full second run on the reserve one. (That specific
+  # example no longer matches, because the alternates are now anchored -
+  # see claude_rate_limited. The reasoning is kept because the shape of
+  # the mistake is what matters: the longer the haystack, the more of
+  # the agent's own words are in it.)
   #
-  # So the specificity lives in the pattern, which is anchored on the
-  # CLI's own sentences, and the window only has to be wide enough that
-  # the message cannot fall outside it. 40 lines covers any epilogue
-  # while still excluding the hour of transcript that made a mention of
-  # rate_limit.go read as a limited account.
+  # tail -2: a real limit is NOT the last thing printed. The CLI appends
+  # "· progress saved" to the limit line, and a -p run prints its own
+  # epilogue after ("Total cost: $X", "Total duration: Nm"). Driven
+  # through this wrapper with a fake command, a real limit three lines
+  # from the end was missed entirely and the reserve was never tried -
+  # the exact 2026-11-14 failure, reintroduced by the fix for it.
+  #
+  # So specificity lives in the PATTERN, which is anchored to line
+  # starts on the CLI's own sentences, and the window only has to be
+  # wide enough that the message cannot fall outside it. 40 lines covers
+  # any epilogue. Widening it further is not the hazard it would have
+  # been before the anchoring, which is why the test pins that a bound
+  # exists rather than pinning the number 40.
   if [ "$rc" -ne 0 ] \
      && claude_rate_limited "$(printf '%s' "$out" | tail -40)"; then
     if use_claude_account personal; then
