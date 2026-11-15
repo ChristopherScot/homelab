@@ -110,6 +110,9 @@ spec:
         # never roll on its own.
         argocd-image-updater.argoproj.io/image-list: '{{name}}={{image}}:latest'
         argocd-image-updater.argoproj.io/{{name}}.update-strategy: digest
+        # Without force-update the updater ignores images with no
+        # running pod, which skips services KEDA has scaled to zero.
+        argocd-image-updater.argoproj.io/{{name}}.force-update: "true"
         # write-back-method: argocd, not git. The updater stores the
         # resolved digest on the Application in the cluster rather than
         # committing it to the repo.
