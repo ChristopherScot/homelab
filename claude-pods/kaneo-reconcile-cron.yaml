@@ -8,12 +8,9 @@
 # So: a clock, reintroduced on purpose. Not to schedule the work (moving a
 # card does that) but to notice work that was owed and never happened.
 #
-# It runs hourly rather than nightly because the window it closes is the
-# gap between "the webhook was dropped" and "somebody notices", and a
-# nightly sweep leaves that gap up to a day wide. The sweep itself is
-# cheap: it checks active and human-review cards for merged PRs and moves
-# them to Done without waking a worker. Only restarting unfinished work
-# needs the RECONCILE_STALE age window.
+# Sweep every minute: unclaimed cards retry after RECONCILE_UNCLAIMED (15m),
+# while a worker's durable start receipt grants RECONCILE_STALE (4h).
+# The dispatcher serializes asynchronous sweeps while a wake is in flight.
 
 apiVersion: batch/v1
 kind: CronJob
@@ -23,14 +20,14 @@ metadata:
 spec:
   # The sweep repairs both missed dispatches and cards left behind after
   # a manual merge, such as CLA-13. It never reruns agents for merged PRs.
-  schedule: "17 * * * *"
+  schedule: "* * * * *"
   timeZone: America/New_York
-  # Forbid, not Replace: a sweep that overruns is talking to GitHub about
-  # real branches, and two of them could re-dispatch the same card twice.
+  # Avoid overlapping trigger Jobs. The dispatcher separately serializes
+  # the asynchronous sweeps, which can outlive these HTTP requests.
   concurrencyPolicy: Forbid
   successfulJobsHistoryLimit: 3
   failedJobsHistoryLimit: 3
-  startingDeadlineSeconds: 600
+  startingDeadlineSeconds: 60
   jobTemplate:
     spec:
       backoffLimit: 0

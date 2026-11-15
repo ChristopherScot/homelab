@@ -1,8 +1,21 @@
 #!/usr/bin/env bash
 # Acceptance must follow lock acquisition, and an expired launch must stop.
 set -euo pipefail
-command -v flock >/dev/null || { echo 'SKIP: flock requires Linux'; exit 0; }
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/pod-common.sh"
+
+# The CLI can return an error object with exit 0. It must not grant a lease.
+kaneo() {
+  test "$*" = 'task comment task1 Work started: stage-author --json' || return 1
+  printf '%s\n' "$reply"
+}
+reply='{"id":"receipt1","taskId":"task1","content":"Work started: stage-author","createdAt":"2026-11-15T00:00:00Z"}'
+kaneo_work_started task1 stage-author
+reply='{"error":"unavailable"}'
+if kaneo_work_started task1 stage-author 2>/dev/null; then
+  echo 'an API error was accepted as a work-start receipt' >&2; exit 1
+fi
+echo 'PASS: durable worker start receipt'
+command -v flock >/dev/null || { echo 'SKIP: flock requires Linux'; exit 0; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export NIGHTLY_LOCK="$tmp/lock"

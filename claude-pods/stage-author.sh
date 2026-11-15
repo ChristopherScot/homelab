@@ -132,6 +132,7 @@ for t in "${TICKETS[@]}"; do
   # card should read In Progress rather than sit in Backlog as though
   # nothing was attempted.
   kaneo_move "$task" in-progress
+  kaneo_work_started "$task" stage-author || continue
   git -C "$dir" fetch --quiet origin 2>/dev/null
 
   # Fresh ticket or revision? Both arrive in To Do; the card's links are

@@ -415,6 +415,20 @@ kaneo_link_pr() {
     >/dev/null 2>&1 || echo "   kaneo: FAILED to link $url to $task" >&2
 }
 
+# Durable start receipt for the reconciler. Call only after taking the pod
+# lock and selecting actual task work. A failed receipt must stop the work.
+kaneo_work_started() {
+  local task="$1" stage="$2" result marker
+  marker="Work started: $stage"
+  [ -n "$task" ] || { echo "kaneo: cannot start work without a task" >&2; return 1; }
+  result="$(kaneo task comment "$task" "$marker" --json)" || return 1
+  if ! printf '%s' "$result" | jq -e --arg task "$task" --arg marker "$marker" \
+    '(.error == null) and (.taskId == $task) and (.content == $marker) and (.id | type == "string") and (.createdAt | type == "string")' >/dev/null; then
+    echo "kaneo: failed to record work started for $task" >&2
+    return 1
+  fi
+}
+
 # Posts a comment and @-mentions a human.
 #
 # Load-bearing rather than decorative: Kaneo has no per-column notification
