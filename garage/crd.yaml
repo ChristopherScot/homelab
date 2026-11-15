@@ -1,0 +1,52 @@
+# The GarageNode CRD, which garage's [kubernetes_discovery] uses as its
+# peer directory: each pod writes one of these with its node id, IP and
+# RPC port, and reads the others' to connect.
+#
+# Committed rather than created by garage itself (skip_crd = true in
+# configmap.yaml) so the pod's ServiceAccount needs no cluster-scoped
+# rights. This is byte-for-byte the schema garage v2.5.0 generated when it
+# was allowed to create the CRD in a scratch namespace, with the
+# generated description kept so a future diff against a newer garage is
+# meaningful.
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: garagenodes.deuxfleurs.fr
+spec:
+  group: deuxfleurs.fr
+  names:
+    kind: GarageNode
+    listKind: GarageNodeList
+    plural: garagenodes
+    singular: garagenode
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      subresources: {}
+      schema:
+        openAPIV3Schema:
+          description: Auto-generated derived type for Node via `CustomResource`
+          title: GarageNode
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - address
+                - hostname
+                - port
+              properties:
+                address:
+                  format: ip
+                  type: string
+                hostname:
+                  type: string
+                port:
+                  format: uint16
+                  maximum: 65535
+                  minimum: 0
+                  type: integer

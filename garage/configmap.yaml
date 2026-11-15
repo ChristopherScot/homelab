@@ -1,6 +1,8 @@
 # garage.toml. Nothing secret here - the RPC secret arrives as
 # GARAGE_RPC_SECRET from the Vault-backed secret, and env overrides the
-# file, so this stays a plain ConfigMap.
+# file, so this stays a plain ConfigMap. The image is distroless (no
+# shell), so there is no templating at start: every value below has to
+# be true for all three pods as written.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -12,17 +14,48 @@ data:
     data_dir = "/var/lib/garage/data"
 
     # sqlite rather than the lmdb default: lmdb preallocates a large
-    # sparse map file, which reads as alarming disk use on a 2Gi volume
-    # holding a few hundred objects. sqlite is the documented
+    # sparse map file, which reads as alarming disk use on a small volume
+    # holding a few thousand objects. sqlite is the documented
     # alternative and is sized to what is stored.
     db_engine = "sqlite"
 
-    # One node, one copy. See the statefulset comment for why this is
-    # the right trade for re-seedable reference material.
-    replication_factor = 1
+    # fsync both. The nodes share one house's mains, so "a node lost
+    # power" is usually "every node lost power", and replication across
+    # nodes does not cover a write that no node had flushed. The volumes
+    # are strict-local SSD, so an fsync is a local SSD fsync, not a
+    # round trip over the wifi.
+    metadata_fsync = true
+    data_fsync = true
+
+    # Three copies, one per k8s node (the StatefulSet's anti-affinity
+    # puts each pod on its own node; the layout gives each its own zone).
+    # With one node down reads and writes both continue - quorum is 2 of
+    # 3. With two down the survivor goes read-unavailable rather than
+    # serving stale data, which is what "consistent" means here. The
+    # client pays for this in bandwidth: every PUT crosses the wifi twice
+    # more than a single node would.
+    replication_factor = 3
+    consistency_mode = "consistent"
 
     rpc_bind_addr = "[::]:3901"
-    rpc_public_addr = "127.0.0.1:3901"
+    # No rpc_public_addr: the three pods share this one file and each has
+    # a different IP. Left unset, garage autodetects the pod's own IP (it
+    # logs "Using autodetected rpc_public_addr" at WARN, which is noise
+    # here, not a fault) and publishes that through discovery below.
+
+    # Peers find each other through GarageNode objects in this namespace,
+    # not a hard-coded bootstrap_peers list. Node IDs are minted on first
+    # start, so a static list is impossible to write ahead of time, and
+    # pod IPs change on every reschedule, so a persisted peer list goes
+    # stale exactly when it is needed: after a whole-cluster power cut.
+    # Each pod publishes its own id and address and reads the others'
+    # once a minute; a fresh cluster takes one such cycle to assemble.
+    # skip_crd: the CRD is in git (crd.yaml), applied by Argo, so the pod
+    # needs only a namespaced Role rather than cluster-wide CRD rights.
+    [kubernetes_discovery]
+    namespace = "garage"
+    service_name = "garage-node"
+    skip_crd = true
 
     [s3_api]
     # Requests naming any other region are rejected, so clients must be
@@ -33,6 +66,12 @@ data:
     [admin]
     api_bind_addr = "[::]:3903"
 ---
+# What clients talk to. The name is load-bearing: every S3 Secret in the
+# cluster carries AWS_ENDPOINT_URL=http://garage.garage.svc.cluster.local:3900
+# (see secrets.yaml), so this Service keeps its name across the move from
+# one node to three. Only Ready pods are endpoints, and Ready is Garage's
+# own /health, so a node cut off from quorum drops out of rotation on its
+# own.
 apiVersion: v1
 kind: Service
 metadata:
@@ -40,7 +79,7 @@ metadata:
   namespace: garage
 spec:
   selector:
-    app: garage
+    app: garage-node
   ports:
     - name: s3
       port: 3900
@@ -48,3 +87,22 @@ spec:
     - name: admin
       port: 3903
       targetPort: admin
+---
+# Headless, for the StatefulSet (serviceName is mandatory). Peer traffic
+# does not actually go through it - nodes dial the IPs they discover -
+# but it is what gives garage-node-N a stable DNS name for a human to
+# reach one specific node, and the discovery label garage puts on its
+# GarageNode objects is this Service's name.
+apiVersion: v1
+kind: Service
+metadata:
+  name: garage-node
+  namespace: garage
+spec:
+  clusterIP: None
+  selector:
+    app: garage-node
+  ports:
+    - name: rpc
+      port: 3901
+      targetPort: rpc

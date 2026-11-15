@@ -1,0 +1,43 @@
+# Longhorn class for Garage's volumes: ONE replica, pinned to the node
+# the pod runs on.
+#
+# Garage replicates every object to all three of its nodes itself
+# (replication_factor 3 in configmap.yaml). Putting those three copies on
+# Longhorn volumes that are themselves 2-replica would store each object
+# six times and send every write across the wifi twice - once for Garage,
+# once for Longhorn. One layer does the replication; this class makes it
+# Garage's.
+#
+# strict-local, not best-effort: best-effort may still create the replica
+# on another node and migrate later, and a replica on another node means
+# every block read and write crosses the 13-72ms wifi link that
+# longhorn-settings/config.yaml spends four settings coping with. strict
+# keeps the volume on the node that holds its replica and refuses to
+# attach anywhere else. The pod anti-affinity in statefulset.yaml is what
+# makes that refusal never bite: each ordinal only ever has one node it
+# can land on.
+#
+# What this trades away, deliberately: a Longhorn-level rescue when a
+# node is lost. If node2 dies, garage-node-N stays Pending until node2 is
+# back, and the other two Garage nodes keep serving reads and writes
+# (quorum 2 of 3). If node2's DISK dies, that Garage node's data is gone
+# and Garage re-replicates it from the other two once the node rejoins -
+# see garage/README.md for the one manual step (the node's identity lives
+# on its meta volume, so a fresh volume is a new node to Garage).
+#
+# WaitForFirstConsumer so the replica is created only once the scheduler
+# has picked a node, on that node. Immediate binding would have Longhorn
+# place the single replica before the pod exists, and strict-local would
+# then refuse the attach from wherever the pod landed.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: longhorn-garage
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  numberOfReplicas: "1"
+  staleReplicaTimeout: "30"
+  dataLocality: strict-local
