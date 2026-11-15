@@ -15,7 +15,7 @@
 # kustomization.yaml).
 FROM node:22-trixie-slim
 
-ARG CLAUDE_CODE_VERSION=2.1.310
+ARG CLAUDE_CODE_VERSION=2.1.325
 # kubectl pinned near the cluster's k3s 1.30 (avoid large version skew).
 ARG KUBECTL_VERSION=v1.30.6
 # helm kept on v3 (v4 is a breaking major; chart compat).
@@ -299,6 +299,29 @@ RUN chsh -s /usr/bin/zsh node
 # the bundled CLI guide. Both deliberately avoid a local `agent-browser install`
 # (no browser/display/root in this image).
 COPY --chown=1000:1000 skills/ /home/node/.claude/skills/
+
+# Claude Code's user settings, carrying DISABLE_UPDATES=1.
+#
+# These pods pin their version here, in CLAUDE_CODE_VERSION, and ship the
+# ~215MB native binary in the image. Letting Claude Code update itself at
+# runtime undoes that in three ways, all of which bit on 2026-11-14: the
+# in-place upgrade removes bin/claude.exe and leaves the package's own
+# "native binary not installed" stub in its place, so `claude` is absent
+# from PATH for the minutes the download takes - a stage that starts in
+# that window dies rc=127 and parks its card. It also rewrites the
+# hardlinked binary the dedupe above saves 280MB with. And it leaves the
+# pod on a version nobody chose.
+#
+# DISABLE_UPDATES, not DISABLE_AUTOUPDATER: the latter only stops the
+# background check, and `claude update` still works. Upstream says as much
+# for the shared-storage case, which is the same hazard - "an auto-update
+# of an npm installation on one machine ... removes the binary that
+# sessions on other machines are running. Setting DISABLE_AUTOUPDATER
+# alone isn't enough."
+#
+# The trade is that version bumps are now a deliberate image rebuild. That
+# matters when a new model needs a newer Claude Code than the pin.
+COPY --chown=1000:1000 claude-settings.json /home/node/.claude/settings.json
 
 # Snapshot the baked home (oh-my-zsh, nvim config, .zshrc, etc.) to a pristine
 # skeleton. At runtime /home/node is mounted on a persistent PVC, which would

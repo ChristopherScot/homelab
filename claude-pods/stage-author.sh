@@ -202,11 +202,24 @@ for t in "${TICKETS[@]}"; do
   # this script. Exported so render_prompt's subprocess can see them.
   export dir repo task ROUNDS
   render_prompt "$PROMPT_DIR/$mode.md" > "$STATE_DIR/prompt.txt"
-  timeout "$PER_TICKET_TIMEOUT" claude -p --model "$MODEL" \
+  # Through the failover wrapper: a work account out of quota used to end
+  # the ticket with the personal token mounted and unused.
+  #
+  # --output-format json because the wrapper reads terminal_reason to
+  # decide that, rather than scraping the agent's prose. claude_result_text
+  # pulls .result back out for the log.
+  #
+  # Known cost: the wrapper captures the output, so Loki shows nothing
+  # until the run ends and a working long run looks like a hung one.
+  # Restoring progress visibility means the caller supplying a sink, not
+  # the wrapper teeing - a pipeline here replaces $? with tee's and
+  # silently disables the failover.
+  out=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
+    timeout "$PER_TICKET_TIMEOUT" claude -p --output-format json --model "$MODEL" \
     --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" \
-    --add-dir "$dir" < "$STATE_DIR/prompt.txt"
-
+    --add-dir "$dir")
   rc=$?
+  printf '%s\n' "$(claude_result_text "$out")"
 
   # Belt and braces on the push, the same way the old flow verified the
   # issue link: the prompt asks for a push after each round, but a prompt

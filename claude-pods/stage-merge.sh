@@ -140,11 +140,20 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # this script. Exported so render_prompt's subprocess can see them.
     export dir repo pr
     render_prompt "$PROMPT_DIR/review.md" > "$STATE_DIR/prompt.txt"
-    verdict=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
-      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/prompt.txt")
+    # Through the failover wrapper. A limited work account produced no
+    # verdict at all, and no verdict means no merge - correct, but it
+    # stalled the stack behind it while a personal token sat mounted and
+    # unused.
+    #
+    # tail -1 on the VERDICT parse below is load-bearing: a retry's
+    # output replaces the first attempt's, and the last verdict wins.
+    verdict=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
+      timeout "$PER_PR_TIMEOUT" claude -p --output-format json --model "$MODEL" \
+      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir")
     rc=$?
     [ $rc -eq 124 ] && { echo "TIMEOUT on $repo#$pr"; continue; }
 
+    verdict=$(claude_result_text "$verdict")
     echo "$verdict" | tail -20
     decision=$(printf '%s' "$verdict" | grep -oE '^VERDICT: (MERGE|NO-MERGE|RISKY)' | tail -1 | awk '{print $2}')
 

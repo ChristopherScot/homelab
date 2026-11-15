@@ -50,91 +50,167 @@ use_claude_account() {
   return 0
 }
 
+# What "out of quota" looks like. Captured from a real exhausted work
+# account on 2026-11-15 (desloppify-0, CLI 2.1.310), not inferred:
+#
+#   "terminal_reason": "api_error",
+#   "api_error_status": 429,
+#   "api_error": "usage_limit_reached",
+#   "is_error": true,
+#   "subtype": "success",          <- note: "success", even on a limit
+#   "result": "You've hit your weekly limit · resets Nov 16, 11am (UTC)"
+#
+# So the signal is the 429 status, confirmed by api_error. Two things
+# that look like signals are not:
+#
+#   - terminal_reason is "api_error", the same value a 404 or a 500
+#     gives, so it cannot distinguish a limit on its own.
+#   - subtype is "success". Matching reason words against it would have
+#     read every successful run as whatever the words happened to be.
+#
+# An earlier version of this file carried eight "limit reason" words
+# (limit_reached, quota_exceeded, rate_limited, rate_limit,
+# usage_limit_reached, insufficient_credits, credit_balance_too_low,
+# out_of_credits) matched against those three fields. NONE of them
+# matches a real limit - verified by emptying the list against the
+# captured object, which still detects, and by removing the 429 check,
+# which does not. Of the eight: two (insufficient_credits,
+# credit_balance_too_low) exist in no binary, no SDK and no caller;
+# three are real strings from unrelated subsystems (a device-registry
+# limit, a storage quota, an in-flight queue state); out_of_credits is
+# an overageDisabledReason, a different field. The SDK types
+# terminal_reason as a bare `str | None` with no enum, so nothing was
+# ever going to catch the mistake.
+#
+# desloppify passes a bare word instead of the object: run.py composes
+# `api_error_{status}` from the same 429, giving "api_error_429".
+CLAUDE_LIMIT_TOKEN='api_error_429'
+
+# The apiError values the CLI sets on its `error: "rate_limit"` path.
+# All three are per-account and the reserve account can succeed where
+# this one cannot, which is the only reason to fail over:
+#
+#   usage_limit_reached           plan quota: session/5-hour, weekly,
+#                                 per-model, and the spend caps - all
+#                                 of these land here. Captured.
+#   model_requires_usage_credits  "the model runs on usage credits for
+#                                 this account, and credits are off or
+#                                 the included allowance is used up"
+#   long_context_credits_required a request over the 200K-token
+#                                 boundary needs credits this account
+#                                 does not have
+#
+# Not included, deliberately: the same branch returns error:"rate_limit"
+# with NO apiError for a transient capacity 429 ("Request rejected
+# (429) · this may be a temporary capacity issue"). The docs say those
+# are retried automatically with backoff (up to CLAUDE_CODE_MAX_RETRIES,
+# default 10), so one reaching a result has already exhausted its
+# retries and a second account would not help.
+CLAUDE_LIMIT_API_ERRORS='usage_limit_reached model_requires_usage_credits long_context_credits_required'
+
+# claude_result_text JSON
+# The agent's prose, which --output-format json puts in .result.
+# Returns the input unchanged if it is not JSON, so a run that died
+# before emitting its result object still logs something.
+claude_result_text() {
+  printf '%s\n' "$1" | tail -1 | jq -re '.result' 2>/dev/null || printf '%s' "$1"
+}
+
 # claude_rate_limited TEXT
-# 0 if TEXT looks like an account that has run out rather than a failure
-# of the work itself. A rate-limited run fails in seconds with no tool
-# calls, so this is cheap to detect and cheap to retry.
-# Two checks, because prose is the weaker signal and we were caught by
-# it once. On 2026-11-09 an author run was cut off mid-review-cycle by
-# "You've hit your 5-hour limit · resets 10:10pm (UTC)" - no "rate
-# limit", no "usage limit", no 429 - so the failover never fired, the
-# personal account sat unused, and the card parked in Backlog as
-# "produced no pull request" with nothing saying the account had run
-# out.
+# True when TEXT says this account is out of quota.
 #
-# Prefer the machine-readable reason. `claude --output-format json`
-# returns terminal_reason and api_error_status, the same fields the SDK
-# path in desloppify-pod/run.py already reads, and the CLI binary
-# carries the token values "limit_reached" and "quota_exceeded". Those
-# are identifiers; the sentence above is marketing copy that can be
-# reworded without notice.
-# The exhaustion reasons the CLI and SDK report, matched in two shapes.
-#
-# The BARE form is the one in use: nightly-desloppify.sh passes
-# `jq -r .stop_reason`, a single word. A first draft matched only the
-# JSON form, so the runner's limit_reached never matched and the retry
-# it was meant to trigger still did not fire.
-#
-# The JSON form has NO caller yet. The stage scripts invoke `claude -p`
-# bare - no failover wrapper, no --output-format json - so a stage that
-# hits the limit still parks its card. Wiring them is a separate change;
-# when it lands it will need --output-format json, and this branch is
-# what will read it. Do not read this as the stages being covered.
-#
-# rate_limit (underscore) as well as rate_limited: run.py:332 greps for
-# the former in subtype, so the two must agree.
-CLAUDE_LIMIT_REASONS='limit_reached|quota_exceeded|rate_limited|rate_limit|insufficient_credits|credit_balance_too_low'
-
-claude_terminal_reason_limited() {
-  # A bare reason, as jq -r hands back.
-  printf '%s' "$1" | grep -qE "^($CLAUDE_LIMIT_REASONS|api_error_429)$" && return 0
-  # Or the same as a JSON value, for a caller passing whole output.
-  printf '%s' "$1" | grep -qE \
-    "\"(terminal_reason|subtype|stop_reason)\"[[:space:]]*:[[:space:]]*\"($CLAUDE_LIMIT_REASONS)\"" && return 0
-  printf '%s' "$1" | grep -qE '"api_error_status"[[:space:]]*:[[:space:]]*429'
-}
-
+# TEXT is either the JSON from a `--output-format json` run (the stages)
+# or the bare stop_reason word run.py composes (desloppify).
 claude_rate_limited() {
-  # Structured first. The prose fallback has no production caller
-  # either: the only caller passes a bare reason, and every exhaustion
-  # value that can appear there is already caught by the bare-word
-  # anchor above. It is here for the stage scripts' text output when
-  # they are wired - see CLAUDE_LIMIT_REASONS.
-  #
-  # The prose set stays deliberately narrow. A first draft of this fix
-  # also matched `limit[ ·]+resets`, which looked like a safe
-  # generalisation of the CLI's wording and instead matched "the limit
-  # resets daily", "cache limit · resets on deploy" and "connection
-  # limit resets after timeout" - any of which an agent could print
-  # while discussing unrelated code, silently burning the personal
-  # account on a run that was never limited. Only the CLI's own
-  # "hit your N-hour limit" is specific enough to add.
-  claude_terminal_reason_limited "$1" && return 0
-  printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limit|usage limit|quota exceeded|you.?(ve|have) hit your [0-9]+-hour limit'
+  [ "$1" = "$CLAUDE_LIMIT_TOKEN" ] && return 0
+
+  # Whole input first, then the last line only. On some errors the CLI
+  # prints a diagnostic line before the object, which makes the whole
+  # capture unparseable; on a pretty-printed object the last line alone
+  # is just its closing brace. Trying both covers each.
+  _claude_limit_json() {
+    jq -e --arg limited "$CLAUDE_LIMIT_API_ERRORS" '
+      ($limited | split(" ")) as $limited
+      | .api_error_status? == 429
+        or (.api_error? as $e | $e != null and ($limited | index($e)) != null)
+      ' >/dev/null 2>&1
+  }
+  printf '%s' "$1" | _claude_limit_json && return 0
+  printf '%s\n' "$1" | tail -1 | _claude_limit_json
 }
 
-# run_with_account_failover CMD...
+# _claude_attempt STDIN_FILE_OR_EMPTY CMD...
+# Runs CMD once, with stdin from STDIN_FILE when non-empty, merging
+# stderr into stdout. Returns CMD's exit status.
+#
+# Defined at file scope, not nested inside run_with_account_failover.
+# Bash has no local functions: a nested definition is installed in the
+# CALLER's global namespace the first time the enclosing function runs
+# and outlives the call, so `_attempt` read as private while being
+# visible to every stage script that sources this file. Verified:
+# `type -t _attempt` is undefined before the first call and `function`
+# after it. Nothing collided, but the privacy was apparent rather than
+# real, and a nested version also closed over $stdin_file - so neither
+# half could be read without the other.
+#
+# No pipeline in here. Adding `| tee` to restore live streaming cost
+# the command's exit status ($? becomes tee's, which is 0 whatever the
+# command did) and silently disabled the failover. Streaming is a
+# separate change; this helper does one thing.
+_claude_attempt() {
+  local stdin_file=$1; shift
+  if [ -n "$stdin_file" ]; then
+    "$@" < "$stdin_file" 2>&1
+  else
+    "$@" 2>&1
+  fi
+}
+
+# run_with_account_failover [--stdin FILE] CMD...
 # Runs CMD under the work account; if it fails and the output says the
 # account is exhausted, runs it once more under personal. Returns the
 # exit status of whichever attempt ran last, and echoes CMD's output
 # either way so a caller can still parse a report out of it.
+#
+# Pass the prompt with --stdin FILE, never by redirecting this function.
+# A redirect on the caller's side attaches to the whole function, so the
+# first attempt reads the prompt to EOF and the retry inherits a drained
+# descriptor: the reserve account then runs the agent with an EMPTY
+# PROMPT. That is not hypothetical - all three stages did exactly this
+# (`out=$(run_with_account_failover ... < prompt.txt)`) and a repro with
+# a fake claude that reads stdin showed attempt 1 getting 73 bytes and
+# attempt 2 getting 0. It would have spent the reserve account on the
+# 2026-11-14 card and parked it anyway, defeating the point of failing
+# over at all. The suite missed it for the same reason it missed the
+# unwired stages: none of its fake commands read stdin.
+#
+# --stdin makes the prompt a parameter, so each attempt opens the file
+# for itself and both get the same bytes.
 run_with_account_failover() {
-  local out rc
+  local out rc stdin_file=""
+  if [ "${1:-}" = "--stdin" ]; then
+    stdin_file=$2; shift 2
+    [ -r "$stdin_file" ] || {
+      echo "FATAL: --stdin $stdin_file is not readable" >&2; return 1; }
+  fi
+
   if ! use_claude_account work; then
     echo "no work token; trying personal" >&2
     use_claude_account personal || {
       echo "FATAL: no Claude token for either account" >&2; return 1; }
-    out="$("$@" 2>&1)"; rc=$?
+    out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?
     printf '%s\n' "$out"
     return "$rc"
   fi
 
-  out="$("$@" 2>&1)"; rc=$?
-  if [ "$rc" -ne 0 ] && claude_rate_limited "$out"; then
+  out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?
+  # rc=124 is `timeout` killing a wedged run, not an exhausted account;
+  # it still propagates out unchanged for the stages' own handling.
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] \
+     && claude_rate_limited "$out"; then
     if use_claude_account personal; then
       echo "work account is rate limited; retrying on personal" >&2
-      out="$("$@" 2>&1)"; rc=$?
+      out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?
     else
       echo "work account is rate limited and no personal token is mounted" >&2
     fi

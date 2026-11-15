@@ -101,10 +101,17 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     export dir repo pr VERDICT_FILE
     render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
 
-    out=$(timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
-      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/test-prompt.txt")
+    # Through the failover wrapper: a work account at its limit otherwise
+    # ends the run with no verdict, which stage-merge correctly reads as
+    # "not tested" and the card lands in needs-human-review. The personal
+    # token was mounted and unused. This stage already captured the output,
+    # so the wrapper changes nothing else.
+    out=$(run_with_account_failover --stdin "$STATE_DIR/test-prompt.txt" \
+      timeout "$PER_PR_TIMEOUT" claude -p --output-format json --model "$MODEL" \
+      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir")
     rc=$?
-    printf '%s\n' "$out" | tail -25 | redact
+    out_text=$(claude_result_text "$out")
+    printf '%s\n' "$out_text" | tail -25 | redact
 
     # The verdict gates the merge, so record it where pod 1 will look:
     # absence of a verdict must read as "not tested", never as "nothing
@@ -172,7 +179,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
     # Four backticks: the agent's own output may contain a three-backtick
     # fence, which would close the wrapper early.
     gh pr comment "$pr" --repo "$repo" --body "$(printf 'Nightly integration test (pod 2): **%s** for `%s`.\n\n<details><summary>what it reported</summary>\n\n````\n%s\n````\n\n</details>' \
-      "$verdict" "${sha:0:7}" "$(printf '%s' "$out" | tail -40 | redact)")" >/dev/null 2>&1 \
+      "$verdict" "${sha:0:7}" "$(printf '%s' "$out_text" | tail -40 | redact)")" >/dev/null 2>&1 \
       || echo "   COMMENT FAILED $repo#$pr"
     # Advance the card. PASS moves to Mergeable, which is what dispatches
     # the review panel — the commit status above is the gate, this move is
