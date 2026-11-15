@@ -1,0 +1,12 @@
+{
+  "terminal_reason": "api_error",
+  "subtype": "success",
+  "stop_reason": "stop_sequence",
+  "api_error": "usage_limit_reached",
+  "api_error_status": 429,
+  "api_error_origin": "first_party",
+  "is_error": true,
+  "num_turns": 1,
+  "result": "You've hit your weekly limit \u00b7 resets Nov 16, 11am (UTC)",
+  "type": "result"
+}

@@ -50,10 +50,41 @@ use_claude_account() {
   return 0
 }
 
-# Exhaustion reasons, as the CLI reports them in `terminal_reason` /
-# `subtype` / `stop_reason`. Also matched bare, because
-# nightly-desloppify.sh passes `jq -r .stop_reason` directly.
-CLAUDE_LIMIT_REASONS='limit_reached|quota_exceeded|rate_limited|rate_limit|usage_limit_reached|insufficient_credits|credit_balance_too_low|out_of_credits'
+# What "out of quota" looks like. Captured from a real exhausted work
+# account on 2026-11-15 (desloppify-0, CLI 2.1.310), not inferred:
+#
+#   "terminal_reason": "api_error",
+#   "api_error_status": 429,
+#   "api_error": "usage_limit_reached",
+#   "is_error": true,
+#   "subtype": "success",          <- note: "success", even on a limit
+#   "result": "You've hit your weekly limit · resets Nov 16, 11am (UTC)"
+#
+# So the signal is the 429 status, confirmed by api_error. Two things
+# that look like signals are not:
+#
+#   - terminal_reason is "api_error", the same value a 404 or a 500
+#     gives, so it cannot distinguish a limit on its own.
+#   - subtype is "success". Matching reason words against it would have
+#     read every successful run as whatever the words happened to be.
+#
+# An earlier version of this file carried eight "limit reason" words
+# (limit_reached, quota_exceeded, rate_limited, rate_limit,
+# usage_limit_reached, insufficient_credits, credit_balance_too_low,
+# out_of_credits) matched against those three fields. NONE of them
+# matches a real limit - verified by emptying the list against the
+# captured object, which still detects, and by removing the 429 check,
+# which does not. Of the eight: two (insufficient_credits,
+# credit_balance_too_low) exist in no binary, no SDK and no caller;
+# three are real strings from unrelated subsystems (a device-registry
+# limit, a storage quota, an in-flight queue state); out_of_credits is
+# an overageDisabledReason, a different field. The SDK types
+# terminal_reason as a bare `str | None` with no enum, so nothing was
+# ever going to catch the mistake.
+#
+# desloppify passes a bare word instead of the object: run.py composes
+# `api_error_{status}` from the same 429, giving "api_error_429".
+CLAUDE_LIMIT_TOKEN='api_error_429'
 
 # claude_result_text JSON
 # The agent's prose, which --output-format json puts in .result.
@@ -64,34 +95,24 @@ claude_result_text() {
 }
 
 # claude_rate_limited TEXT
-# True when TEXT says the account is out of quota.
+# True when TEXT says this account is out of quota.
 #
-# TEXT is either a bare reason word or the JSON from a run with
-# `--output-format json`. On an error the CLI prints a diagnostic line
-# before the JSON object, so the object is read from the last line.
+# TEXT is either the JSON from a `--output-format json` run (the stages)
+# or the bare stop_reason word run.py composes (desloppify).
 claude_rate_limited() {
-  local reason
-  for reason in $(printf '%s' "$CLAUDE_LIMIT_REASONS" | tr '|' ' ') api_error_429; do
-    [ "$1" = "$reason" ] && return 0
-  done
+  [ "$1" = "$CLAUDE_LIMIT_TOKEN" ] && return 0
 
-  # Try the whole input first, then just the last line. The CLI prints a
-  # diagnostic line before the JSON on some errors (seen with an
-  # unrecognised --model), which makes the whole capture unparseable; the
-  # last line alone is the object. Whole-input first so a pretty-printed
-  # object still parses - last-line-only would see just its closing brace.
+  # Whole input first, then the last line only. On some errors the CLI
+  # prints a diagnostic line before the object, which makes the whole
+  # capture unparseable; on a pretty-printed object the last line alone
+  # is just its closing brace. Trying both covers each.
   _claude_limit_json() {
-    jq -e --arg r "$CLAUDE_LIMIT_REASONS" '
-      ($r | split("|") + ["api_error_429"]) as $limited
-      | .api_error_status? == 429
-        or ([.terminal_reason?, .subtype?, .stop_reason?] - [null]
-            | any(. as $v | $limited | index($v)))
-      ' >/dev/null 2>&1
+    jq -e '.api_error_status? == 429
+           or (.api_error? == "usage_limit_reached")' >/dev/null 2>&1
   }
   printf '%s' "$1" | _claude_limit_json && return 0
   printf '%s\n' "$1" | tail -1 | _claude_limit_json
 }
-
 
 # _claude_attempt STDIN_FILE_OR_EMPTY CMD...
 # Runs CMD once, with stdin from STDIN_FILE when non-empty, merging

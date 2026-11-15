@@ -24,95 +24,108 @@ printf 'personal-token' > "$CLAUDE_TOKEN_DIR/oauth-token-personal"
 # shellcheck disable=SC1091
 NIGHTLY_NS=test . "$here_dir/../lib/pod-common.sh" 2>/dev/null
 
-# --- what counts as out of quota -------------------------------------
-for text in \
-  'limit_reached' \
-  'quota_exceeded' \
-  'insufficient_credits' \
-  'api_error_429' \
-  '{"terminal_reason":"limit_reached"}' \
-  '{"subtype":"quota_exceeded"}' \
-  '{"stop_reason":"usage_limit_reached"}' \
-  '{"api_error_status":429,"terminal_reason":"api_error"}'
-do
-  claude_rate_limited "$text" || { echo "FAIL: missed a limit in: $text"; fail=1; }
-done
+# A result object, the way the CLI emits one. Used everywhere below so
+# the shape is written once: a dozen hand-typed
+# {"terminal_reason":"limit_reached"} literals is how the shape and the
+# reason drift apart.
+#   result_json REASON [extra-jq-fields-json]
+result_json() {
+  jq -cn --arg r "$1" --argjson extra "${2:-{\}}" '{terminal_reason:$r} + $extra'
+}
 
-# On an error the CLI prints a diagnostic line before the JSON object,
-# so the object has to be read from the last line rather than the whole
-# capture. Verified with `claude -p --output-format json --model
-# no-such-model`, which prints "[claude-code:unrecognized_model] {...}"
-# and then the result object.
-claude_rate_limited '[claude-code:unrecognized_model] {"model":"x"}
-{"terminal_reason":"limit_reached"}' \
+# Reasons that are NOT out of quota. The complement of
+# $CLAUDE_LIMIT_REASONS, and the other list this suite needs; stated
+# here because the library has no reason to enumerate them.
+NON_LIMIT_REASONS="completed timeout max_turns budget no_result error"
+
+# --- what counts as out of quota -------------------------------------
+# Anchored on a REAL exhausted-account result, captured from
+# desloppify-0 on 2026-11-15 and kept verbatim in
+# fixtures/limit-reached.json. Asserting against a captured object
+# rather than a hand-typed one is the whole point: the previous version
+# of this suite passed with eight invented reason words, none of which a
+# real limit sets.
+limit_fixture="$here_dir/fixtures/limit-reached.json"
+[ -f "$limit_fixture" ] || { echo "FAIL: missing $limit_fixture"; exit 1; }
+
+claude_rate_limited "$(cat "$limit_fixture")" \
+  || { echo "FAIL: the captured real limit was not detected"; fail=1; }
+
+# Same object pretty-printed and behind the diagnostic line the CLI
+# prints before the JSON on some errors. Both shapes reach the detector.
+claude_rate_limited "$(jq . "$limit_fixture")" \
+  || { echo "FAIL: a multi-line result object was missed"; fail=1; }
+claude_rate_limited "[claude-code:unrecognized_model] {\"model\":\"x\"}
+$(jq -c . "$limit_fixture")" \
   || { echo "FAIL: a limit behind a diagnostic line was missed"; fail=1; }
 
-# A pretty-printed object must parse too. Reading only the last line
-# would see just its closing brace - which is what a `tail -40` window
-# plus an inner `tail -1` did before, so a multi-line object silently
-# failed to detect.
-claude_rate_limited '{
-  "terminal_reason": "limit_reached",
-  "result": "stopped early"
-}' || { echo "FAIL: a multi-line JSON object was missed"; fail=1; }
+# The signal is the 429 status, confirmed by api_error. Each alone is
+# enough; neither is allowed to be the only thing holding this up.
+claude_rate_limited "$(result_json api_error '{"api_error_status":429}')" \
+  || { echo "FAIL: api_error_status 429 alone was missed"; fail=1; }
+claude_rate_limited "$(result_json api_error '{"api_error":"usage_limit_reached"}')" \
+  || { echo "FAIL: api_error usage_limit_reached alone was missed"; fail=1; }
 
-# Not out of quota: ordinary outcomes, other HTTP errors, and the
-# agent's own words. The prose lives in .result, which the detector
-# never reads - that is the point of reading JSON at all. Before this,
-# a ticket that merely edited a file named rate_limit.go could spend a
-# second full agent run on the reserve account.
-for text in \
-  'completed' \
-  'timeout' \
-  'max_turns' \
-  '{"terminal_reason":"completed","is_error":false}' \
-  '{"terminal_reason":"api_error","api_error_status":404}' \
-  '{"terminal_reason":"api_error","api_error_status":500}' \
-  '{"terminal_reason":"max_turns"}' \
-  '{"terminal_reason":"completed","result":"I edited rate_limit.go and asserted on 429 responses"}' \
-  '{"terminal_reason":"completed","result":"You have hit your weekly limit is the string we match"}'
+# desloppify gets a bare word instead of the object: run.py composes it
+# as f"api_error_{result.api_error_status}". DERIVED from the fixture's
+# own status and that rule, not from $CLAUDE_LIMIT_TOKEN - asserting the
+# variable against itself passes for any value, and this value has to
+# match what run.py actually writes.
+want_token="api_error_$(jq -r '.api_error_status' "$limit_fixture")"
+claude_rate_limited "$want_token" \
+  || { echo "FAIL: the bare token desloppify passes ($want_token) was missed"; fail=1; }
+[ "$CLAUDE_LIMIT_TOKEN" = "$want_token" ] \
+  || { echo "FAIL: CLAUDE_LIMIT_TOKEN is '$CLAUDE_LIMIT_TOKEN', but run.py composes '$want_token'"; fail=1; }
+
+# --- what does not ---------------------------------------------------
+# terminal_reason is "api_error" on a real limit AND on any other API
+# failure, so it must not decide this by itself.
+for status in 400 401 404 500 503 529; do
+  claude_rate_limited "$(result_json api_error "{\"api_error_status\":$status}")" \
+    && { echo "FAIL: HTTP $status read as a limit"; fail=1; }
+done
+
+# subtype is "success" on a real limit, so anything that matched reason
+# words against subtype would read ordinary runs as limits.
+for reason in $NON_LIMIT_REASONS; do
+  claude_rate_limited "$reason" \
+    && { echo "FAIL: '$reason' read as a limit"; fail=1; }
+  claude_rate_limited "$(result_json "$reason" '{"subtype":"success"}')" \
+    && { echo "FAIL: a '$reason' result object read as a limit"; fail=1; }
+done
+
+# The words the detector used to carry. Every one is either absent from
+# the CLI and SDK entirely or belongs to an unrelated subsystem, so a
+# run reporting one is NOT out of quota - and a stage editing this very
+# repository can print any of them.
+for dead in limit_reached quota_exceeded rate_limited rate_limit \
+            usage_limit_reached insufficient_credits \
+            credit_balance_too_low out_of_credits
 do
-  claude_rate_limited "$text" && { echo "FAIL: not a limit, read as one: $text"; fail=1; }
+  claude_rate_limited "$dead" \
+    && { echo "FAIL: '$dead' is not an exhaustion signal but read as one"; fail=1; }
+  claude_rate_limited "$(result_json "$dead")" \
+    && { echo "FAIL: terminal_reason '$dead' read as a limit"; fail=1; }
 done
 
-# --- the reason list has one home ------------------------------------
-# $CLAUDE_LIMIT_REASONS is the single home, and these two gates keep it
-# honest in both directions. One mechanism cannot do it: a loop that
-# derives its cases from the variable cannot notice a token being
-# DELETED, because deleting it also shrinks the loop. That was not
-# hypothetical - with a derived-only loop, dropping rate_limit,
-# out_of_credits or credit_balance_too_low left this suite green, and
-# rate_limit was the token the fix that created the variable was written
-# to rescue.
-#
-# One line: a newline in this string breaks the `case` matches below.
-REQUIRED_REASONS="limit_reached quota_exceeded rate_limited rate_limit usage_limit_reached insufficient_credits credit_balance_too_low out_of_credits"
-
-for tok in $REQUIRED_REASONS api_error_429; do
-  claude_rate_limited "$tok" \
-    || { echo "FAIL: reason not detected bare: $tok"; fail=1; }
-  claude_rate_limited "{\"terminal_reason\":\"$tok\"}" \
-    || { echo "FAIL: reason not detected in JSON: $tok"; fail=1; }
-done
-
-for tok in $REQUIRED_REASONS; do
-  case "|$CLAUDE_LIMIT_REASONS|" in
-    *"|$tok|"*) ;;
-    *) echo "FAIL: '$tok' was removed from CLAUDE_LIMIT_REASONS"; fail=1 ;;
-  esac
-done
-for tok in $(printf '%s' "$CLAUDE_LIMIT_REASONS" | tr '|' ' '); do
-  case " $REQUIRED_REASONS " in
-    *" $tok "*) ;;
-    *) echo "FAIL: CLAUDE_LIMIT_REASONS has '$tok', which this suite does not pin"
-       fail=1 ;;
-  esac
+# And the agent's own words, which live in .result - the field the
+# detector never reads. The captured fixture's own result text is the
+# strongest case: the real limit sentence, with no 429 beside it.
+real_prose=$(jq -r '.result' "$limit_fixture")
+claude_rate_limited "$(result_json completed "$(jq -cn --arg p "$real_prose" '{result:$p}')")" \
+  && { echo "FAIL: the limit sentence in .result read as a limit"; fail=1; }
+for prose in \
+  "I edited rate_limit.go and asserted on 429 responses" \
+  "VERDICT: NO-MERGE - the rate limit handling is untested"
+do
+  claude_rate_limited "$(result_json completed "$(jq -cn --arg p "$prose" '{result:$p}')")" \
+    && { echo "FAIL: agent prose read as a limit: $prose"; fail=1; }
 done
 
 # --- the agent's prose is still readable -----------------------------
 # stage-merge greps a VERDICT line out of the output, so .result has to
 # survive the round trip intact, newlines and all.
-got=$(claude_result_text '{"result":"ANALYSIS: fine\n\nVERDICT: MERGE","terminal_reason":"completed"}')
+got=$(claude_result_text "$(result_json completed "$(jq -cn '{result:"ANALYSIS: fine\n\nVERDICT: MERGE"}')")")
 [ "$(printf '%s' "$got" | grep -oE '^VERDICT: (MERGE|NO-MERGE|RISKY)' | tail -1 | awk '{print $2}')" = "MERGE" ] \
   || { echo "FAIL: the VERDICT line did not survive .result extraction"; fail=1; }
 
@@ -137,19 +150,19 @@ use_claude_account work
 attempt_log="$tmp/attempts"
 
 : > "$attempt_log"
-limited_cmd() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo '{"terminal_reason":"limit_reached"}'; return 1; }
+limited_cmd() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo "$(jq -c . "$limit_fixture")"; return 1; }
 run_with_account_failover limited_cmd >/dev/null 2>&1
 [ "$(wc -l < "$attempt_log")" -eq 2 ] || { echo "FAIL: a limit did not retry"; fail=1; }
 [ "$(head -1 "$attempt_log")" = "work" ] || { echo "FAIL: did not try work first"; fail=1; }
 [ "$(tail -1 "$attempt_log")" = "personal" ] || { echo "FAIL: did not fail over to personal"; fail=1; }
 
 : > "$attempt_log"
-other_failure() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo '{"terminal_reason":"api_error","api_error_status":500}'; return 1; }
+other_failure() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo "$(result_json api_error '{"api_error_status":500}')"; return 1; }
 run_with_account_failover other_failure >/dev/null 2>&1
 [ "$(wc -l < "$attempt_log")" -eq 1 ] || { echo "FAIL: a non-limit failure burned the reserve"; fail=1; }
 
 : > "$attempt_log"
-ok_cmd() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo '{"terminal_reason":"completed"}'; }
+ok_cmd() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo "$(result_json completed)"; }
 run_with_account_failover ok_cmd >/dev/null 2>&1
 [ "$(wc -l < "$attempt_log")" -eq 1 ] || { echo "FAIL: a success was retried"; fail=1; }
 
@@ -157,7 +170,7 @@ run_with_account_failover ok_cmd >/dev/null 2>&1
 # stages and the wrapper treat 124 as its own thing; without the
 # exclusion a wedged run earns a second full timeout on the reserve.
 : > "$attempt_log"
-timed_out() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo '{"terminal_reason":"limit_reached"}'; return 124; }
+timed_out() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo "$(jq -c . "$limit_fixture")"; return 124; }
 run_with_account_failover timed_out >/dev/null 2>&1
 [ "$(wc -l < "$attempt_log")" -eq 1 ] || { echo "FAIL: a timeout burned the reserve"; fail=1; }
 
@@ -184,8 +197,8 @@ stdin_reader() {
   local p="" line
   while IFS= read -r -t 5 line; do p="$p$line"; done
   printf '%s %s\n' "$CLAUDE_ACCOUNT" "${#p}" >> "$attempt_log"
-  [ "$CLAUDE_ACCOUNT" = "work" ] && { echo '{"terminal_reason":"limit_reached"}'; return 1; }
-  echo '{"terminal_reason":"completed"}'
+  [ "$CLAUDE_ACCOUNT" = "work" ] && { echo "$(jq -c . "$limit_fixture")"; return 1; }
+  echo "$(result_json completed)"
 }
 
 : > "$attempt_log"
@@ -256,18 +269,20 @@ for stage in stage-author stage-test stage-merge; do
 done
 
 # --- desloppify shares this library ----------------------------------
-# The desloppify image COPYs lib/claude-account.sh, and
-# nightly-desloppify.sh calls the detector with a BARE reason word from
-# `jq -r .stop_reason`. Pinned in both directions because a change made
-# for the stages has to keep that caller working.
-for r in $REQUIRED_REASONS api_error_429; do
-  claude_rate_limited "$r" \
-    || { echo "FAIL: desloppify would not fail over on stop_reason=$r"; fail=1; }
-done
-for r in completed timeout max_turns budget no_result error api_error_500; do
-  claude_rate_limited "$r" \
-    && { echo "FAIL: desloppify would fail over on stop_reason=$r"; fail=1; }
-done
+# The desloppify image COPYs lib/claude-account.sh and calls the
+# detector with a BARE reason word (`jq -r .stop_reason`), not a result
+# object. Every reason is already covered in both forms above; what is
+# pinned here is that its call shape still exists in the script, so a
+# change made for the stages cannot quietly drop it.
+nd="$here_dir/../../desloppify-pod/nightly-desloppify.sh"
+if [ -f "$nd" ]; then
+  # -F: the pattern contains $( and ., which as a regex matched nothing
+  # and made this gate pass vacuously on first write.
+  grep -qF 'claude_rate_limited "$(jq -r' "$nd" \
+    || { echo "FAIL: nightly-desloppify.sh no longer passes a bare jq-extracted reason"; fail=1; }
+else
+  echo "FAIL: cannot find nightly-desloppify.sh to check its call shape"; fail=1
+fi
 
 [ "$fail" -eq 0 ] && echo "PASS - work first, personal only when out of quota, no key leak, CLI login honoured, nothing-at-all refused, prompt survives the retry, and all three stages go through the wrapper with JSON output"
 exit "$fail"
