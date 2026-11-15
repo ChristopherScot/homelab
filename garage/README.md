@@ -19,7 +19,7 @@ Garage's and not Longhorn's. What it buys, by event:
 | Two nodes down | Survivor has no quorum; `/health` fails, it leaves the Service | no | no |
 | Whole-house power cut | All three restart, rediscover each other within a minute, resync | after rejoin | after rejoin |
 | One node's disk lost | Node comes back as a stranger; re-admit it (below), Garage re-replicates | yes | yes |
-| A fourth k8s node added | A rescheduled pod may land on it, away from its volume, and sit Pending (storageclass.yaml); pin the three or add a fourth garage node | yes | yes |
+| A fourth k8s node added | Existing volumes retain their host affinity; Garage remains on its original three nodes | yes | yes |
 
 Both `metadata_fsync` and `data_fsync` are on, because the nodes share
 one mains supply and "a node lost power" is usually all of them.
@@ -56,37 +56,41 @@ volumeClaimTemplate is only read when a PVC is created.
 
 ## Bringing it up (and the one-time move from the single node)
 
-Argo applies everything in this directory. The merge that introduced the
-three-node layout pruned the old single-node `garage` StatefulSet and
-created `garage-node` (see statefulset.yaml for why a rename). The pods
-come up `0/3 Ready` and stay there until someone runs:
+Argo replaces the single-node StatefulSet and switches the `garage`
+Service to the new pods when this PR merges. Perform this cutover while
+an operator is available; clients cannot use the bucket until bootstrap
+and restore finish.
 
-```sh
-./bootstrap/garage-init.sh
-```
+1. Pause bucket writers. Preserve **all** objects from the existing
+   `claude-reference` bucket outside the cluster and outside Git. Record
+   the object keys, sizes and SHA-256 hashes of the downloaded contents.
+   Confirm the download matches the live inventory before merging.
+2. Confirm Vault's three ExternalSecrets are Ready and each node has
+   room for 33Gi of new volumes. Retain `data-garage-0` and
+   `meta-garage-0` throughout the migration.
+3. Merge and wait for all three `garage-node` pods to run. They remain
+   unready until `./bootstrap/garage-init.sh` assigns the layout. This
+   script imports the existing consumer credentials from Vault-backed
+   Kubernetes Secrets, so clients keep their current credentials.
+4. Upload the preserved objects using the seed credential. Download the
+   new bucket again and compare every key and SHA-256 hash with the
+   pre-cutover snapshot. Job completion or an object count alone is not
+   sufficient verification.
+5. Verify the worker credential can read the reference material and
+   cannot write; verify the seed credential can write and delete a test
+   object. Confirm all three pods are Ready and Argo is Healthy/Synced,
+   then resume writers.
 
-It waits for the three nodes to discover each other, assigns each a zone
-named after its k8s node, applies the layout, creates `claude-reference`,
-and imports the two S3 keys from the Secrets Vault already projects into
-`claude-pods` - so nothing that holds those credentials needs to change.
-Then re-seed the bucket from a session pod's home:
+Keep the original PVCs and the snapshot until a separate cleanup. If
+cutover fails, revert the manifest change through Git, restore the
+single-node StatefulSet against its retained PVCs, and confirm its
+bucket before resuming consumers.
 
-```sh
-kubectl scale statefulset claude-session -n claude-pods --replicas=0
-kubectl apply -f claude-pods/worker/seed-reference-job.yaml
-kubectl logs -n claude-pods job/seed-reference -f
-```
-
-and finally delete the old single node's volumes, which Argo deliberately
-left behind (reclaim is Delete; the data in them is the same
-re-seedable reference material):
-
-```sh
-kubectl delete pvc -n garage data-garage-0 meta-garage-0
-```
-
-Once that has happened, this section is a plain "run garage-init.sh,
-then seed" and the rest of it can go.
+For a fresh installation with no existing bucket, initialize the layout
+and use `claude-pods/worker/seed-reference-job.yaml` to populate it from
+`home-claude-session-0`. The session StatefulSet must be at zero replicas
+while that RWO volume is mounted by the seed job. Verify the expected
+source directories and contents: the seed job skips missing directories.
 
 ## Re-admitting a node after its disk was lost
 
@@ -112,5 +116,10 @@ changes: the bucket, keys and grants live in the replicated tables.
 - `tests/cluster-smoke.sh` - the same manifests rendered into a scratch
   namespace with small volumes: three nodes on three k8s nodes, replicas
   on the right nodes, `garage-init.sh` lays it out, an S3 round trip
-  with the RO/RW split, then the StatefulSet is scaled to two and the
-  remaining pair keeps serving writes. Needs a cluster; SKIPs in CI.
+  with the RO/RW split, then each peer is removed in turn and every
+  surviving pair reads existing objects and accepts new writes. Finally
+  all pods restart on their original hosts. Set `GARAGE_SMOKE_RUN=1` to
+  run; SKIPs in CI. These are Garage peer failures, not host shutdowns.
+- `tests/bootstrap.sh` - executes bootstrap against a stateful kubectl
+  substitute, including interrupted layout apply, failed lookups,
+  credential import errors, and repeat execution. Runs in CI.

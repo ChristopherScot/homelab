@@ -58,10 +58,8 @@ spec:
         runAsGroup: 1000
       # One pod per k8s node, as a hard rule. This is what gives "a node
       # going out" its meaning - three pods on one node would be three
-      # copies behind one power cable. It is also what keeps the
-      # strict-local volumes attachable: when garage-node-1 is rescheduled
-      # the only node not already holding a garage pod is the one its
-      # volumes are on.
+      # copies behind one power cable. Longhorn adds PV node affinity
+      # after attachment to keep later restarts on the same host.
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:

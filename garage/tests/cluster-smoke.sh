@@ -3,20 +3,19 @@
 # into a scratch namespace with small volumes, come up as a three-node
 # Garage; bootstrap/garage-init.sh lays them out; an S3 client writes with
 # the RW key and reads back with the RO key (and is refused a write); then
-# the StatefulSet is scaled to two and the remaining pair keeps serving
-# reads AND writes.
+# each Garage peer is isolated in turn and the remaining pair keeps
+# serving reads AND writes.
 #
-# Scaling away one pod stands in for a node outage. It is what the Garage
-# layer sees in both cases - a peer vanishes - and it is reversible on a
-# cluster other things are running on. What it does not exercise is the
-# scheduler side (the pod waiting for its node to return), which the
-# anti-affinity plus strict-local argument in statefulset.yaml covers.
+# Temporarily orphan the scratch StatefulSet's pods, remove one peer,
+# and restore the controller after checking the surviving pair. This
+# keeps the selected peer absent throughout the requests without stopping
+# physical hosts or testing Kubernetes control-plane/DNS failover.
 #
 # Needs a cluster, so in CI it SKIPs - and says so, because a check that
 # cannot run must not look like one that did. Takes about 4 minutes;
 # discovery alone is a 60s cycle.
 #
-# Run: garage/tests/cluster-smoke.sh
+# Run: GARAGE_SMOKE_RUN=1 bash garage/tests/cluster-smoke.sh
 #   GARAGE_SMOKE_NS   scratch namespace (default garage-smoke)
 #   GARAGE_SMOKE_KEEP set to keep the namespace afterwards for a look
 #   GARAGE_SMOKE_IMPORT  set to let garage-init.sh import the real keys
@@ -34,10 +33,15 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 skip() { echo "SKIP: $*"; exit 0; }
 step() { echo; echo "--- $*"; }
 
+[ "${GARAGE_SMOKE_RUN:-}" = 1 ] || skip "set GARAGE_SMOKE_RUN=1 to deploy scratch resources"
+
 command -v kubectl >/dev/null 2>&1 || skip "kubectl not installed - nothing was deployed or tested"
 kubectl cluster-info >/dev/null 2>&1 || skip "no reachable cluster - nothing was deployed or tested"
 kubectl get sc longhorn >/dev/null 2>&1 || skip "no Longhorn in this cluster - nothing was deployed or tested"
 
+# Never take ownership of an existing namespace or delete its contents.
+existing="$(kubectl get ns "$NS" --ignore-not-found -o name)"
+[ -z "$existing" ] || fail "namespace $NS already exists; choose a fresh GARAGE_SMOKE_NS"
 render=$(mktemp -d)
 cleanup() {
   rm -rf "$render"
@@ -104,7 +108,11 @@ for i in 0 1 2; do
     rep_node="$(kubectl -n longhorn-system get replicas.longhorn.io -o json \
       | jq -r --arg pv "$pv" '.items[] | select(.spec.volumeName == $pv) | .spec.nodeID')"
     [ "$rep_node" = "$pod_node" ] || fail "$vol-garage-node-$i replica on '$rep_node', pod on '$pod_node'"
-    echo "ok   $vol-garage-node-$i: replica and pod both on $pod_node"
+    affinity="$(kubectl get pv "$pv" -o json | jq -r '
+      .spec.nodeAffinity.required.nodeSelectorTerms[].matchExpressions[] |
+      select(.key == "kubernetes.io/hostname" and .operator == "In") | .values[]')"
+    [ "$affinity" = "$pod_node" ] || fail "$pv affinity '$affinity' does not pin $pod_node"
+    echo "ok   $vol-garage-node-$i: replica and PV affinity both on $pod_node"
   done
 done
 
@@ -175,6 +183,8 @@ spec:
               set -eu
               head -c 3000000 /dev/urandom > /shared/payload
               aws s3 cp /shared/payload s3://$BUCKET/$2 --only-show-errors
+              sha256sum /shared/payload | cut -d ' ' -f 1 > /shared/checksum
+              aws s3 cp /shared/checksum s3://$BUCKET/$2.sha256 --only-show-errors
               echo "seed: wrote $2"
           volumeMounts: [{name: shared, mountPath: /shared}]
       containers:
@@ -191,6 +201,11 @@ spec:
                 echo "worker: RO key was allowed to write"; exit 1
               fi
               echo "worker: RO write refused"
+              aws s3 cp s3://$BUCKET/probe-full /shared/original --only-show-errors
+              aws s3 cp s3://$BUCKET/probe-full.sha256 /shared/expected --only-show-errors
+              sha256sum /shared/original | cut -d ' ' -f 1 > /shared/actual
+              cmp /shared/expected /shared/actual
+              echo "worker: original object checksum verified"
               echo "ROUND TRIP OK"
           volumeMounts: [{name: shared, mountPath: /shared}]
       volumes: [{name: shared, emptyDir: {}}]
@@ -201,29 +216,36 @@ EOF
 }
 s3_job smoke-s3 probe-full
 
-step "one node down: the other two keep serving reads and writes"
-# Scale to two rather than delete a pod: a deleted pod is recreated at
-# once, its volumes are already local, and it was Ready again before the
-# first version of this step had finished pulling the client image - so
-# the step passed against three healthy nodes and proved nothing. Scaling
-# removes the highest ordinal and keeps it gone until scaled back.
-victim=garage-node-2
-victim_node="$(kubectl -n "$NS" get pod $victim -o jsonpath='{.spec.nodeName}')"
-kubectl -n "$NS" scale sts garage-node --replicas=2 >/dev/null
-kubectl -n "$NS" wait --for=delete pod/$victim --timeout=120s >/dev/null
-# Nothing recreates ordinal 2 at replicas=2 (the scratch namespace is not
-# Argo's), so the pod is absent for the whole of the write below. The
-# Service only routes to Ready pods, so the client never sees the missing
-# one; the write needs quorum (2 of 3), which is the claim.
-s3_job smoke-s3-degraded probe-degraded
-kubectl -n "$NS" exec garage-node-0 -- /garage status 2>/dev/null
+step "each peer unavailable in turn: all surviving pairs serve reads and writes"
+for ordinal in 0 1 2; do
+  victim="garage-node-$ordinal"
+  # Orphaning preserves the live pods and PVCs but stops immediate
+  # replacement of the selected ordinal. The namespace belongs to this
+  # test alone; reapplying the manifest adopts the other two pods.
+  kubectl -n "$NS" delete sts garage-node --cascade=orphan --wait=true >/dev/null
+  kubectl -n "$NS" delete pod "$victim" --wait=true >/dev/null
+  for _ in $(seq 1 30); do
+    ready="$(kubectl -n "$NS" get endpoints garage -o json | jq -r '[.subsets[]?.addresses[]?.targetRef.name] | sort | join(" ")')"
+    expected="$(printf '%s\n' garage-node-0 garage-node-1 garage-node-2 | grep -v "^$victim$" | sort | paste -sd ' ' -)"
+    [ "$ready" = "$expected" ] && break
+    sleep 2
+  done
+  [ "$ready" = "$expected" ] || fail "expected endpoints '$expected', got '$ready'"
+  s3_job "smoke-s3-down-$ordinal" "probe-down-$ordinal"
+  absent="$(kubectl -n "$NS" get pod "$victim" --ignore-not-found -o name)"
+  [ -z "$absent" ] || fail "$victim was recreated during the outage test"
+  echo "ok   $victim absent: surviving pair serves existing data and new writes"
+  kubectl apply -f "$render/statefulset.yaml" >/dev/null
+  kubectl -n "$NS" rollout status sts/garage-node --timeout=180s >/dev/null
+done
 
-step "the missing node comes back on the same k8s node and rejoins"
-kubectl -n "$NS" scale sts garage-node --replicas=3 >/dev/null
-kubectl -n "$NS" wait --for=condition=Ready pod/$victim --timeout=180s >/dev/null
-back_node="$(kubectl -n "$NS" get pod $victim -o jsonpath='{.spec.nodeName}')"
-[ "$back_node" = "$victim_node" ] || fail "$victim came back on $back_node, its volumes are on $victim_node"
-echo "ok   $victim Ready again on $back_node"
+step "all pods restart on their original hosts"
+before="$(kubectl -n "$NS" get pod -l app=garage-node -o json | jq -S '[.items[] | {name:.metadata.name,node:.spec.nodeName}] | sort_by(.name)')"
+kubectl -n "$NS" delete pod -l app=garage-node --wait=true >/dev/null
+kubectl -n "$NS" rollout status sts/garage-node --timeout=240s >/dev/null
+after="$(kubectl -n "$NS" get pod -l app=garage-node -o json | jq -S '[.items[] | {name:.metadata.name,node:.spec.nodeName}] | sort_by(.name)')"
+[ "$before" = "$after" ] || fail "pod-to-host mapping changed after full restart"
+s3_job smoke-s3-restarted probe-restarted
 
 echo
-echo "PASS: three-node garage serves S3 with one node down and the committed init script lays it out"
+echo "PASS: bootstrap, each single-peer outage, full restart, and RO/RW S3 access"

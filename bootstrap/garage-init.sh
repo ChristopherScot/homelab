@@ -58,26 +58,8 @@ KEY_RW_SECRET="${GARAGE_KEY_RW_SECRET-claude-pods/garage-s3-seed}"
 # read when the node is assigned. Growing a running cluster is a layout
 # change by hand (garage/README.md), not a re-run of this.
 
-# Two wrappers, because this script asks garage two kinds of question
-# and they want opposite error handling.
-#
-# g_try is for predicates - `if g_try bucket info X` - where a non-zero
-# exit IS the answer ("it does not exist"), not a fault. It discards
-# stderr, because garage logs an RPC handshake on every call and that
-# noise buries this script's own output.
-#
-# g is for commands that must work. It captures stderr to a temp file on
-# the FIRST call and prints it only on failure, so the handshake stays
-# out of the way while a real error still gets through. Without this a
-# failing `bucket allow` died under set -e with no message at all.
-#
-# Capturing rather than re-running on failure: `garage key create` mints
-# a NEW key every call - name is not a unique index - so re-running it
-# after a timeout that had already succeeded server-side would leave two
-# keys sharing one name. It also returns rather than exits: `exit` inside
-# a function only leaves the subshell when g is in a pipeline or $(...).
-g_try() { kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>/dev/null; }
-
+# Capture diagnostics without repeating a mutating command. Import failures
+# omit output as well as arguments: either may contain the supplied secret.
 g() {
   local err rc=0
   err="$(mktemp)"
@@ -91,8 +73,10 @@ g() {
   # was called from inside another function.
   kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>"$err" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    echo "FATAL: garage $* failed (exit $rc):" >&2
-    cat "$err" >&2
+    echo "FATAL: garage ${1:-command} ${2:-} failed (exit $rc)" >&2
+    if [ "${1:-}" != key ] || [ "${2:-}" != import ]; then
+      cat "$err" >&2
+    fi
   fi
   rm -f "$err"
   return "$rc"
@@ -106,8 +90,8 @@ g() {
 # twice.
 healthy_nodes() {
   local status layout
-  status="$(g_try json-api GetClusterStatus)" || return 0
-  layout="$(g_try json-api GetClusterLayout)" || return 0
+  status="$(g json-api GetClusterStatus)" || return 1
+  layout="$(g json-api GetClusterLayout)" || return 1
   jq -rn --argjson s "$status" --argjson l "$layout" '
     ([$l.roles[].id] + [$l.stagedRoleChanges[].id]) as $have
     | $s.nodes[]
@@ -116,7 +100,7 @@ healthy_nodes() {
     | "\($id) \(.hostname) \(if ($have | index($id)) then "assigned" else "unassigned" end)"'
 }
 
-# Applied roles whose node is not up, one id per line. Once every pod the
+# Applied or staged roles whose node is not up, one id per line. Once every pod the
 # StatefulSet wants is a member, such a role is a node that was lost and
 # replaced (its identity lives on its meta volume) or a StatefulSet
 # scaled below its layout; either way the layout still maps a share of
@@ -129,7 +113,8 @@ dead_roles() {
   layout="$(g json-api GetClusterLayout)" || return 2
   jq -rn --argjson s "$status" --argjson l "$layout" '
     [$s.nodes[] | select(.isUp) | .id] as $up
-    | $l.roles[].id | select(. as $id | $up | index($id) | not)'
+    | ([$l.roles[].id] + [$l.stagedRoleChanges[] | select(.remove != true) | .id] | unique)[]
+    | select(. as $id | $up | index($id) | not)'
 }
 
 echo "=== garage-init: ns=$NS sts=$STS via $POD ==="
@@ -146,7 +131,7 @@ want="$(kubectl get sts -n "$NS" "$STS" -o jsonpath='{.spec.replicas}')"
 #    it does not expect, which should be another empty poll rather than a
 #    silent exit under set -e.
 for _ in $(seq 1 18); do
-  have="$(healthy_nodes | wc -l | tr -d ' ' || true)"
+  have="$(healthy_nodes 2>/dev/null | wc -l | tr -d ' ' || true)"
   [ "${have:-0}" -ge "$want" ] && break
   echo "membership: ${have:-0} of $want nodes visible, waiting for discovery..."
   sleep 10
@@ -174,13 +159,13 @@ done
 dead="$(dead_roles)" || exit 1
 if [ -n "$dead" ]; then
   echo "FATAL: the layout still holds a role for a node that is not up:" >&2
-  printf '  %s\n' $dead >&2
+  printf '%s\n' "$dead" >&2
   echo "If $STS is simply scaled below its layout (kubectl get sts -n $NS $STS), scale it back." >&2
   echo "Otherwise a node whose meta volume was lost has come back as a new id: replace the" >&2
   echo "old one by hand (garage/README.md, 'Re-admitting a node'), then re-run this." >&2
   exit 1
 fi
-staged=0
+members="$(healthy_nodes)" || exit 1
 while read -r id host role; do
   [ "$role" = "unassigned" ] || continue
   zone="$(kubectl get pod -n "$NS" "$host" -o jsonpath='{.spec.nodeName}')"
@@ -189,9 +174,11 @@ while read -r id host role; do
   [ -n "$cap" ] || { echo "FATAL: cannot read the size of PVC data-$host" >&2; exit 1; }
   echo "layout: assigning ${id:0:16} ($host) zone=$zone capacity=$cap"
   g layout assign -z "$zone" -c "$cap" "$id" >/dev/null
-  staged=$((staged + 1))
-done < <(healthy_nodes)
+done <<< "$members"
 
+# Include assignments left staged by an interrupted previous invocation.
+layout="$(g json-api GetClusterLayout)"
+staged="$(printf '%s' "$layout" | jq -er '.stagedRoleChanges | length | tostring')"
 if [ "$staged" -gt 0 ]; then
   # `layout show` ends with the exact command to run, version included.
   # Parse that rather than computing current+1: when staged changes are
@@ -211,7 +198,9 @@ else
 fi
 
 # 3. Bucket.
-if g_try bucket info "$BUCKET" >/dev/null; then
+buckets="$(g json-api ListBuckets)"
+bucket_exists="$(printf '%s' "$buckets" | jq -r --arg name "$BUCKET" 'any(.[]; (.globalAliases | index($name)) != null)')"
+if [ "$bucket_exists" = true ]; then
   echo "bucket: $BUCKET exists"
 else
   g bucket create "$BUCKET" >/dev/null
@@ -230,14 +219,12 @@ fi
 #    exists to prevent. Returns 1 when absent, 2 on a fault (already
 #    reported), since `exit` here would only leave the $().
 secret_json() { # <namespace/secret>
-  local out rc=0
-  out="$(kubectl get secret -n "${1%%/*}" "${1#*/}" -o json 2>&1)" || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    printf '%s' "$out" | grep -q 'NotFound' && return 1
-    echo "FATAL: cannot read Secret $1:" >&2
-    printf '%s\n' "$out" >&2
+  local out
+  out="$(kubectl get secret -n "${1%%/*}" "${1#*/}" --ignore-not-found -o json)" || {
+    echo "FATAL: cannot read Secret $1" >&2
     return 2
-  fi
+  }
+  [ -n "$out" ] || return 1
   printf '%s' "$out"
 }
 secret_field() { # <json> <field>
@@ -247,8 +234,12 @@ secret_field() { # <json> <field>
 created=()
 drift=0
 ensure_key() { # <key name> <namespace/secret, or empty>
-  local name="$1" from="$2" have_id have_secret want_id="" want_secret="" json rc=0
-  have_id="$(g_try key info "$name" | sed -n 's/^Key ID: *//p' || true)"
+  local name="$1" from="$2" have_id have_secret want_id="" want_secret="" json keys external rc=0
+  keys="$(g json-api ListKeys)" || return 1
+  have_id="$(printf '%s' "$keys" | jq -er --arg name "$name" '
+    [.[] | select(.name == $name)] |
+    if length > 1 then error("multiple keys share the requested name")
+    elif length == 1 then .[0].id else "" end')" || return 1
   if [ -n "$from" ]; then
     json="$(secret_json "$from")" || rc=$?
     case "$rc" in
@@ -267,7 +258,8 @@ ensure_key() { # <key name> <namespace/secret, or empty>
         # script cannot tell them apart and the second must not get a
         # minted key papering over it, so the operator decides: fix the
         # projection, or switch import off to mint and seed Vault.
-        if kubectl get externalsecret -n "${from%%/*}" "${from#*/}" >/dev/null 2>&1; then
+        external="$(kubectl get externalsecret -n "${from%%/*}" "${from#*/}" --ignore-not-found -o name)" || return 1
+        if [ -n "$external" ]; then
           echo "FATAL: ExternalSecret $from exists but has produced no Secret." >&2
           echo "       If Vault should already hold this key, fix the projection:" >&2
           echo "         kubectl describe externalsecret -n ${from%%/*} ${from#*/}" >&2
@@ -287,7 +279,8 @@ ensure_key() { # <key name> <namespace/secret, or empty>
       # prevent, and a WARNING line in a scrolled terminal is not a report.
       # Both halves are compared; Vault is seeded by hand, so a right ID
       # with a wrong secret is as plausible as a wrong ID.
-      have_secret="$(g_try key info "$name" --show-secret | sed -n 's/^Secret key: *//p' || true)"
+      have_secret="$(g key info "$have_id" --show-secret | sed -n 's/^Secret key: *//p')" || return 1
+      [ -n "$have_secret" ] || { echo "FATAL: could not read existing key secret" >&2; return 1; }
       if [ "$want_id" != "$have_id" ]; then
         echo "ERROR: key $name is $have_id in garage but $from holds $want_id;" >&2
         echo "       consumers of that Secret cannot authenticate. Reconcile Vault or the key." >&2
@@ -319,27 +312,21 @@ ensure_key "$KEY_RW" "$KEY_RW_SECRET"
 #    running `allow --read` against a key that already had RW leaves it
 #    RW while the script cheerfully reports "has R". Asserting both
 #    directions makes the grant declarative.
-g_try bucket deny --write "$BUCKET" --key "$KEY_RO" >/dev/null || true
+g bucket deny --write "$BUCKET" --key "$KEY_RO" >/dev/null
 g bucket allow --read "$BUCKET" --key "$KEY_RO" >/dev/null
 echo "grant: $KEY_RO has R on $BUCKET"
 g bucket allow --read --write "$BUCKET" --key "$KEY_RW" >/dev/null
 echo "grant: $KEY_RW has RW on $BUCKET"
 
-# 6. Only keys this run minted need seeding; imported ones are already
-#    where they belong. The Vault path is whatever the ExternalSecret
-#    behind the Secret reads from - asked for, not repeated here.
+# 6. Minted keys must be seeded into Vault before consumers can use them.
 if [ "${#created[@]}" -gt 0 ]; then
   echo
   echo "=== credentials - put these in Vault, then delete this output ==="
   for entry in "${created[@]}"; do
-    k="${entry%%:*}"; from="${entry#*:}"
-    path=""
-    [ -n "$from" ] && path="$(kubectl get externalsecret -n "${from%%/*}" "${from#*/}" \
-      -o jsonpath='{.spec.data[0].remoteRef.key}' 2>/dev/null || true)"
+    k="${entry%%:*}"
     echo "--- $k ---"
     g key info "$k" --show-secret | grep -iE '^(Key ID|Secret key):'
-    echo "  vault kv put kv/${path:-garage/<path the ExternalSecret reads>} \\"
-    echo "    access-key-id=<Key ID> secret-access-key=<Secret key>"
+    echo "  Seed the Vault path referenced by this consumer's ExternalSecret."
   done
 fi
 

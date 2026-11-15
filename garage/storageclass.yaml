@@ -13,12 +13,9 @@
 # every block read and write crosses the 13-72ms wifi link that
 # longhorn-settings/config.yaml spends four settings coping with. strict
 # keeps the volume on the node that holds its replica and refuses to
-# attach anywhere else. The pod anti-affinity in statefulset.yaml is what
-# makes that refusal never bite: each ordinal only ever has one node it
-# can land on. That holds because the cluster has exactly three
-# schedulable nodes. A fourth node breaks it - a rescheduled pod may
-# land where its volume is not and sit Pending - and needs either a
-# nodeSelector pinning the three or a fourth garage node.
+# attach anywhere else. Longhorn records that host in the PV's node
+# affinity after attachment, so the scheduler returns a restarted pod to
+# its existing volumes. Pod anti-affinity spreads the initial three pods.
 #
 # What this trades away, deliberately: a Longhorn-level rescue when a
 # node is lost. If node2 dies, garage-node-N stays Pending until node2 is
