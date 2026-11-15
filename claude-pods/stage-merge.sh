@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dispatcher-command-protocol: 1
 # Pod 1's 04:00 job: an independent verdict on the PRs pod 0 opened at 00:00.
 #
 # The point is that this panel has NOT seen pod 0's reasoning. It gets a fresh
@@ -15,6 +16,8 @@ set -uo pipefail
 POD_LIB="${POD_LIB:-/usr/local/share/claude-pods/lib/pod-common.sh}"
 # shellcheck source=lib/pod-common.sh
 source "$POD_LIB" || { echo "FATAL: cannot source $POD_LIB" >&2; exit 1; }
+
+require_dispatch_command "$@" || exit 1
 
 PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-1800}"
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
@@ -37,41 +40,14 @@ preflight_credential || exit 1
 
 pick_model
 
-now=$(date +%s)
-
-# The card this run is for; see stage-test.sh for the reasoning. Empty
-# means sweep everything, which is what a hand-run or the reconciler does.
-ONLY_TASK="${1:-}"
-
-for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
-  if [[ "$repo" != "$OWNER"/* ]]; then
-    continue
-  fi
-
-  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
-    --jq '.[] | select(.headRefName | startswith($ENV.KANEO_BRANCH_PREFIX)) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
-  [ "${#PRS[@]}" -eq 0 ] && continue
-
+# Start acknowledgment precedes GitHub work; the dispatcher validates the
+# command's current task, repository, stage and column visit.
+kaneo_work_started "$ONLY_TASK" stage-merge || exit 1
+for repo in "$ONLY_REPO"; do
+  mapfile -t PRS < <(command_pr | jq -r '"\(.number) \(.updatedAt) \(.headRefOid)"')
   for entry in "${PRS[@]}"; do
     read -r pr updated sha <<<"$entry"
-
-    # When the dispatcher named a card, judge only that card's branch.
-    if [ -n "$ONLY_TASK" ]; then
-      want="$(kaneo_branch_for_task "$ONLY_TASK")"
-      head="$(gh pr view "$pr" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)"
-      [ "$head" = "$want" ] || continue
-    else
-      # Don't judge a branch that is still moving: if pod 0 overran, the
-      # diff under review may not be the diff that ends up on the branch.
-      # Only meaningful when sweeping — a dispatched card was just moved
-      # to Mergeable by the stage before it, which is the signal that it
-      # settled.
-      upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
-      if [ "$upd" -gt 0 ] && [ $(( (now - upd) / 60 )) -lt "$QUIET_MINUTES" ]; then
-        echo "SKIP $repo#$pr: updated $(( (now - upd) / 60 ))m ago, still settling"
-        continue
-      fi
-    fi
+    task="$ONLY_TASK"
 
     # Pod 2's integration testing gates the merge. Its tests are manual and
     # non-deterministic — they exercise the running software, so they cannot
@@ -131,8 +107,6 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     name="$(basename "$repo")"
     dir="/workspace/$name"
     [ -d "$dir" ] || { echo "SKIP $repo#$pr: no clone"; continue; }
-    task="$(kaneo_task_for_pr "$repo" "$pr")" || continue
-    kaneo_work_started "$task" stage-merge || continue
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- reviewing $repo#$pr ($(date -Is))"
@@ -176,12 +150,12 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         # window would otherwise be merged carrying a pass earned on the
         # commit it replaced. GitHub refuses the merge instead, which the
         # failure path below already handles.
+        dispatcher_report merge-authorize "$(jq -cn --argjson pr "$pr" --arg sha "$sha" '{pr:$pr,sha:$sha}')" || continue
         if merge_pr "$repo" "$pr" "$sha"; then
           echo "MERGED $repo#$pr"
-          kaneo_move "$(kaneo_task_for_pr "$repo" "$pr")" done
           # Recorded so the post-merge sweep below can revert it if main
           # goes red. Merging is only safe because undoing it is cheap.
-          echo "$repo $pr" >> "$STATE_DIR/merged-$(date +%Y%m%d)"
+          echo "$repo $pr $sha" > "$STATE_DIR/merged-$DISPATCH_COMMAND"
           gh pr comment "$pr" --repo "$repo" --body "Nightly review (pod 1, independent panel): merged." >/dev/null 2>&1
         else
           echo "MERGE FAILED $repo#$pr"
@@ -192,7 +166,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
         # this is the case most likely to be waved through on a skim.
         echo "RISKY $repo#$pr — flagged for human decision"
         risky_task="$(kaneo_task_for_pr "$repo" "$pr")" || risky_task=""
-        kaneo_move "$risky_task" needs-human-review
+        kaneo_outcome "$risky_task" blocked
         # The mention is the notification. Kaneo has no per-column filter,
         # so status-change notifications are off and this is the only thing
         # that reaches a phone.
@@ -236,17 +210,25 @@ done
 # merge itself can break things (squashed semantic conflict, two PRs fine
 # apart and broken together). Wait for main's CI, and revert anything that
 # turned it red. Reverting fast beats agonising over the merge decision.
-MERGED_FILE="$STATE_DIR/merged-$(date +%Y%m%d)"
+MERGED_FILE="$STATE_DIR/merged-$DISPATCH_COMMAND"
 if [ -s "$MERGED_FILE" ]; then
   echo "=== post-merge verification $(date -Is) ==="
-  sort -u "$MERGED_FILE" | while read -r repo pr; do
+  while read -r repo pr sha; do
     [ -z "$repo" ] && continue
 
-    # Give main's run time to start and finish before judging it.
+    # Observe the exact merge commit, never a previous or unrelated main run.
+    merge_sha=$(gh pr view "$pr" --repo "$repo" --json mergeCommit --jq '.mergeCommit.oid // empty')
+    base=$(gh pr view "$pr" --repo "$repo" --json baseRefName --jq .baseRefName)
+    [ -n "$merge_sha" ] && [ -n "$base" ] || { echo "UNKNOWN merge commit for $repo#$pr"; continue; }
     status=""
     for _ in $(seq 1 40); do
-      status=$(gh run list --repo "$repo" --branch main --limit 1 \
-                 --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"' 2>/dev/null)
+      status=$(gh run list --repo "$repo" --branch "$base" --commit "$merge_sha" --limit 100 \
+                 --json status,conclusion 2>/dev/null | jq -r '
+                   if length == 0 then "unknown"
+                   elif any(.status != "completed") then "pending"
+                   elif all(.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral") and any(.conclusion == "success") then "completed success"
+                   elif any(.conclusion == "failure" or .conclusion == "timed_out") then "completed failure"
+                   else "unknown" end')
       if [[ "$status" == completed\ * ]]; then
         break
       fi
@@ -255,18 +237,20 @@ if [ -s "$MERGED_FILE" ]; then
 
     if [[ "$status" == "completed success" ]]; then
       echo "   ok      $repo#$pr (main green)"
+      kaneo_outcome "$ONLY_TASK" succeeded
     elif [[ "$status" == completed\ * ]]; then
       outcome="${status#completed }"
       echo "   BROKEN  $repo#$pr -> main is $outcome; reverting"
+      dispatcher_report merge-authorize-revert "$(jq -cn --argjson pr "$pr" --arg sha "$sha" '{pr:$pr,sha:$sha}')" || continue
       if revert_url=$(revert_pr "$repo" "$pr"); then
         echo "   REVERTED $repo#$pr ($revert_url)"
         # The card is already in Done — this merge landed and then broke
         # main. Done is wrong now, and nothing else will correct it, so
         # pull it back and say why. A reverted change is not finished work.
         rev_task="$(kaneo_task_for_pr "$repo" "$pr")" || rev_task=""
-        [ -n "$rev_task" ] && kaneo task comment "$rev_task" \
+        [ -n "$rev_task" ] && kaneo_note "$rev_task" \
           "This merge turned main $outcome and was reverted automatically ($revert_url). The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
-        kaneo_move "$rev_task" to-do
+        dispatcher_report merge-reverted "$(jq -cn --argjson revertPR "${revert_url##*/}" '{revertPR:$revertPR}')"
         gh pr comment "$pr" --repo "$repo" --body \
           "Nightly: this merge turned main $outcome, so it has been reverted automatically ($revert_url). The branch work is preserved in the revert's parent commit." >/dev/null 2>&1
       else
@@ -280,7 +264,7 @@ if [ -s "$MERGED_FILE" ]; then
     else
       echo "   UNKNOWN $repo#$pr (main CI still '$status' after 20m; not reverting)"
     fi
-  done
+  done < "$MERGED_FILE"
 fi
 
 echo "=== stage-merge complete $(date -Is) ==="

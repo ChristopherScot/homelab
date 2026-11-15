@@ -3,18 +3,37 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../lib/pod-common.sh"
 
-# The CLI can return an error object with exit 0. It must not grant a lease.
-kaneo() {
-  test "$*" = 'task comment task1 Work started: stage-author --json' || return 1
-  printf '%s\n' "$reply"
-}
-reply='{"id":"receipt1","taskId":"task1","content":"Work started: stage-author","createdAt":"2026-11-15T00:00:00Z"}'
+# A 202 from the old dispatcher, a failed command or mismatched acknowledgment
+# must never grant permission to work. No cluster or actual HTTP call.
+require_dispatch_command task1 owner/repo command1
+export KANEO_API_KEY=test
+curl() { printf '%s\n%s' "$fixture_reply" "$fixture_code"; }
+fixture_reply='{"version":1,"accepted":true,"task":"task1","command":"command1","event":"author-started"}'
+fixture_code=200
 kaneo_work_started task1 stage-author
-reply='{"error":"unavailable"}'
+for fixture_code in 202 409 500; do
+  if kaneo_work_started task1 stage-author 2>/dev/null; then
+    echo "HTTP $fixture_code granted permission" >&2; exit 1
+  fi
+done
+fixture_code=200
+fixture_reply='{"version":1,"accepted":true,"task":"task1","command":"other","event":"author-started"}'
 if kaneo_work_started task1 stage-author 2>/dev/null; then
-  echo 'an API error was accepted as a work-start receipt' >&2; exit 1
+  echo 'wrong command granted permission' >&2; exit 1
 fi
-echo 'PASS: durable worker start receipt'
+if require_dispatch_command task1 owner/repo 2>/dev/null; then
+  echo 'uncommanded worker accepted' >&2; exit 1
+fi
+echo 'PASS: command-scoped start acknowledgment'
+# Failed rework accounting must not permit an uncounted retry loop.
+outcome_called=false
+kaneo_note() { return 1; }
+kaneo_outcome() { outcome_called=true; }
+if kaneo_requeue task1 reason 2>/dev/null; then
+  echo 'requeued without its rework receipt' >&2; exit 1
+fi
+[ "$outcome_called" = false ]
+
 command -v flock >/dev/null || { echo 'SKIP: flock requires Linux'; exit 0; }
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT

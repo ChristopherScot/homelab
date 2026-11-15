@@ -19,7 +19,7 @@ the card is what a human reads.
 
    If it genuinely should not be done, do NOT close or delete the card.
    Comment on it with what you checked and what you found:
-     kaneo task comment $task "<what you checked, what you found, why it no longer needs doing>"
+     Describe what you checked, what you found, and why it no longer needs doing in your final report. The dispatcher owns Kaneo updates.
    then say "OBSOLETE: <reason>" and stop. A human moves it to Done or
    drags it back; deciding that for them is how a live ticket disappears.
 
