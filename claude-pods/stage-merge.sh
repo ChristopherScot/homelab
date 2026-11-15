@@ -145,15 +145,8 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # stalled the stack behind it while a personal token sat mounted and
     # unused.
     #
-    # On the verdict string, stated precisely because the obvious claim
-    # is wrong: the WRAPPER's own messages ("retrying on personal") do go
-    # to stderr and escape the capture, but the wrapper runs the command
-    # as `"$@" 2>&1`, so anything CLAUDE writes to stderr lands in
-    # $verdict and a ^-anchored match can reach it. What actually keeps
-    # this correct is the `tail -1` on the parse below: a retry's output
-    # replaces the first attempt's, and the last VERDICT line wins. That
-    # is load-bearing - do not drop the tail -1 believing the streams are
-    # separate.
+    # tail -1 on the VERDICT parse below is load-bearing: a retry's
+    # output replaces the first attempt's, and the last verdict wins.
     verdict=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
       timeout "$PER_PR_TIMEOUT" claude -p --output-format json --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir")

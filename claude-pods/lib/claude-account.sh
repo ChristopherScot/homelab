@@ -75,12 +75,21 @@ claude_rate_limited() {
     [ "$1" = "$reason" ] && return 0
   done
 
-  printf '%s\n' "$1" | tail -1 | jq -e --arg r "$CLAUDE_LIMIT_REASONS" '
+  # Try the whole input first, then just the last line. The CLI prints a
+  # diagnostic line before the JSON on some errors (seen with an
+  # unrecognised --model), which makes the whole capture unparseable; the
+  # last line alone is the object. Whole-input first so a pretty-printed
+  # object still parses - last-line-only would see just its closing brace.
+  _claude_limit_json() {
+    jq -e --arg r "$CLAUDE_LIMIT_REASONS" '
       ($r | split("|") + ["api_error_429"]) as $limited
       | .api_error_status? == 429
         or ([.terminal_reason?, .subtype?, .stop_reason?] - [null]
             | any(. as $v | $limited | index($v)))
-    ' >/dev/null 2>&1
+      ' >/dev/null 2>&1
+  }
+  printf '%s' "$1" | _claude_limit_json && return 0
+  printf '%s\n' "$1" | tail -1 | _claude_limit_json
 }
 
 
@@ -149,43 +158,10 @@ run_with_account_failover() {
   fi
 
   out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?
-  # Detect on a WINDOW of the tail, not the whole transcript and not a
-  # needle at the very end. Both extremes were tried here and both were
-  # wrong, in opposite directions:
-  #
-  # Whole transcript: the capture is an hour of agent prose plus the
-  # CLI's stderr, so a ticket that merely edited a file named
-  # rate_limit.go and then failed its tests read as a limited account
-  # and burned a full second run on the reserve one. (That specific
-  # example no longer matches, because the alternates are now anchored -
-  # see claude_rate_limited. The reasoning is kept because the shape of
-  # the mistake is what matters: the longer the haystack, the more of
-  # the agent's own words are in it.)
-  #
-  # tail -2: a real limit is NOT the last thing printed. The CLI appends
-  # "· progress saved" to the limit line, and a -p run prints its own
-  # epilogue after ("Total cost: $X", "Total duration: Nm"). Driven
-  # through this wrapper with a fake command, a real limit three lines
-  # from the end was missed entirely and the reserve was never tried -
-  # the exact 2026-11-14 failure, reintroduced by the fix for it.
-  #
-  # So specificity lives in the PATTERN, which is anchored to line
-  # starts on the CLI's own sentences, and the window only has to be
-  # wide enough that the message cannot fall outside it. 40 lines covers
-  # any epilogue. Widening it further is not the hazard it would have
-  # been before the anchoring, which is why the test pins that a bound
-  # exists rather than pinning the number 40.
-  # rc=124 is `timeout` killing a wedged run, which is not an exhausted
-  # account. Both the stages and this file already treat it as its own
-  # thing (stage-merge and stage-author branch on 124 explicitly) and
-  # only this condition forgot. Without the exclusion, a run that
-  # printed a limit line within the last 40 lines before wedging - these
-  # stages edit this very file, so that is reachable - earns a second
-  # full PER_TICKET_TIMEOUT on the reserve for nothing. 124 still
-  # propagates out of this function unchanged, so the stages' own
-  # handling of it is unaffected.
+  # rc=124 is `timeout` killing a wedged run, not an exhausted account;
+  # it still propagates out unchanged for the stages' own handling.
   if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] \
-     && claude_rate_limited "$(printf '%s' "$out" | tail -40)"; then
+     && claude_rate_limited "$out"; then
     if use_claude_account personal; then
       echo "work account is rate limited; retrying on personal" >&2
       out="$(_claude_attempt "$stdin_file" "$@")"; rc=$?

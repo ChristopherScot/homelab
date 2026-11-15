@@ -202,36 +202,18 @@ for t in "${TICKETS[@]}"; do
   # this script. Exported so render_prompt's subprocess can see them.
   export dir repo task ROUNDS
   render_prompt "$PROMPT_DIR/$mode.md" > "$STATE_DIR/prompt.txt"
-  # Through the failover wrapper, not bare. A work account that has hit
-  # its weekly limit used to end the ticket: the stage saw a non-zero exit,
-  # found no PR, and parked the card - with a personal token mounted and
-  # unused the whole time. lib/claude-account.sh said so in as many words
-  # ("the stage scripts invoke `claude -p` bare ... Do not read this as the
-  # stages being covered"), and on 2026-11-14 that cost a card three
-  # attempts: "You've hit your weekly limit · resets Nov 16, 11am (UTC)".
+  # Through the failover wrapper: a work account out of quota used to end
+  # the ticket with the personal token mounted and unused.
   #
-  # The wrapper captures the output to inspect it for a limit, so this is
-  # no longer streamed live into the log. For a run that can last an hour
-  # that is a real loss of progress visibility, so the output is written
-  # through as soon as the wrapper returns, so the tee that log_to set up
-  # (see log_to in lib/pod-common.sh) still carries it to the log file
-  # and on to Loki. Nothing here tees - the write-through is a plain
-  # printf, and log_to did the redirection once at startup. Do not quote
-  # log_to's redirection target here: tests/pod-common.sh greps these
-  # scripts for it to catch a private copy of the block, and it cannot
-  # tell a citation in a comment from a real one.
+  # --output-format json because the wrapper reads terminal_reason to
+  # decide that, rather than scraping the agent's prose. claude_result_text
+  # pulls .result back out for the log.
   #
-  # The cost is real and not papered over: on a 3600s ticket Loki now
-  # shows nothing until the run ends, so a working long run and a hung
-  # one look alike. The column is meant to be the signal for a stuck
-  # card, and this weakens it. Teeing per attempt inside the wrapper
-  # would restore it without hiding the retry behind the first attempt.
-  #
-  # --output-format is deliberately NOT set here. The wrapper's detection
-  # reads prose as well as JSON (claude_rate_limited matches "hit your
-  # N-hour limit" and "usage limit"), and the prompt's report parsing
-  # downstream expects the human-readable form. Moving the stages to JSON
-  # is a separate change with its own output contract.
+  # Known cost: the wrapper captures the output, so Loki shows nothing
+  # until the run ends and a working long run looks like a hung one.
+  # Restoring progress visibility means the caller supplying a sink, not
+  # the wrapper teeing - a pipeline here replaces $? with tee's and
+  # silently disables the failover.
   out=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
     timeout "$PER_TICKET_TIMEOUT" claude -p --output-format json --model "$MODEL" \
     --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" \

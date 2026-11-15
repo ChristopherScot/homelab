@@ -47,6 +47,15 @@ claude_rate_limited '[claude-code:unrecognized_model] {"model":"x"}
 {"terminal_reason":"limit_reached"}' \
   || { echo "FAIL: a limit behind a diagnostic line was missed"; fail=1; }
 
+# A pretty-printed object must parse too. Reading only the last line
+# would see just its closing brace - which is what a `tail -40` window
+# plus an inner `tail -1` did before, so a multi-line object silently
+# failed to detect.
+claude_rate_limited '{
+  "terminal_reason": "limit_reached",
+  "result": "stopped early"
+}' || { echo "FAIL: a multi-line JSON object was missed"; fail=1; }
+
 # Not out of quota: ordinary outcomes, other HTTP errors, and the
 # agent's own words. The prose lives in .result, which the detector
 # never reads - that is the point of reading JSON at all. Before this,
