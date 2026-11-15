@@ -93,11 +93,17 @@ g() {
 # follows (same id-first shape) is not mistaken for nodes. A node whose
 # role is staged but not applied shows "pending..." and is treated as
 # assigned, so a re-run after a failed apply does not stage it twice.
+#
+# A node that discovery has found but that has not finished its
+# handshake lists with hostname "?" - it is in the table before it is a
+# member. Leave it out: counting it made the membership wait below pass
+# 30 seconds after a fresh start, and the layout step then asked
+# Kubernetes for a pod called "?".
 healthy_nodes() {
   g_try status | awk '
     /^==== HEALTHY NODES/ { in_table = 1; next }
     /^====/               { in_table = 0 }
-    in_table && /^[0-9a-f]{16} / {
+    in_table && /^[0-9a-f]{16} / && $2 != "?" {
       print $1, $2, (/NO ROLE ASSIGNED/ ? "unassigned" : "assigned")
     }'
 }

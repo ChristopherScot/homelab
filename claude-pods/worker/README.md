@@ -25,21 +25,12 @@ both: workers pull their own copy over HTTP, so there is no filesystem
 to share, and a read-only key makes write isolation structural rather
 than behavioural.
 
-## Known discrepancy
-
-The live layout advertises **9.3 GiB**, not 10 GiB. It was applied when
-`garage-init.sh` defaulted to `10G` (decimal) against a `10Gi` (binary)
-PVC. The script now says `10Gi`, but re-running it will not correct the
-applied layout - the layout step short-circuits on "already assigned".
-
-Harmless at 74MB of use. Fixing it means `garage layout assign -c 10Gi`
-and `layout apply --version 2`, which is a live cluster change and not
-worth doing until something needs the space.
-
 ## What is running
 
-- **Garage** (`garage` namespace), single node, `replication_factor 1`,
-  bucket `claude-reference`.
+- **Garage** (`garage` namespace), three nodes, `replication_factor 3`,
+  bucket `claude-reference`. One node per k8s node; see garage/README.md
+  for what happens when one goes away, and garage/PERMISSIONS.md for how
+  a new consumer gets a key.
 - **Two keys**: `claude-worker` (read, for pods) and `claude-seed`
   (read-write, for seeding). Verified distinct in `garage bucket info`.
 
