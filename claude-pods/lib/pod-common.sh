@@ -223,12 +223,22 @@ revert_pr() {
 # TERMINATES a live run as "idle". So the NIGHTLY_LOCK override below
 # must never be set in a session pod — a run holding a different path is
 # invisible to the reaper.
+# The dispatcher gives each launch a private acknowledgment path. A timeout
+# removes its directory; failing to acknowledge must stop this worker too.
+acknowledge_launch() {
+  [ -n "${NIGHTLY_LAUNCH_ACK:-}" ] || return 0
+  printf '%s\n' "$1" > "${NIGHTLY_LAUNCH_ACK}.tmp" &&
+    mv "${NIGHTLY_LAUNCH_ACK}.tmp" "$NIGHTLY_LAUNCH_ACK"
+}
+
 take_pod_lock() {
   exec 9>"${NIGHTLY_LOCK:-/tmp/nightly.lock}"
   if ! flock -n 9; then
+    acknowledge_launch busy || true
     echo "another nightly stage is already running in this pod; exiting" >&2
     return 1
   fi
+  acknowledge_launch accepted
 }
 
 # --- Kaneo -----------------------------------------------------------------
