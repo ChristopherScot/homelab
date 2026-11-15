@@ -192,6 +192,27 @@ sed 's/[[:space:]]*#.*$//' "$wrapper_src" \
   | grep -qE 'claude_rate_limited "\$\(printf .* \| tail -[0-9]+\)"' \
   || { echo "FAIL: run_with_account_failover detects on unbounded output"; fail=1; }
 
+# --- desloppify shares this library ---------------------------------------
+# The desloppify image COPYs claude-pods/lib/claude-account.sh (its
+# Dockerfile says so: "one copy of the account logic"), and its runner
+# does its own failover off run.py's stop_reason rather than through
+# run_with_account_failover. So this file is load-bearing for two pods
+# with different call shapes, and a change made for the stages has to
+# keep working for a bare reason word.
+#
+# Every stop_reason run.py can emit, checked in both directions, because
+# the cost is asymmetric: a missed exhaustion reason ends the night on
+# one account with the other untouched, and a false one spends a second
+# full run for nothing.
+for r in limit_reached quota_exceeded rate_limited out_of_credits api_error_429; do
+  claude_rate_limited "$r" \
+    || { echo "FAIL: desloppify would not fail over on stop_reason=$r"; fail=1; }
+done
+for r in completed timeout max_turns budget no_result error api_error_500; do
+  claude_rate_limited "$r" \
+    && { echo "FAIL: desloppify would fail over on stop_reason=$r"; fail=1; }
+done
+
 # And the other direction. A loose pattern here is worse than a tight one:
 # it burns the personal account on runs that were never limited.
 for msg in \
