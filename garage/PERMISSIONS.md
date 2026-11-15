@@ -60,10 +60,11 @@ Say `paperless` wants to archive exports to S3.
    ```
    Then add the same to `bootstrap/garage-init.sh` so the next rebuild
    recreates them: a bucket stanza like the one for `claude-reference`,
-   and an `ensure_key paperless paperless/garage-s3-paperless` line
-   naming the Secret from step 4, so a rebuilt cluster imports the
-   credential paperless already holds rather than minting one and
-   breaking it.
+   an `ensure_key paperless paperless/garage-s3-paperless` line naming
+   the Secret from step 4, so a rebuilt cluster imports the credential
+   paperless already holds rather than minting one and breaking it, and
+   the `bucket allow` line, because a grant belongs to a key and a
+   rebuilt key has none.
 
 2. **Secret, in Vault.**
    ```sh
@@ -154,15 +155,22 @@ assumed.
 
 ## Rotating a key
 
-Create the replacement, update Vault, let it propagate, delete the old:
+Create the replacement **under the same name**, grant it, update Vault,
+let it propagate, delete the old one by id:
 
 ```sh
-garage key create paperless-2
-garage bucket allow --read --write paperless-archive --key paperless-2
+garage key create paperless                 # names are not unique; this is a second key
+garage key info paperless                   # ambiguous now - use the ids below
+garage bucket allow --read --write paperless-archive --key <new id>
 vault kv put kv/garage/s3-paperless access-key-id=<new> secret-access-key=<new>
 # ExternalSecrets refresh every minute; pods with reloader's annotation restart
-garage key delete <old key id> --yes
+garage key delete <old id> --yes
 ```
 
-A grant belongs to a key, so the new key needs its own; Vault keeps the
-path, so nothing in git changes.
+The name stays because `garage-init.sh` finds a key by name and then
+checks it against the Secret: a key called `paperless-2` would leave the
+committed `ensure_key paperless ...` line pointing at nothing, and the
+next rebuild would mint a stranger. While both keys exist the name is
+ambiguous, so do not run the init script mid-rotation. A grant belongs
+to a key, so the new one needs its own; Vault keeps the path, so nothing
+in git changes.

@@ -9,10 +9,12 @@
 # wait on readiness, so there is no lockout.
 #
 # Every step is check-then-act and safe to re-run. The layout step
-# assigns only nodes that have no role yet, so re-running after a node
-# was re-admitted (garage/README.md) assigns just that one; the bucket
-# and keys are created only if missing; the grants are re-applied
-# unconditionally, which repairs a drifted one.
+# assigns only nodes that have no role yet, and refuses to run while a
+# role belongs to a node that is gone - that is the re-admit case, which
+# needs `layout assign --replace` by hand (garage/README.md), and after
+# it this script has nothing left to assign. The bucket and keys are
+# created only if missing; the grants are re-applied unconditionally,
+# which repairs a drifted one.
 #
 # Keys: the two S3 keys already live in Vault, projected by External
 # Secrets into Secrets in the claude-pods namespace. A key Garage does
@@ -40,16 +42,17 @@ BUCKET="${GARAGE_BUCKET:-claude-reference}"
 # overwrite the books every other worker boots from. Object storage
 # gives read isolation structurally; write isolation needs this.
 # Each key names the namespace/Secret it is imported from; empty means
-# never import, always mint.
+# never import, always mint. `-` and not `:-` on the two *_SECRET
+# defaults, deliberately: an exported empty value must win, which is how
+# garage/tests/cluster-smoke.sh keeps the real keys out of its scratch
+# namespace.
 KEY_RO="${GARAGE_KEY_RO:-claude-worker}"
 KEY_RO_SECRET="${GARAGE_KEY_RO_SECRET-claude-pods/garage-s3-reference}"
 KEY_RW="${GARAGE_KEY_RW:-claude-seed}"
 KEY_RW_SECRET="${GARAGE_KEY_RW_SECRET-claude-pods/garage-s3-seed}"
-# Per-node capacity, if you want to override the size of the node's data
-# PVC, which is what is used otherwise. Garage uses it to weight the
-# layout; with three equal nodes at replication_factor 3 it is also the
-# usable total.
-CAPACITY="${GARAGE_CAPACITY:-}"
+# No capacity knob: each node's capacity is the size of its data PVC,
+# read when the node is assigned. Growing a running cluster is a layout
+# change by hand (garage/README.md), not a re-run of this.
 
 # Two wrappers, because this script asks garage two kinds of question
 # and they want opposite error handling.
@@ -91,15 +94,12 @@ g() {
   return "$rc"
 }
 
-# Cluster members, one per line: <id> <hostname> <assigned|unassigned>.
-# From the admin API's JSON rather than the `garage status` table, which
-# an earlier version parsed with awk and needed a paragraph to defend.
-# Two things the JSON makes structural: a node discovery has found but
-# not finished a handshake with has no hostname yet and is not counted
-# (counting it made the membership wait pass 30 seconds after a fresh
-# start, and the layout step then asked Kubernetes for a pod called "?");
-# and a role that is staged but not yet applied counts as assigned, so a
-# re-run after a failed apply does not stage it twice.
+# Cluster members, one per line: <id> <hostname> <assigned|unassigned>,
+# from the admin API's JSON. Two things it makes structural: a node that
+# discovery has found but not finished a handshake with has no hostname
+# yet and is not a member; and a role that is staged but not yet applied
+# counts as assigned, so a re-run after a failed apply does not stage it
+# twice.
 healthy_nodes() {
   local status layout
   status="$(g_try json-api GetClusterStatus)" || return 0
@@ -112,6 +112,19 @@ healthy_nodes() {
     | "\($id) \(.hostname) \(if ($have | index($id)) then "assigned" else "unassigned" end)"'
 }
 
+# Applied roles whose node is not up, one id per line. Once every pod the
+# StatefulSet wants is a member, such a role can only be a node that was
+# lost and replaced (its identity lives on its meta volume), and the
+# layout still maps a share of every partition to it.
+dead_roles() {
+  local status layout
+  status="$(g_try json-api GetClusterStatus)" || return 0
+  layout="$(g_try json-api GetClusterLayout)" || return 0
+  jq -rn --argjson s "$status" --argjson l "$layout" '
+    [$s.nodes[] | select(.isUp) | .id] as $up
+    | $l.roles[].id | select(. as $id | $up | index($id) | not)'
+}
+
 echo "=== garage-init: ns=$NS sts=$STS via $POD ==="
 
 # 1. Membership. Nodes find each other through Kubernetes discovery once
@@ -121,10 +134,10 @@ echo "=== garage-init: ns=$NS sts=$STS via $POD ==="
 #    on a race the operator did not cause.
 want="$(kubectl get sts -n "$NS" "$STS" -o jsonpath='{.spec.replicas}')"
 [ -n "$want" ] || { echo "FATAL: cannot read $STS replicas in $NS" >&2; exit 1; }
-#    `|| true` because this is the one place the script expects garage to
-#    be unreachable (a pod still attaching its volumes), and set -e would
-#    otherwise turn that into a silent exit with the kubectl error already
-#    discarded by g_try.
+#    healthy_nodes prints nothing while garage is unreachable (a pod still
+#    attaching its volumes); the `|| true` is for jq choking on a response
+#    it does not expect, which should be another empty poll rather than a
+#    silent exit under set -e.
 for _ in $(seq 1 18); do
   have="$(healthy_nodes | wc -l | tr -d ' ' || true)"
   [ "${have:-0}" -ge "$want" ] && break
@@ -145,12 +158,26 @@ done
 #    rather than assumed: anti-affinity fixes the node mapping but
 #    nothing says which ordinal landed where, and the PVC is the one
 #    place the capacity is declared (garage accepts the same Gi form).
+#
+#    A role held by a node that is gone is refused, not worked around:
+#    assigning its replacement next to it would apply a layout in which
+#    a share of every partition belongs to a node that will never return,
+#    and garage would run degraded while this script printed "applied".
+#    The fix is `layout assign --replace`, which only a human can decide.
+dead="$(dead_roles || true)"
+if [ -n "$dead" ]; then
+  echo "FATAL: the layout still holds a role for a node that is not up:" >&2
+  printf '  %s\n' $dead >&2
+  echo "A node whose meta volume was lost comes back as a new id. Replace the old one" >&2
+  echo "by hand (garage/README.md, 'Re-admitting a node'), then re-run this." >&2
+  exit 1
+fi
 staged=0
 while read -r id host role; do
   [ "$role" = "unassigned" ] || continue
   zone="$(kubectl get pod -n "$NS" "$host" -o jsonpath='{.spec.nodeName}')"
   [ -n "$zone" ] || { echo "FATAL: cannot find the k8s node running $host" >&2; exit 1; }
-  cap="${CAPACITY:-$(kubectl get pvc -n "$NS" "data-$host" -o jsonpath='{.status.capacity.storage}')}"
+  cap="$(kubectl get pvc -n "$NS" "data-$host" -o jsonpath='{.status.capacity.storage}')"
   [ -n "$cap" ] || { echo "FATAL: cannot read the size of PVC data-$host" >&2; exit 1; }
   echo "layout: assigning ${id:0:16} ($host) zone=$zone capacity=$cap"
   g layout assign -z "$zone" -c "$cap" "$id" >/dev/null
@@ -187,33 +214,77 @@ fi
 #    cluster learns the credential consumers already hold; created only
 #    when there is nothing to import. `key info <name>` resolves a name,
 #    so an existing key is found whichever way it was made.
-secret_field() { # <namespace/secret> <field>
-  kubectl get secret -n "${1%%/*}" "${1#*/}" -o "jsonpath={.data.$2}" 2>/dev/null | base64 -d
+#
+#    The Secret is read once, as JSON, with stderr kept. "No such Secret"
+#    is the one answer that means mint; a denied read, a wrong kubeconfig
+#    context or an API that is down must not be mistaken for it, because
+#    minting on a fault hands consumers a key they do not hold - the
+#    outcome the import exists to prevent. Returns 1 when absent, 2 on a
+#    fault (already reported), since `exit` here would only leave the $().
+secret_json() { # <namespace/secret>
+  local out rc=0
+  out="$(kubectl get secret -n "${1%%/*}" "${1#*/}" -o json 2>&1)" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf '%s' "$out" | grep -q 'NotFound' && return 1
+    echo "FATAL: cannot read Secret $1:" >&2
+    printf '%s\n' "$out" >&2
+    return 2
+  fi
+  printf '%s' "$out"
+}
+secret_field() { # <json> <field>
+  printf '%s' "$1" | jq -r ".data.$2 // empty" | base64 -d
 }
 
 created=()
 drift=0
 ensure_key() { # <key name> <namespace/secret, or empty>
-  local name="$1" from="$2" have_id want_id want_secret
+  local name="$1" from="$2" have_id have_secret want_id="" want_secret="" json rc=0
   have_id="$(g_try key info "$name" | sed -n 's/^Key ID: *//p' || true)"
-  want_id=""
-  want_secret=""
   if [ -n "$from" ]; then
-    want_id="$(secret_field "$from" AWS_ACCESS_KEY_ID || true)"
-    want_secret="$(secret_field "$from" AWS_SECRET_ACCESS_KEY || true)"
+    json="$(secret_json "$from")" || rc=$?
+    case "$rc" in
+      0)
+        want_id="$(secret_field "$json" AWS_ACCESS_KEY_ID)"
+        want_secret="$(secret_field "$json" AWS_SECRET_ACCESS_KEY)"
+        [ -n "$want_id" ] && [ -n "$want_secret" ] || {
+          echo "FATAL: $from has no AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY to import" >&2; exit 1; }
+        ;;
+      1)
+        # Absent is normal on a first-ever cluster. It is a fault when the
+        # ExternalSecret that should project it exists: then Vault, its
+        # policy or the SecretStore is broken, and a minted key would only
+        # paper over that until the projection recovers and disagrees.
+        if kubectl get externalsecret -n "${from%%/*}" "${from#*/}" >/dev/null 2>&1; then
+          echo "FATAL: ExternalSecret $from exists but has produced no Secret;" >&2
+          echo "       fix the projection (kubectl describe externalsecret -n ${from%%/*} ${from#*/}) before minting a key" >&2
+          exit 1
+        fi
+        ;;
+      *) exit 1 ;;
+    esac
   fi
   if [ -n "$have_id" ]; then
-    if [ -n "$want_id" ] && [ "$want_id" != "$have_id" ]; then
+    if [ -n "$want_id" ]; then
       # Reported here, fatal at the end: the grants below are still worth
       # applying, but a run that leaves consumers unable to authenticate
       # must not exit 0 - this is the failure the import step exists to
       # prevent, and a WARNING line in a scrolled terminal is not a report.
-      echo "ERROR: key $name is $have_id in garage but $from holds $want_id;" >&2
-      echo "       consumers of that Secret cannot authenticate. Reconcile Vault or the key." >&2
-      drift=1
+      # Both halves are compared; Vault is seeded by hand, so a right ID
+      # with a wrong secret is as plausible as a wrong ID.
+      have_secret="$(g_try key info "$name" --show-secret | sed -n 's/^Secret key: *//p' || true)"
+      if [ "$want_id" != "$have_id" ]; then
+        echo "ERROR: key $name is $have_id in garage but $from holds $want_id;" >&2
+        echo "       consumers of that Secret cannot authenticate. Reconcile Vault or the key." >&2
+        drift=1
+      elif [ "$want_secret" != "$have_secret" ]; then
+        echo "ERROR: key $name ($have_id) has a different secret in garage than $from holds;" >&2
+        echo "       consumers of that Secret cannot authenticate. Reconcile Vault or the key." >&2
+        drift=1
+      fi
     fi
     echo "key: $name exists ($have_id)"
-  elif [ -n "$want_id" ] && [ -n "$want_secret" ]; then
+  elif [ -n "$want_id" ]; then
     g key import --yes -n "$name" "$want_id" "$want_secret" >/dev/null
     echo "key: $name imported from $from ($want_id)"
   else

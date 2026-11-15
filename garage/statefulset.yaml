@@ -147,9 +147,9 @@ spec:
           requests:
             storage: 3Gi
     # Object data. 30Gi per node is 30Gi usable (every node holds every
-    # object), tripled from the first cut. Sized to the node that has the
-    # least headroom: Longhorn schedules against the full requested size
-    # and node2's SSD had 47Gi left to schedule when this was written.
+    # object). Sized to the node that has the least headroom: Longhorn
+    # schedules against the full requested size and node2's SSD had 47Gi
+    # left to schedule when this was written.
     # bootstrap/garage-init.sh reads this size off the PVC when it first
     # assigns a node, so it is declared once. To grow a running cluster
     # see garage/README.md: expand the PVCs, then a new layout version.

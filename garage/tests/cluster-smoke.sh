@@ -53,8 +53,7 @@ step "render into $NS with small volumes"
 # The same files Argo applies, with only the namespace and the sizes
 # changed. The sizes are matched by shape, not value, so a resize in
 # statefulset.yaml cannot leave this applying full-size volumes to a
-# scratch namespace. The StorageClass and CRD are cluster-scoped and
-# identical to what the real app owns, so they are applied as committed.
+# scratch namespace.
 for f in configmap rbac statefulset; do
   sed -E -e "s/namespace: garage$/namespace: $NS/" \
       -e "s/namespace = \"garage\"/namespace = \"$NS\"/" \
@@ -62,12 +61,26 @@ for f in configmap rbac statefulset; do
       "$src/$f.yaml" > "$render/$f.yaml"
 done
 grep -q 'storage: 1Gi' "$render/statefulset.yaml" || fail "could not shrink the volume sizes in statefulset.yaml"
+# The StorageClass and CRD are cluster-scoped: there is one of each, the
+# real app owns it, and Argo self-heals it. A test must not write to
+# them. Create them only when absent (a cluster that has never run
+# garage); otherwise require the committed file to match what is live,
+# so a branch that changes either is told to let Argo reconcile first
+# rather than silently testing against the old one.
+for f in storageclass crd; do
+  if kubectl get -f "$src/$f.yaml" >/dev/null 2>&1; then
+    kubectl diff -f "$src/$f.yaml" >/dev/null \
+      || fail "$f.yaml differs from the live object; it is Argo's to change, not this test's"
+    echo "$f.yaml: live object matches the committed file"
+  else
+    kubectl apply -f "$src/$f.yaml"
+  fi
+done
 kubectl create ns "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create secret generic garage-rpc \
   --from-literal=rpc-secret="$(openssl rand -hex 32)" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
-kubectl apply -f "$src/storageclass.yaml" -f "$src/crd.yaml" \
-  -f "$render/configmap.yaml" -f "$render/rbac.yaml" -f "$render/statefulset.yaml"
+kubectl apply -f "$render/configmap.yaml" -f "$render/rbac.yaml" -f "$render/statefulset.yaml"
 
 step "pods land on three different nodes"
 kubectl -n "$NS" wait --for=condition=PodScheduled pod -l app=garage-node --timeout=120s >/dev/null
@@ -96,11 +109,15 @@ init_out="$render/init.log"
 if [ -z "${GARAGE_SMOKE_IMPORT:-}" ]; then
   export GARAGE_KEY_RO_SECRET="" GARAGE_KEY_RW_SECRET=""
 fi
+# An allowlist of the step lines, not a denylist of the credential lines:
+# if the script's credential block is ever reworded, unknown output is
+# dropped rather than echoed into a CI log.
+show_init() { grep -E '^(membership|layout|bucket|key|grant|FATAL|ERROR)' "$init_out" || true; }
 if ! GARAGE_NS="$NS" bash "$src/../bootstrap/garage-init.sh" >"$init_out" 2>&1; then
-  grep -v -E '^(Key ID|Secret key):' "$init_out" | tail -30
+  show_init | tail -30
   fail "garage-init.sh failed"
 fi
-grep -v -E '^(Key ID|Secret key|  |    |--- |===)' "$init_out" || true
+show_init
 
 step "all three Ready through /health"
 kubectl -n "$NS" wait --for=condition=Ready pod -l app=garage-node --timeout=120s >/dev/null
@@ -176,15 +193,24 @@ EOF
 s3_job smoke-s3 probe-full
 
 step "one node down: the other two keep serving reads and writes"
-victim=garage-node-1
+# Scale to two rather than delete a pod: a deleted pod is recreated at
+# once, its volumes are already local, and it was Ready again before the
+# first version of this step had finished pulling the client image - so
+# the step passed against three healthy nodes and proved nothing. Scaling
+# removes the highest ordinal and keeps it gone until scaled back.
+victim=garage-node-2
 victim_node="$(kubectl -n "$NS" get pod $victim -o jsonpath='{.spec.nodeName}')"
-kubectl -n "$NS" delete pod $victim --wait=false >/dev/null
+kubectl -n "$NS" scale sts garage-node --replicas=2 >/dev/null
+kubectl -n "$NS" wait --for=delete pod/$victim --timeout=120s >/dev/null
+kubectl -n "$NS" get pod $victim >/dev/null 2>&1 && fail "$victim still exists after scaling down"
 # The Service only routes to Ready pods, so the client never sees the
-# dead one. The write below needs quorum (2 of 3), which is the claim.
+# missing one. The write below needs quorum (2 of 3), which is the claim.
 s3_job smoke-s3-degraded probe-degraded
+kubectl -n "$NS" get pod $victim >/dev/null 2>&1 && fail "inconclusive: $victim was back before the degraded write"
 kubectl -n "$NS" exec garage-node-0 -- /garage status 2>/dev/null
 
-step "the killed node comes back on the same k8s node and rejoins"
+step "the missing node comes back on the same k8s node and rejoins"
+kubectl -n "$NS" scale sts garage-node --replicas=3 >/dev/null
 kubectl -n "$NS" wait --for=condition=Ready pod/$victim --timeout=180s >/dev/null
 back_node="$(kubectl -n "$NS" get pod $victim -o jsonpath='{.spec.nodeName}')"
 [ "$back_node" = "$victim_node" ] || fail "$victim came back on $back_node, its volumes are on $victim_node"

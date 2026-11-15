@@ -2,8 +2,8 @@
 
 Groundwork for replacing the three role-pinned `claude-session` pods
 with disposable workers. **Nothing here is wired into the dispatcher
-yet** — Garage is deployed and running, the Jobs are written, and the
-credential handoff is the one step that needs a human.
+yet** — Garage is deployed and running, its credentials are in Vault,
+and the Jobs are written.
 
 ## Why this shape
 
@@ -34,48 +34,16 @@ than behavioural.
 - **Two keys**: `claude-worker` (read, for pods) and `claude-seed`
   (read-write, for seeding). Verified distinct in `garage bucket info`.
 
-## The credential handoff (done; kept for the record)
+## Credentials
 
-All three ExternalSecrets are `SecretSynced/True` and Vault is now the
-authoritative copy of both S3 keys: `bootstrap/garage-init.sh` imports
-them from the projected Secrets into any rebuilt cluster, so the steps
-below are only needed again for a key that does not exist yet. The
-permission model is in garage/PERMISSIONS.md.
-
-1. Log into Vault (`VAULT_ADDR=http://vault.lab vault login` on the LAN).
-2. Securely transfer the **existing** `garage-rpc` Secret value into
-   `kv/garage/rpc`, property `rpc-secret`. Do not generate a replacement
-   during this handoff. Copy Garage's `claude-worker` key into
-   `kv/garage/s3-reference` and its distinct `claude-seed` key into
-   `kv/garage/s3-seed`; both paths use `access-key-id` and
-   `secret-access-key`. Refuse conflicting existing Vault values until
-   they have been investigated. `garage-init.sh` prints a freshly minted
-   key once; that output must not be captured in logs.
-3. Apply only these reviewed Vault policies and Kubernetes-auth roles:
-
-   ```sh
-   VAULT_ADDR=http://vault.lab ./bootstrap/vault-policies.sh --garage-only
-   ```
-
-   This declares the `garage` and `claude-pods` roles without rewriting
-   unrelated applications. It preserves Claude's own secret access and
-   adds reads on the two exact Garage S3 paths. The Garage role reads only
-   the RPC path. Secret values remain outside Git; the permission policy
-   is declared in this repository.
-4. Let External Secrets reconcile, then verify all three ExternalSecrets
-   are `SecretSynced/True`: `garage-rpc` in `garage`, and
-   `garage-s3-reference` / `garage-s3-seed` in `claude-pods`. A Ready
-   SecretStore alone does not prove the paths are readable. These
-   resources refresh every minute so bootstrap and rotation do not wait
-   for an hourly refresh.
-5. Verify the RPC value is unchanged and the live Secret has an
-   ownerReference to its ExternalSecret. **Do not delete the Secret.**
-   ESO 0.11 adopts an existing Secret with no ownerReference in place;
-   the older instructions requiring deletion were incorrect. If a
-   different controller owns it, investigate that ownership conflict.
-6. Verify the worker key can list/read the reference bucket and rejects
-   writes; verify the seeder can write/read/delete a temporary probe.
-   Workers must never mount the seeder Secret.
+Vault holds both S3 keys (`kv/garage/s3-reference`, `kv/garage/s3-seed`)
+and the RPC secret (`kv/garage/rpc`); `bootstrap/vault-policies.sh
+--garage-only` declares who may read them, and the ExternalSecrets in
+garage/secrets.yaml project them. `bootstrap/garage-init.sh` imports the
+two keys from those projected Secrets into any rebuilt cluster, so a
+rebuild never changes what the pods hold. Adding a consumer, sharing a
+bucket, or rotating a key is walked through in garage/PERMISSIONS.md.
+Workers must never mount the seeder Secret.
 
 ## Then the PoC proves the model
 

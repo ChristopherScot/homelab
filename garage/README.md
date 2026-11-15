@@ -19,6 +19,7 @@ Garage's and not Longhorn's. What it buys, by event:
 | Two nodes down | Survivor has no quorum; `/health` fails, it leaves the Service | no | no |
 | Whole-house power cut | All three restart, rediscover each other within a minute, resync | after rejoin | after rejoin |
 | One node's disk lost | Node comes back as a stranger; re-admit it (below), Garage re-replicates | yes | yes |
+| A fourth k8s node added | A rescheduled pod may land on it, away from its volume, and sit Pending (storageclass.yaml); pin the three or add a fourth garage node | yes | yes |
 
 Both `metadata_fsync` and `data_fsync` are on, because the nodes share
 one mains supply and "a node lost power" is usually all of them.

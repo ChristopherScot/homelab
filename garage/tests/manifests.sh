@@ -77,8 +77,10 @@ done
 init="$dir/../bootstrap/garage-init.sh"
 expect "init script default StatefulSet name" \
   "$(sed -n 's/^STS="\${GARAGE_STS:-\(.*\)}"$/\1/p' "$init")" "$(q $sts StatefulSet .metadata.name)"
-expect "init script reads capacity from the data PVC, not a second knob" \
-  "$(grep -c 'get pvc -n "\$NS" "data-\$host"' "$init")" 1
+expect "init script has no capacity knob of its own (the PVC is the one declaration)" \
+  "$(grep -c 'GARAGE_CAPACITY' "$init")" 0
+expect "an exported empty GARAGE_KEY_*_SECRET disables import (cluster-smoke.sh relies on it)" \
+  "$(grep -c '_SECRET-claude-pods/' "$init")" 2
 
 # --- readiness is garage's own health, and the S3 Service follows it -----
 expect "readiness probes /health" \
