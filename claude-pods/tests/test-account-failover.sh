@@ -169,6 +169,65 @@ use_claude_account work
 # --- failover ---------------------------------------------------------
 attempt_log="$tmp/attempts"
 
+# --- the prompt must survive the retry ------------------------------
+# The retry has to see the SAME prompt as the first attempt. It did not:
+# every stage wrote `out=$(run_with_account_failover ... < prompt.txt)`,
+# which attaches the redirect to the whole function, so attempt 1 read
+# stdin to EOF and attempt 2 inherited a drained descriptor and ran the
+# agent with ZERO BYTES. The failover fired, spent the reserve account
+# on an empty prompt, and would have parked the 2026-11-14 card anyway -
+# defeating the entire point of this wrapper on the one case it was
+# written for.
+#
+# This suite could not see it because none of its fake commands read
+# stdin - ratelimited_cmd, ok_cmd and fake_claude all ignore it, and
+# fake_claude takes its transcript from an env var. So the fake here
+# READS STDIN, which is the whole point of the case: a fake that cannot
+# observe the input cannot pin the input contract.
+prompt_file="$tmp/prompt.txt"
+printf 'ticket ABC-123\nimplement the thing\n' > "$prompt_file"
+# Count the prompt the same way the fake below reads it - line bodies
+# only, no separators - so the expected number is derived from the file
+# rather than written down. Asserting a literal here would have to be
+# re-derived every time the fixture or the reader changes, and an
+# off-by-one in the ASSERTION reads exactly like an off-by-one in the
+# CODE, which is the confusion this avoids. What the case actually pins
+# is that both attempts see the SAME bytes and that the bytes are not
+# zero; the exact count is only the vehicle.
+want_bytes=$(awk '{ n += length($0) } END { print n+0 }' "$prompt_file")
+: > "$attempt_log"
+# Reads stdin with a bound, never a bare `cat`. If the wrapper stops
+# redirecting, an unbounded read blocks on the test runner's own stdin
+# and the suite HANGS instead of failing - which is how a CI run reports
+# nothing at all rather than a red build. Found by mutating the library
+# to ignore --stdin: the suite wedged for two minutes. `read -t` turns
+# that into an empty read, which the byte assertion below then fails on.
+stdin_reading_cmd() {
+  local p=""; local line
+  while IFS= read -r -t 5 line; do p="$p$line"; done
+  printf '%s %s\n' "$CLAUDE_ACCOUNT" "${#p}" >> "$attempt_log"
+  [ "$CLAUDE_ACCOUNT" = "work" ] && { echo "You've hit your weekly limit"; return 1; }
+  echo "ran"
+}
+run_with_account_failover --stdin "$prompt_file" stdin_reading_cmd >/dev/null 2>&1
+[ "$(wc -l < "$attempt_log")" -eq 2 ] \
+  || { echo "FAIL: --stdin did not retry on a limit"; fail=1; }
+while read -r acct bytes; do
+  [ "$bytes" = "$want_bytes" ] \
+    || { echo "FAIL: the $acct attempt got $bytes prompt bytes, want $want_bytes"; fail=1; }
+done < "$attempt_log"
+
+# And the shape the stages must NOT use: a redirect around the function
+# drains stdin, so the retry gets nothing. Pinned as the wrong shape so
+# that reintroducing it fails here rather than in production.
+: > "$attempt_log"
+run_with_account_failover stdin_reading_cmd >/dev/null 2>&1 < "$prompt_file"
+second=$(sed -n '2p' "$attempt_log" | awk '{print $2}')
+[ "${second:-0}" = "0" ] \
+  || { echo "NOTE: a redirect around the wrapper no longer drains stdin ($second bytes) - if that is deliberate, delete this case"; }
+
+
+
 : > "$attempt_log"
 ratelimited_cmd() { echo "$CLAUDE_ACCOUNT" >> "$attempt_log"; echo "stop_reason=api_error_429"; return 1; }
 run_with_account_failover ratelimited_cmd >/dev/null 2>&1
@@ -352,6 +411,19 @@ done
 # lib/claude-account.sh said as much in prose ("Do not read this as the
 # stages being covered"); prose does not fail a build.
 here_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# No stage may go back to redirecting the wrapper itself: that is the
+# bug above, and it is invisible in a diff that still shows a prompt
+# file being passed. Checked on the logical command, like the wiring
+# gate below.
+for stage in stage-author stage-test stage-merge; do
+  f="$here_dir/../$stage.sh"
+  joined=$(sed 's/#.*//' "$f" | tr '\n' '\001' | sed 's/\\\001/ /g' | tr '\001' '\n')
+  printf '%s' "$joined" | grep -qE 'run_with_account_failover[^|&;]*<[[:space:]]*"?\$' \
+    && { echo "FAIL: $stage.sh redirects into run_with_account_failover; pass --stdin instead"; fail=1; }
+  printf '%s' "$joined" | grep -qE 'run_with_account_failover --stdin' \
+    || { echo "FAIL: $stage.sh does not pass its prompt with --stdin"; fail=1; }
+done
 for stage in stage-author stage-test stage-merge; do
   f="$here_dir/../$stage.sh"
   [ -f "$f" ] || { echo "FAIL: cannot find $stage.sh to check"; fail=1; continue; }

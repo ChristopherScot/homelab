@@ -232,10 +232,10 @@ for t in "${TICKETS[@]}"; do
   # N-hour limit" and "usage limit"), and the prompt's report parsing
   # downstream expects the human-readable form. Moving the stages to JSON
   # is a separate change with its own output contract.
-  out=$(run_with_account_failover \
+  out=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
     timeout "$PER_TICKET_TIMEOUT" claude -p --model "$MODEL" \
     --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" \
-    --add-dir "$dir" < "$STATE_DIR/prompt.txt")
+    --add-dir "$dir")
   rc=$?
   printf '%s\n' "$out"
 

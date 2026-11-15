@@ -75,11 +75,14 @@ use_claude_account() {
 # JSON form, so the runner's limit_reached never matched and the retry
 # it was meant to trigger still did not fire.
 #
-# The JSON form has NO caller yet. The stage scripts invoke `claude -p`
-# bare - no failover wrapper, no --output-format json - so a stage that
-# hits the limit still parks its card. Wiring them is a separate change;
-# when it lands it will need --output-format json, and this branch is
-# what will read it. Do not read this as the stages being covered.
+# The JSON form still has no caller, but for a narrower reason than it
+# used to: all three stages now DO go through run_with_account_failover,
+# they just do not pass --output-format json, so what reaches the
+# detector is prose. This branch is what will read their output when
+# that lands. (This comment previously said the stages invoked `claude
+# -p` bare and were not covered. That was true when written and is the
+# exact thing PR 187 changed - tests/test-account-failover.sh now fails
+# the build if any stage stops calling the wrapper.)
 #
 # rate_limit (underscore) as well as rate_limited: run.py:332 greps for
 # the former in subtype, so the two must agree.
@@ -99,11 +102,13 @@ claude_terminal_reason_limited() {
 }
 
 claude_rate_limited() {
-  # Structured first. The prose fallback has no production caller
-  # either: the only caller passes a bare reason, and every exhaustion
-  # value that can appear there is already caught by the bare-word
-  # anchor above. It is here for the stage scripts' text output when
-  # they are wired - see CLAUDE_LIMIT_REASONS.
+  # Structured first, because it is the stronger signal - but the prose
+  # branch below is now the HOT PATH, not a fallback waiting for a
+  # caller. All three stages pass ~40 lines of transcript through it on
+  # every run, and it is the only thing standing between a genuinely
+  # exhausted account and a parked card. Read the rest of this comment
+  # with that cost in mind: a miss here pings @chris, and a false match
+  # spends the reserve account.
   #
   # The prose set stays deliberately narrow. A first draft of this fix
   # also matched `limit[ ·]+resets`, which looked like a safe
@@ -143,10 +148,32 @@ claude_rate_limited() {
   #   function H(e,n,r,s){let d=s?.progressSavedSuffix?" \xB7 progress saved":"";
   #                       return `You've hit your ${e}${n}${d}`}
   #
-  # - over all 14 labels it can take (5-hour, session, weekly, monthly,
-  # monthly spend, team's/channel's monthly spend, org's monthly usage,
-  # usage credit, fast, Opus, Sonnet, Fable, and the bare "limit") times
-  # the five suffixes: all 70 match.
+  # - over the 14 labels in its qbe/label maps (5-hour, session, weekly,
+  # monthly, monthly spend, team's/channel's monthly spend, org's
+  # monthly usage, usage credit, fast, Opus, Sonnet, Fable, and the bare
+  # "limit") times the five suffixes: all 70 match.
+  #
+  # Those maps are NOT the whole label set, and an earlier version of
+  # this comment claimed they were. H() also takes literal labels at its
+  # call sites, and one of them does not end in the word "limit":
+  #
+  #   You've hit your team's shared budget. /model to switch models.
+  #
+  # The shape below required the sentence to end in "limit", so that
+  # message - which the binary really does compose, in the group_pool
+  # branch - was read as an ordinary failure: a card parked and @chris
+  # pinged, the expensive direction. Hence `(limit|shared budget)`.
+  #
+  # The lesson is narrower than "enumerate harder". The CLI's own test is
+  # a PREFIX match on "You've hit your" and ignores what follows, so any
+  # shape derived from the tail of the sentence will keep losing labels
+  # this way. A bare prefix match is what the CLI can afford because it
+  # tests one message string; here it would also match an agent's own
+  # line "You have hit your configured per-project eslint file count
+  # limit", which tests/test-account-failover.sh pins as a negative. So
+  # this stays shape-based and therefore INCOMPLETE BY CONSTRUCTION -
+  # treat a newly-seen terminator as expected maintenance, not a
+  # surprise, and add it here with a pinned shape in the test.
   #
   # EVERY alternate is anchored to the start of a line, and that is the
   # whole specificity mechanism now that the window is 40 lines rather
@@ -203,27 +230,77 @@ claude_rate_limited() {
   # first; this prose branch exists because the stages do not pass
   # --output-format json, so prose is all there is.
   claude_terminal_reason_limited "$1" && return 0
+  #
+  # $CLAUDE_LIMIT_REASONS is INTERPOLATED, not retyped. It was retyped
+  # once, and the copy had already lost `rate_limit` and
+  # `credit_balance_too_low` - so `stop_reason=rate_limit` in a stage
+  # transcript read as an ordinary failure while a bare `rate_limit`
+  # from desloppify read as a limit. The variable exists to be the one
+  # home of that list (nightly-desloppify.sh:380 says so); reaching
+  # around it is how the two forms diverge silently.
   printf '%s' "$1" | grep -qiE \
-    '^[^[:alnum:]]*(error|warning)?:?[[:space:]]*rate.?limit(ed|[[:space:]]+(reached|exceeded))|(^|[[:space:]])(stop_)?reason=(limit_reached|quota_exceeded|rate_limited|insufficient_credits|out_of_credits|api_error_429)([[:space:]]|$)|^[^[:alnum:]]{0,2}you.?(ve|have) hit your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?limit|^[^[:alnum:]]{0,2}you.?(ve|have) reached your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?limit|^[^[:alnum:]]{0,2}you.?(re|are) out of (usage credits|extra usage)|^[^[:alnum:]]{0,2}your org is out of usage|^[^[:alnum:]]{0,2}your seat type does ?n.?t include (usage|extra usage)|^[^[:alnum:]]{0,2}your usage allocation has been disabled|^[^[:alnum:]]{0,2}your group.?s usage limit is set to .0|^[^[:alnum:]]{0,2}(fable|haiku|mythos|opus|sonnet|fast mode)( [^\xB7]{1,40})? requires usage credits'
+    "^[^[:alnum:]]*(error|warning)?:?[[:space:]]*rate.?limit(ed|[[:space:]]+(reached|exceeded))|(^|[[:space:]])(stop_)?reason=($CLAUDE_LIMIT_REASONS|api_error_429)([[:space:]]|\$)|^[^[:alnum:]]{0,2}you.?(ve|have) (hit|reached) your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?(limit|shared budget)|^[^[:alnum:]]{0,2}you.?(re|are) out of (usage credits|extra usage)|^[^[:alnum:]]{0,2}your org is out of usage|^[^[:alnum:]]{0,2}your seat type does ?n.?t include (usage|extra usage)|^[^[:alnum:]]{0,2}your usage allocation has been disabled|^[^[:alnum:]]{0,2}your group.?s usage limit is set to \\\$0|^[^[:alnum:]]{0,2}(fable|haiku|mythos|opus|sonnet|fast mode)( [^\xB7]{1,40})? requires usage credits"
 }
 
-# run_with_account_failover CMD...
+# run_with_account_failover [--stdin FILE] CMD...
 # Runs CMD under the work account; if it fails and the output says the
 # account is exhausted, runs it once more under personal. Returns the
 # exit status of whichever attempt ran last, and echoes CMD's output
 # either way so a caller can still parse a report out of it.
+#
+# Pass the prompt with --stdin FILE, never by redirecting this function.
+# A redirect on the caller's side attaches to the whole function, so the
+# first attempt reads the prompt to EOF and the retry inherits a drained
+# descriptor: the reserve account then runs the agent with an EMPTY
+# PROMPT. That is not hypothetical - all three stages did exactly this
+# (`out=$(run_with_account_failover ... < prompt.txt)`) and a repro with
+# a fake claude that reads stdin showed attempt 1 getting 73 bytes and
+# attempt 2 getting 0. It would have spent the reserve account on the
+# 2026-11-14 card and parked it anyway, defeating the point of failing
+# over at all. The suite missed it for the same reason it missed the
+# unwired stages: none of its fake commands read stdin.
+#
+# --stdin makes the prompt a parameter, so each attempt opens the file
+# for itself and both get the same bytes.
 run_with_account_failover() {
-  local out rc
+  local out rc stdin_file=""
+  if [ "${1:-}" = "--stdin" ]; then
+    stdin_file=$2; shift 2
+    [ -r "$stdin_file" ] || {
+      echo "FATAL: --stdin $stdin_file is not readable" >&2; return 1; }
+  fi
+
+  # One attempt, under whichever account is selected. The redirect is
+  # HERE, per call, and never once around this whole function - see the
+  # --stdin note above for what the latter cost.
+  #
+  # No pipeline, deliberately. An earlier version of this wrote
+  # `"$@" 2>&1 | tee /dev/stderr` to restore stage-author's live
+  # streaming as well, and the pipeline cost the command's exit status:
+  # `$?` became tee's, which is 0 whatever the command did, so rc was
+  # never non-zero and the failover went silently dead. PIPESTATUS can
+  # recover it, but needing that is the signal the helper was doing too
+  # much - it was redirecting, teeing AND classifying. Streaming is a
+  # separate change from the stdin contract and belongs in its own
+  # commit; this one keeps the capture exactly as it was.
+  _attempt() {
+    if [ -n "$stdin_file" ]; then
+      "$@" < "$stdin_file" 2>&1
+    else
+      "$@" 2>&1
+    fi
+  }
+
   if ! use_claude_account work; then
     echo "no work token; trying personal" >&2
     use_claude_account personal || {
       echo "FATAL: no Claude token for either account" >&2; return 1; }
-    out="$("$@" 2>&1)"; rc=$?
+    out="$(_attempt "$@")"; rc=$?
     printf '%s\n' "$out"
     return "$rc"
   fi
 
-  out="$("$@" 2>&1)"; rc=$?
+  out="$(_attempt "$@")"; rc=$?
   # Detect on a WINDOW of the tail, not the whole transcript and not a
   # needle at the very end. Both extremes were tried here and both were
   # wrong, in opposite directions:
@@ -250,11 +327,20 @@ run_with_account_failover() {
   # any epilogue. Widening it further is not the hazard it would have
   # been before the anchoring, which is why the test pins that a bound
   # exists rather than pinning the number 40.
-  if [ "$rc" -ne 0 ] \
+  # rc=124 is `timeout` killing a wedged run, which is not an exhausted
+  # account. Both the stages and this file already treat it as its own
+  # thing (stage-merge and stage-author branch on 124 explicitly) and
+  # only this condition forgot. Without the exclusion, a run that
+  # printed a limit line within the last 40 lines before wedging - these
+  # stages edit this very file, so that is reachable - earns a second
+  # full PER_TICKET_TIMEOUT on the reserve for nothing. 124 still
+  # propagates out of this function unchanged, so the stages' own
+  # handling of it is unaffected.
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 124 ] \
      && claude_rate_limited "$(printf '%s' "$out" | tail -40)"; then
     if use_claude_account personal; then
       echo "work account is rate limited; retrying on personal" >&2
-      out="$("$@" 2>&1)"; rc=$?
+      out="$(_attempt "$@")"; rc=$?
     else
       echo "work account is rate limited and no personal token is mounted" >&2
     fi

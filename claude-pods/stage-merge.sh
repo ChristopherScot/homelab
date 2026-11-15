@@ -154,9 +154,9 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod1); do
     # replaces the first attempt's, and the last VERDICT line wins. That
     # is load-bearing - do not drop the tail -1 believing the streams are
     # separate.
-    verdict=$(run_with_account_failover \
+    verdict=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
       timeout "$PER_PR_TIMEOUT" claude -p --model "$MODEL" \
-      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir" < "$STATE_DIR/prompt.txt")
+      --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir")
     rc=$?
     [ $rc -eq 124 ] && { echo "TIMEOUT on $repo#$pr"; continue; }
 
