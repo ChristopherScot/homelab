@@ -134,19 +134,77 @@ claude_rate_limited() {
   #   hit your monthly spend limit
   #   hit your channel's monthly spend limit
   #
-  # So match the structure instead: "hit your <anything short> limit",
-  # bounded by [^.!?\n]{0,40} so it cannot run across a sentence into an
-  # unrelated "limit". That is still narrow - the phrase "you have hit
-  # your ... limit" is not something an agent's own output says in
-  # passing - and it survives a model name or a period nobody has seen
-  # yet.
+  # So match the structure instead: "hit your <up to three short words>
+  # limit". The word bound keeps it from running across a sentence into
+  # an unrelated "limit", and the shape survives a model name (Opus,
+  # Sonnet, Fable) or a period nobody has seen yet. Verified against the
+  # 2.1.323 binary's own composer -
+  #
+  #   function H(e,n,r,s){let d=s?.progressSavedSuffix?" \xB7 progress saved":"";
+  #                       return `You've hit your ${e}${n}${d}`}
+  #
+  # - over all 14 labels it can take (5-hour, session, weekly, monthly,
+  # monthly spend, team's/channel's monthly spend, org's monthly usage,
+  # usage credit, fast, Opus, Sonnet, Fable, and the bare "limit") times
+  # the five suffixes: all 70 match.
+  #
+  # EVERY alternate is anchored to the start of a line, and that is the
+  # whole specificity mechanism now that the window is 40 lines rather
+  # than 2. The CLI prints these as its own message, so they begin a
+  # line; an agent discussing them does not. The distinction is not
+  # hypothetical here - these stages edit THIS repository, so an agent
+  # working on this very function is the likely false positive, and
+  # unanchored alternates produced two:
+  #
+  #   {"status": 429, "body": "slow down"}        a 429 test fixture
+  #   now covers "you have hit your weekly limit" a quoted mention
+  #
+  # The second is why the leading-junk allowance is {0,2} and not {0,4}:
+  # it has to admit the CLI's own prefixes but not a quote plus
+  # indentation. A limit message indented more than two characters is
+  # not something the CLI emits.
+  #
+  # The first could not be fixed by anchoring at all, because `{"status":
+  # 429, ...}` on its own line is precisely what a fixture looks like. It
+  # was dropped instead, along with a bare `api_error_429`, after
+  # checking the 2.1.323 binary: it contains ZERO occurrences of
+  # `"status": 429` (the only quoted-key 429 in it is `"headline":"429`)
+  # and no `api_error_429` anywhere - that token is composed by our own
+  # run.py, not by the CLI. So neither alternate could ever match real
+  # CLI output, while both matched an agent writing a 429 test fixture.
+  # Every genuine 429 arrives structured and is caught above, by
+  # `"api_error_status": 429` or by api_error_429 as a named key's value.
+  # tests/test-account-failover.sh pins the fixture case.
+  #
+  # The prose set is ported from the CLI's own exhaustion predicate
+  # rather than guessed at, since guessing is what failed twice here:
+  #
+  #   function yvs(e){return gvs.some((n)=>e.startsWith(n))
+  #     ||_vs.some((n)=>n.test(e))}
+  #   gvs=["You've hit your","You've reached your","You're out of usage
+  #     credits","Your org is out of usage \xB7 add funds to continue",
+  #     ... 12 entries ...]
+  #   _vs=[/^(?:Fable|Haiku|Mythos|Opus|Sonnet)(?: [^\u00B7\n]{1,40})?
+  #     requires usage credits\./]
+  #
+  # Two deliberate differences from that source. `fast mode` is added to
+  # the model alternation: the binary emits "Fast mode requires usage
+  # credits" but it is in neither gvs nor _vs, so a direct port missed
+  # it - the pinned-shapes loop in the test caught that. And the
+  # startsWith prefixes become ^-anchored line matches, because the CLI
+  # tests one message string while we search a 40-line transcript.
+  #
+  # Keep this branch free of anything the CLI does not itself print. A
+  # token that only ever appears in test data is not a weak signal here,
+  # it is an inverted one: these stages edit this repository, so the
+  # agent most likely to print it is the one working on this function.
   #
   # The structured tokens above are the better signal and are checked
   # first; this prose branch exists because the stages do not pass
   # --output-format json, so prose is all there is.
   claude_terminal_reason_limited "$1" && return 0
   printf '%s' "$1" | grep -qiE \
-    'api_error_429|"?status"?[: ]+429|rate.?limited|rate.?limit (reached|exceeded|error)|usage limit|quota exceeded|out of usage credits|requires usage credits|you.?(ve|have) hit your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?limit'
+    '^[^[:alnum:]]*(error|warning)?:?[[:space:]]*rate.?limit(ed|[[:space:]]+(reached|exceeded))|(^|[[:space:]])(stop_)?reason=(limit_reached|quota_exceeded|rate_limited|insufficient_credits|out_of_credits|api_error_429)([[:space:]]|$)|^[^[:alnum:]]{0,2}you.?(ve|have) hit your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?limit|^[^[:alnum:]]{0,2}you.?(ve|have) reached your [^[:space:]]{0,24}([[:space:]][^[:space:]]{1,16}){0,2}[[:space:]]?limit|^[^[:alnum:]]{0,2}you.?(re|are) out of (usage credits|extra usage)|^[^[:alnum:]]{0,2}your org is out of usage|^[^[:alnum:]]{0,2}your seat type does ?n.?t include (usage|extra usage)|^[^[:alnum:]]{0,2}your usage allocation has been disabled|^[^[:alnum:]]{0,2}your group.?s usage limit is set to .0|^[^[:alnum:]]{0,2}(fable|haiku|mythos|opus|sonnet|fast mode)( [^\xB7]{1,40})? requires usage credits'
 }
 
 # run_with_account_failover CMD...
@@ -175,16 +233,22 @@ run_with_account_failover() {
   # failing test matched. Those alternates predate this wrapper, but
   # nothing called it before, so this is where the exposure starts.
   #
-  # A real limit ENDS the run, so its message is the last thing printed.
-  # An agent that merely discusses limits prints something else after -
-  # a test result, a summary - so the last couple of lines separate the
-  # two where tail -5 did not: a transcript reading "the detection
-  # matches 'you have hit your weekly limit'" then "FAIL: 2 assertions"
-  # is ignored, while the same prose followed by the real message is
-  # caught. Two rather than one so a trailing blank or a short epilogue
-  # does not hide it.
+  # A window, not a needle. An earlier draft used tail -2 on the theory
+  # that a real limit is the last thing printed - which is false: the CLI
+  # appends "· progress saved" to the limit line, and a -p run prints its
+  # own epilogue after ("Session ended after N turns", "Total cost: $X").
+  # Driven through this wrapper with a fake command, a real limit three
+  # lines from the end was missed entirely and the reserve account was
+  # never tried - the exact 2026-11-14 failure, reintroduced by the fix
+  # for it.
+  #
+  # So the specificity lives in the pattern, which is anchored on the
+  # CLI's own sentences, and the window only has to be wide enough that
+  # the message cannot fall outside it. 40 lines covers any epilogue
+  # while still excluding the hour of transcript that made a mention of
+  # rate_limit.go read as a limited account.
   if [ "$rc" -ne 0 ] \
-     && claude_rate_limited "$(printf '%s' "$out" | tail -2)"; then
+     && claude_rate_limited "$(printf '%s' "$out" | tail -40)"; then
     if use_claude_account personal; then
       echo "work account is rate limited; retrying on personal" >&2
       out="$("$@" 2>&1)"; rc=$?

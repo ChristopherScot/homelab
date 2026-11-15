@@ -20,7 +20,6 @@ NIGHTLY_NS=test . "$(dirname "${BASH_SOURCE[0]}")/../lib/pod-common.sh" 2>/dev/n
 # --- the rate-limit signal -------------------------------------------
 for text in \
   'desloppify_run outcome=BLOCKED stop_reason=api_error_429' \
-  '{"status": 429}' \
   'Error: rate limit exceeded' \
   'You have hit your usage limit' \
   "You've hit your 5-hour limit · resets 10:10pm (UTC)" \
@@ -34,6 +33,97 @@ for text in \
 do
   claude_rate_limited "$text" || { echo "FAIL: missed a rate limit in: $text"; fail=1; }
 done
+
+# A bare `{"status": 429}` is deliberately NOT a limit signal, and this
+# is the assertion that used to say it was. Nothing emits it: the
+# 2.1.323 binary contains zero occurrences of `"status": 429` (its only
+# quoted-key 429 is `"headline":"429`), and every genuine 429 from the
+# CLI arrives as `"api_error_status": 429`, which IS matched above. What
+# does produce that string is an agent writing a 429 test fixture -
+# these stages edit this repository - so matching it only ever cost a
+# reserve run on a run that was never limited.
+for text in \
+  '{"status": 429}' \
+  '{"status":429,"body":"slow down"}' \
+  'Added testdata/429.json with {"status": 429}'
+do
+  claude_rate_limited "$text" && { echo "FAIL: a 429 fixture read as a limit: $text"; fail=1; }
+done
+
+# api_error_429 is matched only as a field value, never as a loose word,
+# for the same reason. Both real producers write it as one:
+# nightly-desloppify.sh:383 passes a bare `jq -r .stop_reason`, and
+# :400 logs `stop_reason=api_error_429`.
+claude_rate_limited 'api_error_429' \
+  || { echo "FAIL: a bare terminal reason is not detected"; fail=1; }
+claude_rate_limited 'added handling for api_error_429 in run.py' \
+  && { echo "FAIL: api_error_429 mentioned in prose read as a limit"; fail=1; }
+
+# Every exhaustion message the 2.1.323 binary can actually compose.
+# Not invented shapes: the CLI's own predicate is
+#
+#   gvs.some(n => e.startsWith(n)) || /^(Fable|Haiku|Mythos|Opus|
+#     Sonnet)(?: [^\u00B7\n]{1,40})? requires usage credits\./.test(e)
+#
+# where gvs is a 12-entry literal array, and the "hit your" line is
+# built by `You've hit your ${label}${suffix}` over 14 labels. These
+# are those strings. The point of listing them is that the detector was
+# twice written against a guess at the wording - first [0-9]+-hour,
+# then weekly|daily|monthly - and a guess is what let the 2026-11-14
+# weekly limit through with a personal token mounted and unused.
+for text in \
+  "You've hit your limit" \
+  "You've hit your session limit" \
+  "You've hit your weekly limit \xc2\xb7 resets Nov 16, 11am (UTC)" \
+  "You've hit your weekly limit \xc2\xb7 progress saved" \
+  "You've hit your Fable limit" \
+  "You've hit your Opus limit \xc2\xb7 ask your admin to raise it" \
+  "You've hit your monthly spend limit" \
+  "You've hit your team's monthly spend limit" \
+  "You've hit your channel's monthly spend limit" \
+  "You've hit your org's monthly usage limit" \
+  "You've hit your usage credit limit" \
+  "You've hit your 5-hour limit \xc2\xb7 resets 3pm" \
+  "You've reached your weekly limit" \
+  "You're out of usage credits" \
+  "You're out of usage credits. Run /usage-credits to keep going" \
+  "You're out of extra usage" \
+  "Your org is out of usage \xc2\xb7 contact your admin" \
+  "Your seat type doesn't include usage credits" \
+  "Your usage allocation has been disabled by your admin" \
+  "Your group's usage limit is set to \$0" \
+  'Opus requires usage credits.' \
+  'Fable 5 requires usage credits.' \
+  'Fast mode requires usage credits'
+do
+  claude_rate_limited "$(printf '%b' "$text")" \
+    || { echo "FAIL: a real CLI exhaustion message was missed: $text"; fail=1; }
+done
+
+# The failure mode that costs a human a round trip, rather than a
+# reserve run: a stage that failed for an ordinary reason, whose output
+# merely discusses limits. Every one of these is output a real stage
+# produces - the stages review and edit THIS repository, including this
+# file - and each was a false positive at some point in this fix.
+while IFS= read -r case; do
+  [ -n "$case" ] || continue
+  claude_rate_limited "$(printf '%b' "$case" | tail -40)" \
+    && { echo "FAIL: an ordinary failure would burn the reserve: $case"; fail=1; }
+done <<'ORDINARY'
+Working on the rate limiting ticket.\nAdded a leaky-bucket limiter.\nSummary: implemented rate limiting for /v1.
+VERDICT: NO-MERGE\nReasons:\n- the rate limit handling is untested
+Done editing.\nTotal cost: $0.42\nTotal duration: 3m12s
+    retry_test.go:88: expected status 429, got 200\nFAIL	example.com/gw/retry	0.012s
+ok	example.com/gw/auth	0.004s\nFAIL	example.com/gw/ratelimit	0.009s
+Added the fixture:\n{"status": 429, "body": "slow down"}\nWrote testdata/429.json
+I updated claude_rate_limited to also match api_error_429.\nThe pattern now covers "you have hit your weekly limit".
+The CLI prints "You've hit your weekly limit" when exhausted.
+I think you have hit your configured per-project eslint file count limit.
+Note that once you have hit your retry budget for the upstream call, the limit
+You have hit your configured per-project eslint file count limit.
+    You're out of usage credits is the fixture string we assert on
+expected: You're out of usage credits
+ORDINARY
 
 # Must NOT match: the pattern was widened to catch the CLI's "N-hour
 # limit" wording, and a pattern that also eats ordinary build output
@@ -177,20 +267,51 @@ done
 # wrapper must therefore test the tail, not the transcript - a stage that
 # edits this very file would otherwise fail over on every ordinary
 # failure.
-discussing="the detection matches 'you have hit your weekly limit' exactly
-Running the suite...
-FAIL: 2 assertions failed"
-claude_rate_limited "$(printf '%s' "$discussing" | tail -2)" \
-  && { echo "FAIL: a transcript discussing limits read as a limit"; fail=1; }
-real_last="Reviewing the retry policy.
-You've hit your weekly limit · resets Nov 16, 11am (UTC)"
-claude_rate_limited "$(printf '%s' "$real_last" | tail -2)" \
-  || { echo "FAIL: a real limit at the end of a transcript was missed"; fail=1; }
-# And the wrapper has to actually do that slicing.
-wrapper_src="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/claude-account.sh"
-sed 's/[[:space:]]*#.*$//' "$wrapper_src" \
-  | grep -qE 'claude_rate_limited "\$\(printf .* \| tail -[0-9]+\)"' \
-  || { echo "FAIL: run_with_account_failover detects on unbounded output"; fail=1; }
+# Driven through the REAL wrapper, counting attempts. Hand-slicing the
+# input before calling the helper - which an earlier version of this
+# block did - tests nothing about the wrapper's own window, and would
+# pass whatever that window were. That is the same defect this suite is
+# here to catch, one layer up.
+# Earlier cases delete these on purpose to exercise the no-token paths,
+# so put them back before driving the wrapper.
+printf 'work-token' > "$CLAUDE_TOKEN_DIR/oauth-token"
+printf 'personal-token' > "$CLAUDE_TOKEN_DIR/oauth-token-personal"
+rm -f "$HOME/.claude/.credentials.json" 2>/dev/null || true
+
+transcript_attempts() {
+  local out n
+  : > "$tmp/attempts"
+  FAKE_TRANSCRIPT="$1" run_with_account_failover fake_claude >/dev/null 2>&1
+  wc -l < "$tmp/attempts" | tr -d ' '
+}
+fake_claude() { echo x >> "$tmp/attempts"; printf '%s\n' "$FAKE_TRANSCRIPT"; return 1; }
+
+# A real limit is NOT always last: the CLI appends "· progress saved" to
+# the line, and a -p run prints its own epilogue after. tail -2 missed
+# this and never tried the reserve - the 2026-11-14 failure, reintroduced
+# by its own fix.
+n=$(transcript_attempts "Starting work on the ticket.
+You've hit your weekly limit · resets Nov 16, 11am (UTC)
+Session ended after 0 turns.
+Total cost: \$0.00")
+[ "$n" = 2 ] || { echo "FAIL: a real limit with an epilogue did not fail over (attempts=$n)"; fail=1; }
+
+# And an ordinary run must not. prompts/test.md asks the agent to list
+# the commands it ran, so a command line IS the expected last line - a
+# go test against a ratelimit package, or a curl reporting 429, used to
+# spend a second full run on the reserve account.
+for t in "Wrote BLOCKED to the verdict file.
+Ran: go test ./internal/ratelimit -run TestRateLimited" \
+         "Comment posted.
+Commands: curl -i localhost:8080/x  (got status: 429)" \
+         "A 429 is retried twice; status 429 is not distinguished from 503.
+VERDICT: RISKY" \
+         "claude_rate_limited now matches 'you have hit your weekly limit'.
+VERDICT: MERGE"; do
+  n=$(transcript_attempts "$t")
+  [ "$n" = 1 ] \
+    || { echo "FAIL: an ordinary run burned the reserve account (attempts=$n): ${t##*$'\n'}"; fail=1; }
+done
 
 # --- desloppify shares this library ---------------------------------------
 # The desloppify image COPYs claude-pods/lib/claude-account.sh (its

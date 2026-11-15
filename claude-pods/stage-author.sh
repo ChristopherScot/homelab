@@ -213,9 +213,19 @@ for t in "${TICKETS[@]}"; do
   # The wrapper captures the output to inspect it for a limit, so this is
   # no longer streamed live into the log. For a run that can last an hour
   # that is a real loss of progress visibility, so the output is written
-  # through as soon as the wrapper returns, and `tee` keeps it on stdout
-  # for the Loki tee in log_to. The alternative - teeing to a file inside
-  # the wrapper - would hide the retry's output behind the first attempt's.
+  # through as soon as the wrapper returns, so the tee that log_to set up
+  # (see log_to in lib/pod-common.sh) still carries it to the log file
+  # and on to Loki. Nothing here tees - the write-through is a plain
+  # printf, and log_to did the redirection once at startup. Do not quote
+  # log_to's redirection target here: tests/pod-common.sh greps these
+  # scripts for it to catch a private copy of the block, and it cannot
+  # tell a citation in a comment from a real one.
+  #
+  # The cost is real and not papered over: on a 3600s ticket Loki now
+  # shows nothing until the run ends, so a working long run and a hung
+  # one look alike. The column is meant to be the signal for a stuck
+  # card, and this weakens it. Teeing per attempt inside the wrapper
+  # would restore it without hiding the retry behind the first attempt.
   #
   # --output-format is deliberately NOT set here. The wrapper's detection
   # reads prose as well as JSON (claude_rate_limited matches "hit your
