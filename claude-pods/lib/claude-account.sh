@@ -86,6 +86,28 @@ use_claude_account() {
 # `api_error_{status}` from the same 429, giving "api_error_429".
 CLAUDE_LIMIT_TOKEN='api_error_429'
 
+# The apiError values the CLI sets on its `error: "rate_limit"` path.
+# All three are per-account and the reserve account can succeed where
+# this one cannot, which is the only reason to fail over:
+#
+#   usage_limit_reached           plan quota: session/5-hour, weekly,
+#                                 per-model, and the spend caps - all
+#                                 of these land here. Captured.
+#   model_requires_usage_credits  "the model runs on usage credits for
+#                                 this account, and credits are off or
+#                                 the included allowance is used up"
+#   long_context_credits_required a request over the 200K-token
+#                                 boundary needs credits this account
+#                                 does not have
+#
+# Not included, deliberately: the same branch returns error:"rate_limit"
+# with NO apiError for a transient capacity 429 ("Request rejected
+# (429) · this may be a temporary capacity issue"). The docs say those
+# are retried automatically with backoff (up to CLAUDE_CODE_MAX_RETRIES,
+# default 10), so one reaching a result has already exhausted its
+# retries and a second account would not help.
+CLAUDE_LIMIT_API_ERRORS='usage_limit_reached model_requires_usage_credits long_context_credits_required'
+
 # claude_result_text JSON
 # The agent's prose, which --output-format json puts in .result.
 # Returns the input unchanged if it is not JSON, so a run that died
@@ -107,8 +129,11 @@ claude_rate_limited() {
   # capture unparseable; on a pretty-printed object the last line alone
   # is just its closing brace. Trying both covers each.
   _claude_limit_json() {
-    jq -e '.api_error_status? == 429
-           or (.api_error? == "usage_limit_reached")' >/dev/null 2>&1
+    jq -e --arg limited "$CLAUDE_LIMIT_API_ERRORS" '
+      ($limited | split(" ")) as $limited
+      | .api_error_status? == 429
+        or (.api_error? as $e | $e != null and ($limited | index($e)) != null)
+      ' >/dev/null 2>&1
   }
   printf '%s' "$1" | _claude_limit_json && return 0
   printf '%s\n' "$1" | tail -1 | _claude_limit_json

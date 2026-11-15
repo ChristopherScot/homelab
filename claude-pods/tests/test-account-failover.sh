@@ -59,12 +59,49 @@ claude_rate_limited "[claude-code:unrecognized_model] {\"model\":\"x\"}
 $(jq -c . "$limit_fixture")" \
   || { echo "FAIL: a limit behind a diagnostic line was missed"; fail=1; }
 
-# The signal is the 429 status, confirmed by api_error. Each alone is
-# enough; neither is allowed to be the only thing holding this up.
+# The 429 status alone is enough.
 claude_rate_limited "$(result_json api_error '{"api_error_status":429}')" \
   || { echo "FAIL: api_error_status 429 alone was missed"; fail=1; }
-claude_rate_limited "$(result_json api_error '{"api_error":"usage_limit_reached"}')" \
-  || { echo "FAIL: api_error usage_limit_reached alone was missed"; fail=1; }
+
+# Each apiError on the CLI's error:"rate_limit" path, alone, with no
+# status beside it. Each is per-account, which is the only reason
+# failing over helps; the captured fixture is a plan limit (weekly)
+# while the other two are credit exhaustion, which no capture covers.
+#
+# Written out HERE rather than iterating $CLAUDE_LIMIT_API_ERRORS. A
+# loop over the library's own list cannot catch a value being deleted
+# from it, because deleting the value also deletes its test - verified:
+# dropping any of the three left this suite green. So this list is the
+# specification and the cross-check below holds the two together.
+EXPECT_API_ERRORS="usage_limit_reached model_requires_usage_credits long_context_credits_required"
+for e in $EXPECT_API_ERRORS; do
+  claude_rate_limited "$(result_json api_error "$(jq -cn --arg e "$e" '{api_error:$e}')")" \
+    || { echo "FAIL: api_error '$e' alone was missed"; fail=1; }
+done
+for e in $EXPECT_API_ERRORS; do
+  case " $CLAUDE_LIMIT_API_ERRORS " in
+    *" $e "*) ;;
+    *) echo "FAIL: '$e' was removed from CLAUDE_LIMIT_API_ERRORS"; fail=1 ;;
+  esac
+done
+for e in $CLAUDE_LIMIT_API_ERRORS; do
+  case " $EXPECT_API_ERRORS " in
+    *" $e "*) ;;
+    *) echo "FAIL: CLAUDE_LIMIT_API_ERRORS has '$e', which this suite does not pin"
+       echo "      add it to EXPECT_API_ERRORS, and say why failover helps for it"
+       fail=1 ;;
+  esac
+done
+
+# Everything else in that enum must NOT fail over: same terminal_reason
+# ("api_error"), same shape, but a second account cannot help.
+for e in empty_completion max_output_tokens hook_denied no_response \
+         unattended_start_limit no_allowed_fallback media_removed \
+         stream_idle_timeout provider_credentials
+do
+  claude_rate_limited "$(result_json api_error "$(jq -cn --arg e "$e" '{api_error:$e}')")" \
+    && { echo "FAIL: api_error '$e' is not a quota problem but read as one"; fail=1; }
+done
 
 # desloppify gets a bare word instead of the object: run.py composes it
 # as f"api_error_{result.api_error_status}". DERIVED from the fixture's
