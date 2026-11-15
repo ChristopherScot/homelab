@@ -19,9 +19,13 @@
 # Keys: the two S3 keys already live in Vault, projected by External
 # Secrets into Secrets in the claude-pods namespace. A key Garage does
 # not know yet is IMPORTED from there rather than minted, so rebuilding
-# the cluster does not invalidate what every consumer already holds. Only
-# when no such Secret exists is a key created, and its secret printed
-# ONCE at the end for seeding Vault.
+# the cluster does not invalidate what every consumer already holds. A
+# key is minted only when there is nothing to import: no Secret and no
+# ExternalSecret waiting to project one, or import switched off by
+# exporting an empty GARAGE_KEY_*_SECRET - which is what a first-ever
+# cluster needs, since Argo creates the ExternalSecrets before Vault
+# holds anything. A minted key's secret is printed ONCE at the end for
+# seeding Vault.
 #
 # `garage key import` only takes the secret as an argument, so for the
 # length of that one call it is in the argv of kubectl here, in the exec
@@ -113,13 +117,16 @@ healthy_nodes() {
 }
 
 # Applied roles whose node is not up, one id per line. Once every pod the
-# StatefulSet wants is a member, such a role can only be a node that was
-# lost and replaced (its identity lives on its meta volume), and the
-# layout still maps a share of every partition to it.
+# StatefulSet wants is a member, such a role is a node that was lost and
+# replaced (its identity lives on its meta volume) or a StatefulSet
+# scaled below its layout; either way the layout still maps a share of
+# every partition to it. Unlike healthy_nodes this is a one-shot gate,
+# not a poll, so a failed admin call is reported (g) and returned as a
+# failure rather than read as "no dead roles".
 dead_roles() {
   local status layout
-  status="$(g_try json-api GetClusterStatus)" || return 0
-  layout="$(g_try json-api GetClusterLayout)" || return 0
+  status="$(g json-api GetClusterStatus)" || return 2
+  layout="$(g json-api GetClusterLayout)" || return 2
   jq -rn --argjson s "$status" --argjson l "$layout" '
     [$s.nodes[] | select(.isUp) | .id] as $up
     | $l.roles[].id | select(. as $id | $up | index($id) | not)'
@@ -164,12 +171,13 @@ done
 #    a share of every partition belongs to a node that will never return,
 #    and garage would run degraded while this script printed "applied".
 #    The fix is `layout assign --replace`, which only a human can decide.
-dead="$(dead_roles || true)"
+dead="$(dead_roles)" || exit 1
 if [ -n "$dead" ]; then
   echo "FATAL: the layout still holds a role for a node that is not up:" >&2
   printf '  %s\n' $dead >&2
-  echo "A node whose meta volume was lost comes back as a new id. Replace the old one" >&2
-  echo "by hand (garage/README.md, 'Re-admitting a node'), then re-run this." >&2
+  echo "If $STS is simply scaled below its layout (kubectl get sts -n $NS $STS), scale it back." >&2
+  echo "Otherwise a node whose meta volume was lost has come back as a new id: replace the" >&2
+  echo "old one by hand (garage/README.md, 'Re-admitting a node'), then re-run this." >&2
   exit 1
 fi
 staged=0
@@ -216,11 +224,11 @@ fi
 #    so an existing key is found whichever way it was made.
 #
 #    The Secret is read once, as JSON, with stderr kept. "No such Secret"
-#    is the one answer that means mint; a denied read, a wrong kubeconfig
-#    context or an API that is down must not be mistaken for it, because
-#    minting on a fault hands consumers a key they do not hold - the
-#    outcome the import exists to prevent. Returns 1 when absent, 2 on a
-#    fault (already reported), since `exit` here would only leave the $().
+#    is the one answer that may mean mint; a denied read or an API that
+#    is down must not be mistaken for it, because minting on a fault
+#    hands consumers a key they do not hold - the outcome the import
+#    exists to prevent. Returns 1 when absent, 2 on a fault (already
+#    reported), since `exit` here would only leave the $().
 secret_json() { # <namespace/secret>
   local out rc=0
   out="$(kubectl get secret -n "${1%%/*}" "${1#*/}" -o json 2>&1)" || rc=$?
@@ -251,13 +259,20 @@ ensure_key() { # <key name> <namespace/secret, or empty>
           echo "FATAL: $from has no AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY to import" >&2; exit 1; }
         ;;
       1)
-        # Absent is normal on a first-ever cluster. It is a fault when the
-        # ExternalSecret that should project it exists: then Vault, its
-        # policy or the SecretStore is broken, and a minted key would only
-        # paper over that until the projection recovers and disagrees.
+        # Absent with no ExternalSecret either means nothing has ever
+        # claimed this key: mint. Absent while the ExternalSecret exists
+        # is ambiguous - Vault has never held the key (a first-ever
+        # cluster; Argo creates the ExternalSecret before anyone seeds
+        # Vault), or Vault, its policy or the SecretStore is broken. The
+        # script cannot tell them apart and the second must not get a
+        # minted key papering over it, so the operator decides: fix the
+        # projection, or switch import off to mint and seed Vault.
         if kubectl get externalsecret -n "${from%%/*}" "${from#*/}" >/dev/null 2>&1; then
-          echo "FATAL: ExternalSecret $from exists but has produced no Secret;" >&2
-          echo "       fix the projection (kubectl describe externalsecret -n ${from%%/*} ${from#*/}) before minting a key" >&2
+          echo "FATAL: ExternalSecret $from exists but has produced no Secret." >&2
+          echo "       If Vault should already hold this key, fix the projection:" >&2
+          echo "         kubectl describe externalsecret -n ${from%%/*} ${from#*/}" >&2
+          echo "       If Vault has never held it (first-ever cluster), mint and then seed it:" >&2
+          echo "         GARAGE_KEY_RO_SECRET= GARAGE_KEY_RW_SECRET= $0" >&2
           exit 1
         fi
         ;;

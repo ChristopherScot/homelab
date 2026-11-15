@@ -160,17 +160,19 @@ let it propagate, delete the old one by id:
 
 ```sh
 garage key create paperless                 # names are not unique; this is a second key
-garage key info paperless                   # ambiguous now - use the ids below
 garage bucket allow --read --write paperless-archive --key <new id>
 vault kv put kv/garage/s3-paperless access-key-id=<new> secret-access-key=<new>
 # ExternalSecrets refresh every minute; pods with reloader's annotation restart
 garage key delete <old id> --yes
 ```
 
-The name stays because `garage-init.sh` finds a key by name and then
-checks it against the Secret: a key called `paperless-2` would leave the
-committed `ensure_key paperless ...` line pointing at nothing, and the
-next rebuild would mint a stranger. While both keys exist the name is
-ambiguous, so do not run the init script mid-rotation. A grant belongs
+`garage key info paperless` is ambiguous until the old key is gone, so
+address the keys by id in between, and do not run the init script
+mid-rotation. The name stays because `garage-init.sh` finds a key by
+name and then checks it against the Secret: with a key called
+`paperless-2`, the committed `ensure_key paperless ...` and
+`bucket allow ... --key paperless` lines would name a key the live
+cluster does not have, so a re-run would try to import the Secret's id a
+second time and fail, and the grant would fail with it. A grant belongs
 to a key, so the new one needs its own; Vault keeps the path, so nothing
 in git changes.

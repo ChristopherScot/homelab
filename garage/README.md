@@ -97,7 +97,7 @@ pod:
 ```sh
 garage status                        # new id appears with NO ROLE ASSIGNED,
                                      # old id under FAILED NODES
-garage layout assign -z <k8s node> -c 30Gi --replace <old id> <new id>
+garage layout assign -z <k8s node> -c <size of its data PVC> --replace <old id> <new id>
 garage layout show                   # prints the apply command
 garage layout apply --version N
 ```
@@ -112,5 +112,5 @@ changes: the bucket, keys and grants live in the replicated tables.
 - `tests/cluster-smoke.sh` - the same manifests rendered into a scratch
   namespace with small volumes: three nodes on three k8s nodes, replicas
   on the right nodes, `garage-init.sh` lays it out, an S3 round trip
-  with the RO/RW split, then one pod is killed and the other two keep
-  serving writes. Needs a cluster; SKIPs in CI.
+  with the RO/RW split, then the StatefulSet is scaled to two and the
+  remaining pair keeps serving writes. Needs a cluster; SKIPs in CI.

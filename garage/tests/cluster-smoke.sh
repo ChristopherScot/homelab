@@ -3,10 +3,11 @@
 # into a scratch namespace with small volumes, come up as a three-node
 # Garage; bootstrap/garage-init.sh lays them out; an S3 client writes with
 # the RW key and reads back with the RO key (and is refused a write); then
-# one node is killed and the other two keep serving reads AND writes.
+# the StatefulSet is scaled to two and the remaining pair keeps serving
+# reads AND writes.
 #
-# A pod deletion stands in for a node outage. It is what the Garage layer
-# sees in both cases - a peer vanishes - and it is reversible on a
+# Scaling away one pod stands in for a node outage. It is what the Garage
+# layer sees in both cases - a peer vanishes - and it is reversible on a
 # cluster other things are running on. What it does not exercise is the
 # scheduler side (the pod waiting for its node to return), which the
 # anti-affinity plus strict-local argument in statefulset.yaml covers.
@@ -69,9 +70,15 @@ grep -q 'storage: 1Gi' "$render/statefulset.yaml" || fail "could not shrink the 
 # rather than silently testing against the old one.
 for f in storageclass crd; do
   if kubectl get -f "$src/$f.yaml" >/dev/null 2>&1; then
-    kubectl diff -f "$src/$f.yaml" >/dev/null \
-      || fail "$f.yaml differs from the live object; it is Argo's to change, not this test's"
-    echo "$f.yaml: live object matches the committed file"
+    # diff prints nothing when clean and the diff when not; exit 1 is
+    # "differs", anything higher is kubectl itself failing.
+    if kubectl diff -f "$src/$f.yaml"; then
+      echo "$f.yaml: live object matches the committed file"
+    else
+      rc=$?
+      [ "$rc" -eq 1 ] && fail "$f.yaml differs from the live object (above); it is Argo's to change, not this test's"
+      fail "kubectl diff -f $f.yaml failed (exit $rc)"
+    fi
   else
     kubectl apply -f "$src/$f.yaml"
   fi
@@ -109,15 +116,17 @@ init_out="$render/init.log"
 if [ -z "${GARAGE_SMOKE_IMPORT:-}" ]; then
   export GARAGE_KEY_RO_SECRET="" GARAGE_KEY_RW_SECRET=""
 fi
-# An allowlist of the step lines, not a denylist of the credential lines:
-# if the script's credential block is ever reworded, unknown output is
-# dropped rather than echoed into a CI log.
-show_init() { grep -E '^(membership|layout|bucket|key|grant|FATAL|ERROR)' "$init_out" || true; }
+# On success, an allowlist of the step lines: if the script's credential
+# block is ever reworded, unknown output is dropped rather than echoed.
+# On failure the diagnosis is the lines AFTER each FATAL headline (garage's
+# stderr, kubectl's error, the layout the script refused), so the whole
+# log is shown minus the two line shapes that carry a secret, before the
+# cleanup trap deletes it.
 if ! GARAGE_NS="$NS" bash "$src/../bootstrap/garage-init.sh" >"$init_out" 2>&1; then
-  show_init | tail -30
+  grep -v -E '^(Key ID|Secret key):' "$init_out" | tail -40
   fail "garage-init.sh failed"
 fi
-show_init
+grep -E '^(membership|layout|bucket|key|grant)' "$init_out" || true
 
 step "all three Ready through /health"
 kubectl -n "$NS" wait --for=condition=Ready pod -l app=garage-node --timeout=120s >/dev/null
@@ -202,11 +211,11 @@ victim=garage-node-2
 victim_node="$(kubectl -n "$NS" get pod $victim -o jsonpath='{.spec.nodeName}')"
 kubectl -n "$NS" scale sts garage-node --replicas=2 >/dev/null
 kubectl -n "$NS" wait --for=delete pod/$victim --timeout=120s >/dev/null
-kubectl -n "$NS" get pod $victim >/dev/null 2>&1 && fail "$victim still exists after scaling down"
-# The Service only routes to Ready pods, so the client never sees the
-# missing one. The write below needs quorum (2 of 3), which is the claim.
+# Nothing recreates ordinal 2 at replicas=2 (the scratch namespace is not
+# Argo's), so the pod is absent for the whole of the write below. The
+# Service only routes to Ready pods, so the client never sees the missing
+# one; the write needs quorum (2 of 3), which is the claim.
 s3_job smoke-s3-degraded probe-degraded
-kubectl -n "$NS" get pod $victim >/dev/null 2>&1 && fail "inconclusive: $victim was back before the degraded write"
 kubectl -n "$NS" exec garage-node-0 -- /garage status 2>/dev/null
 
 step "the missing node comes back on the same k8s node and rejoins"

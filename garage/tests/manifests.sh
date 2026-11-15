@@ -77,8 +77,8 @@ done
 init="$dir/../bootstrap/garage-init.sh"
 expect "init script default StatefulSet name" \
   "$(sed -n 's/^STS="\${GARAGE_STS:-\(.*\)}"$/\1/p' "$init")" "$(q $sts StatefulSet .metadata.name)"
-expect "init script has no capacity knob of its own (the PVC is the one declaration)" \
-  "$(grep -c 'GARAGE_CAPACITY' "$init")" 0
+expect "init script reads each node's capacity from a PVC (the one declaration)" \
+  "$(grep -c '{.status.capacity.storage}' "$init")" 1
 expect "an exported empty GARAGE_KEY_*_SECRET disables import (cluster-smoke.sh relies on it)" \
   "$(grep -c '_SECRET-claude-pods/' "$init")" 2
 
@@ -92,6 +92,8 @@ expect "liveness does NOT use /health (quorum loss is not fixed by a restart)" \
 expect "S3 Service selects the garage pods" \
   "$(q $cm Service .spec.selector.app garage)" "$(q $sts StatefulSet '.spec.template.metadata.labels.app')"
 expect "the S3 Service is still called garage" "$(q $cm Service .metadata.name garage)" garage
+expect "secrets.yaml projects the endpoint URL into both S3 Secrets" \
+  "$(grep -c AWS_ENDPOINT_URL "$dir/secrets.yaml")" 2
 expect "no endpoint URL in secrets.yaml names anything else" \
   "$(grep AWS_ENDPOINT_URL "$dir/secrets.yaml" | grep -vc 'http://garage.garage.svc.cluster.local:3900')" 0
 expect "headless Service is the StatefulSet's serviceName" \
