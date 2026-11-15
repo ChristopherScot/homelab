@@ -7,18 +7,11 @@ gets a key.
 
 ## Where the redundancy lives
 
-Garage replicates; Longhorn does not. Each pod's two volumes (`meta`,
-`data`) are on `longhorn-garage`: one replica, pinned to the pod's node.
-The three pods are forced onto three different nodes by anti-affinity and
-the layout gives each its own zone, so Garage keeps the three copies of
-every object on three machines.
-
-The alternative - one Garage node on 2-replica Longhorn - was what ran
-first. It fails over, but slowly (Longhorn has to notice the node is gone
-and re-attach), every write crosses the wifi to the second replica, and
-with `replication_factor 1` the metadata volume was a single replica
-anyway. Three nodes trade more wifi bandwidth per PUT (two extra copies)
-for no failover at all: a lost node is simply a node that is not there.
+Garage replicates; Longhorn does not. Each pod's two volumes are on
+`longhorn-garage` - one replica, pinned to the pod's node - and the three
+pods are forced onto three different nodes, each its own zone in the
+layout. storageclass.yaml has the argument for why the replication is
+Garage's and not Longhorn's. What it buys, by event:
 
 | Event | What happens | Reads | Writes |
 |---|---|---|---|
@@ -49,24 +42,23 @@ cost that longhorn-settings/config.yaml describes does not apply to them.
 ## Capacity
 
 30Gi per node, which at `replication_factor 3` is 30Gi usable. Sized to
-node2, which had 47Gi of Longhorn headroom when this was written. To grow:
+node2, which had 47Gi of Longhorn headroom when this was written. The
+init script reads each node's capacity from its data PVC, so there is one
+place it is declared. To grow a running cluster:
 
 1. Expand all three `data-garage-node-N` PVCs (the class allows it).
 2. For each node, `garage layout assign -c <new size> <node id>`, then
    the `garage layout apply --version N` that `garage layout show` prints.
-3. Change `GARAGE_CAPACITY` in bootstrap/garage-init.sh and the PVC size
-   in statefulset.yaml together; `tests/manifests.sh` checks they agree.
 
-The PVC size in the StatefulSet is a template: it is used only when a
-PVC is created, so step 3 is for the next fresh cluster, not this one.
+Change the size in statefulset.yaml too, for the next fresh cluster: a
+volumeClaimTemplate is only read when a PVC is created.
 
 ## Bringing it up (and the one-time move from the single node)
 
-Argo applies everything in this directory. On the merge that introduced
-the three-node layout it pruned the old `garage` StatefulSet (the volume
-claim templates changed, which is an immutable field, so a new name was
-the only way through) and created `garage-node`. The pods come up
-`0/3 Ready` and stay there until someone runs:
+Argo applies everything in this directory. The merge that introduced the
+three-node layout pruned the old single-node `garage` StatefulSet and
+created `garage-node` (see statefulset.yaml for why a rename). The pods
+come up `0/3 Ready` and stay there until someone runs:
 
 ```sh
 ./bootstrap/garage-init.sh
@@ -91,6 +83,9 @@ re-seedable reference material):
 ```sh
 kubectl delete pvc -n garage data-garage-0 meta-garage-0
 ```
+
+Once that has happened, this section is a plain "run garage-init.sh,
+then seed" and the rest of it can go.
 
 ## Re-admitting a node after its disk was lost
 

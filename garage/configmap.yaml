@@ -92,7 +92,10 @@ spec:
 # does not actually go through it - nodes dial the IPs they discover -
 # but it is what gives garage-node-N a stable DNS name for a human to
 # reach one specific node, and the discovery label garage puts on its
-# GarageNode objects is this Service's name.
+# GarageNode objects is this Service's name. publishNotReadyAddresses
+# because Ready is /health, so without it the per-pod name would resolve
+# only while the node is healthy - exactly when nobody needs to reach
+# one specific node.
 apiVersion: v1
 kind: Service
 metadata:
@@ -100,6 +103,7 @@ metadata:
   namespace: garage
 spec:
   clusterIP: None
+  publishNotReadyAddresses: true
   selector:
     app: garage-node
   ports:

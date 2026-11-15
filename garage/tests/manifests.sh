@@ -27,7 +27,14 @@ q() { # <file> <kind> <expr> [name]
   fi
 }
 
-command -v yq >/dev/null 2>&1 || { echo "SKIP: yq not installed - manifests were NOT checked"; exit 0; }
+# Locally a missing yq is a skip that says so. In CI it is a failure: this
+# is the only one of the garage tests CI can run, and a green run that
+# checked nothing is worse than a red one.
+command -v yq >/dev/null 2>&1 || {
+  echo "SKIP: yq not installed - manifests were NOT checked"
+  [ -z "${CI:-}" ] || { echo "FAIL: CI must have yq"; exit 1; }
+  exit 0
+}
 
 sts=statefulset.yaml
 cm=configmap.yaml
@@ -66,13 +73,12 @@ for vol in meta data; do
     "$(q $sts StatefulSet ".spec.volumeClaimTemplates[] | select(.metadata.name == \"$vol\") | .spec.storageClassName")" "$sc"
 done
 
-# --- the two knobs that live in different files must agree --------------
-data_size="$(q $sts StatefulSet '.spec.volumeClaimTemplates[] | select(.metadata.name == "data") | .spec.resources.requests.storage')"
+# --- the init script names what the manifests name -----------------------
 init="$dir/../bootstrap/garage-init.sh"
-expect "init script default capacity tracks the data PVC size" \
-  "$(sed -n 's/^CAPACITY="\${GARAGE_CAPACITY:-\(.*\)}"$/\1/p' "$init")" "$data_size"
 expect "init script default StatefulSet name" \
   "$(sed -n 's/^STS="\${GARAGE_STS:-\(.*\)}"$/\1/p' "$init")" "$(q $sts StatefulSet .metadata.name)"
+expect "init script reads capacity from the data PVC, not a second knob" \
+  "$(grep -c 'get pvc -n "\$NS" "data-\$host"' "$init")" 1
 
 # --- readiness is garage's own health, and the S3 Service follows it -----
 expect "readiness probes /health" \
@@ -83,8 +89,9 @@ expect "liveness does NOT use /health (quorum loss is not fixed by a restart)" \
   "$(q $sts StatefulSet '.spec.template.spec.containers[0].livenessProbe.httpGet // "none"')" none
 expect "S3 Service selects the garage pods" \
   "$(q $cm Service .spec.selector.app garage)" "$(q $sts StatefulSet '.spec.template.metadata.labels.app')"
-expect "S3 Service keeps the name every AWS_ENDPOINT_URL already carries" \
-  "$(grep -c 'AWS_ENDPOINT_URL: "http://garage.garage.svc.cluster.local:3900"' "$dir/secrets.yaml")" 2
+expect "the S3 Service is still called garage" "$(q $cm Service .metadata.name garage)" garage
+expect "no endpoint URL in secrets.yaml names anything else" \
+  "$(grep AWS_ENDPOINT_URL "$dir/secrets.yaml" | grep -vc 'http://garage.garage.svc.cluster.local:3900')" 0
 expect "headless Service is the StatefulSet's serviceName" \
   "$(q $cm Service .metadata.name garage-node)" "$(q $sts StatefulSet .spec.serviceName)"
 expect "headless Service is headless" "$(q $cm Service .spec.clusterIP garage-node)" None

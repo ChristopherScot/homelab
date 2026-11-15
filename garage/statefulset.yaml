@@ -150,11 +150,9 @@ spec:
     # object), tripled from the first cut. Sized to the node that has the
     # least headroom: Longhorn schedules against the full requested size
     # and node2's SSD had 47Gi left to schedule when this was written.
-    # To grow: expand all three PVCs (the class allows it), then tell
-    # Garage - GARAGE_CAPACITY in bootstrap/garage-init.sh is only
-    # applied to a node when its role is first assigned, so a resize
-    # means `garage layout assign -c <new>` per node and a new layout
-    # version by hand.
+    # bootstrap/garage-init.sh reads this size off the PVC when it first
+    # assigns a node, so it is declared once. To grow a running cluster
+    # see garage/README.md: expand the PVCs, then a new layout version.
     - metadata:
         name: data
       spec:

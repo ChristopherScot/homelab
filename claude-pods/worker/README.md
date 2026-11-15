@@ -34,11 +34,13 @@ than behavioural.
 - **Two keys**: `claude-worker` (read, for pods) and `claude-seed`
   (read-write, for seeding). Verified distinct in `garage bucket info`.
 
-## The remaining step
+## The credential handoff (done; kept for the record)
 
-Garage mints the two S3 keys, so use the existing credentials rather than
-inventing replacement values. Keep credential values out of chat, terminal
-logs, process arguments, and Git.
+All three ExternalSecrets are `SecretSynced/True` and Vault is now the
+authoritative copy of both S3 keys: `bootstrap/garage-init.sh` imports
+them from the projected Secrets into any rebuilt cluster, so the steps
+below are only needed again for a key that does not exist yet. The
+permission model is in garage/PERMISSIONS.md.
 
 1. Log into Vault (`VAULT_ADDR=http://vault.lab vault login` on the LAN).
 2. Securely transfer the **existing** `garage-rpc` Secret value into
@@ -47,8 +49,8 @@ logs, process arguments, and Git.
    `kv/garage/s3-reference` and its distinct `claude-seed` key into
    `kv/garage/s3-seed`; both paths use `access-key-id` and
    `secret-access-key`. Refuse conflicting existing Vault values until
-   they have been investigated. `garage-init.sh` is for initial setup;
-   its credential-printing output must not be captured in logs.
+   they have been investigated. `garage-init.sh` prints a freshly minted
+   key once; that output must not be captured in logs.
 3. Apply only these reviewed Vault policies and Kubernetes-auth roles:
 
    ```sh

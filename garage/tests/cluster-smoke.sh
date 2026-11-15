@@ -18,9 +18,10 @@
 # Run: garage/tests/cluster-smoke.sh
 #   GARAGE_SMOKE_NS   scratch namespace (default garage-smoke)
 #   GARAGE_SMOKE_KEEP set to keep the namespace afterwards for a look
-#   GARAGE_SMOKE_IMPORT_FROM  namespace holding garage-s3-reference and
-#                     garage-s3-seed to exercise the key IMPORT path
-#                     (default: empty, keys are minted in the scratch ns)
+#   GARAGE_SMOKE_IMPORT  set to let garage-init.sh import the real keys
+#                     from claude-pods (its default) and so exercise the
+#                     import path; otherwise keys are minted in the
+#                     scratch namespace and never leave it
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -50,15 +51,17 @@ trap cleanup EXIT
 
 step "render into $NS with small volumes"
 # The same files Argo applies, with only the namespace and the sizes
-# changed. The StorageClass and CRD are cluster-scoped and identical to
-# what the real app owns, so they are applied as committed.
+# changed. The sizes are matched by shape, not value, so a resize in
+# statefulset.yaml cannot leave this applying full-size volumes to a
+# scratch namespace. The StorageClass and CRD are cluster-scoped and
+# identical to what the real app owns, so they are applied as committed.
 for f in configmap rbac statefulset; do
-  sed -e "s/namespace: garage$/namespace: $NS/" \
+  sed -E -e "s/namespace: garage$/namespace: $NS/" \
       -e "s/namespace = \"garage\"/namespace = \"$NS\"/" \
-      -e 's/storage: 30Gi/storage: 2Gi/' \
-      -e 's/storage: 3Gi/storage: 1Gi/' \
+      -e 's/storage: [0-9]+Gi$/storage: 1Gi/' \
       "$src/$f.yaml" > "$render/$f.yaml"
 done
+grep -q 'storage: 1Gi' "$render/statefulset.yaml" || fail "could not shrink the volume sizes in statefulset.yaml"
 kubectl create ns "$NS" --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 kubectl -n "$NS" create secret generic garage-rpc \
   --from-literal=rpc-secret="$(openssl rand -hex 32)" \
@@ -90,8 +93,10 @@ step "bootstrap: membership, layout, bucket, keys"
 # credential lines the script prints for freshly minted keys, and a
 # pipe would make its exit status the filter's, not the script's.
 init_out="$render/init.log"
-if ! GARAGE_NS="$NS" GARAGE_CAPACITY=2Gi GARAGE_KEY_SOURCE_NS="${GARAGE_SMOKE_IMPORT_FROM:-}" \
-    bash "$src/../bootstrap/garage-init.sh" >"$init_out" 2>&1; then
+if [ -z "${GARAGE_SMOKE_IMPORT:-}" ]; then
+  export GARAGE_KEY_RO_SECRET="" GARAGE_KEY_RW_SECRET=""
+fi
+if ! GARAGE_NS="$NS" bash "$src/../bootstrap/garage-init.sh" >"$init_out" 2>&1; then
   grep -v -E '^(Key ID|Secret key):' "$init_out" | tail -30
   fail "garage-init.sh failed"
 fi

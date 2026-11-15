@@ -58,18 +58,17 @@ Say `paperless` wants to archive exports to S3.
    garage bucket allow --read --write paperless-archive --key paperless
    garage key info paperless --show-secret     # once, for step 2
    ```
-   Then add the same three lines to `bootstrap/garage-init.sh` so the
-   next rebuild recreates them. When this directory has its second
-   bucket, turn the script's one-bucket stanza into a table.
+   Then add the same to `bootstrap/garage-init.sh` so the next rebuild
+   recreates them: a bucket stanza like the one for `claude-reference`,
+   and an `ensure_key paperless paperless/garage-s3-paperless` line
+   naming the Secret from step 4, so a rebuilt cluster imports the
+   credential paperless already holds rather than minting one and
+   breaking it.
 
 2. **Secret, in Vault.**
    ```sh
    vault kv put kv/garage/s3-paperless access-key-id=GK... secret-access-key=...
    ```
-   Then `garage-init.sh`'s import step will find it on a rebuild:
-   point `ensure_key` at `paperless`'s Secret the way it does for the two
-   claude keys, so a rebuilt cluster learns the credential paperless
-   already holds rather than minting one and breaking it.
 
 3. **Permission to read it, in Vault.** In `bootstrap/vault-policies.sh`,
    the paperless policy gains one line:

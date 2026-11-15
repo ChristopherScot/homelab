@@ -14,15 +14,20 @@
 # and keys are created only if missing; the grants are re-applied
 # unconditionally, which repairs a drifted one.
 #
-# Keys: the two S3 keys already live in Vault (kv/garage/s3-reference and
-# kv/garage/s3-seed), projected into Secrets in the claude-pods namespace.
-# A key Garage does not know yet is IMPORTED from there rather than
-# minted, so rebuilding the cluster does not invalidate what every
-# consumer already holds. Only when no Secret exists is a key created, and
-# its secret printed ONCE at the end for seeding Vault. The import passes
-# the secret as a command argument, so for a moment it is visible to `ps`
-# on the machine running this script; run it from your own machine, not a
-# shared one.
+# Keys: the two S3 keys already live in Vault, projected by External
+# Secrets into Secrets in the claude-pods namespace. A key Garage does
+# not know yet is IMPORTED from there rather than minted, so rebuilding
+# the cluster does not invalidate what every consumer already holds. Only
+# when no such Secret exists is a key created, and its secret printed
+# ONCE at the end for seeding Vault.
+#
+# `garage key import` only takes the secret as an argument, so for the
+# length of that one call it is in the argv of kubectl here, in the exec
+# request to the API server (and so in API audit logs, if enabled), and
+# in the process table of the node running the garage pod. Nothing lands
+# in a log this script writes. Run it from your own machine.
+#
+# Needs kubectl and jq.
 set -euo pipefail
 
 NS="${GARAGE_NS:-garage}"
@@ -34,18 +39,17 @@ BUCKET="${GARAGE_BUCKET:-claude-reference}"
 # bucket, so an RW credential would let a buggy or compromised worker
 # overwrite the books every other worker boots from. Object storage
 # gives read isolation structurally; write isolation needs this.
+# Each key names the namespace/Secret it is imported from; empty means
+# never import, always mint.
 KEY_RO="${GARAGE_KEY_RO:-claude-worker}"
+KEY_RO_SECRET="${GARAGE_KEY_RO_SECRET-claude-pods/garage-s3-reference}"
 KEY_RW="${GARAGE_KEY_RW:-claude-seed}"
-# Where the Vault-projected S3 Secrets live, and their names. Empty
-# KEY_SOURCE_NS disables import (fresh keys are minted and printed).
-KEY_SOURCE_NS="${GARAGE_KEY_SOURCE_NS-claude-pods}"
-SECRET_RO="${GARAGE_SECRET_RO:-garage-s3-reference}"
-SECRET_RW="${GARAGE_SECRET_RW:-garage-s3-seed}"
-# Per node. Must track the data PVC in garage/statefulset.yaml; garage
-# accepts Gi here (it parsed 4Gi as 4.0 GiB) so the two files can say
-# the same thing. Garage uses it to weight the layout, and with three
-# equal nodes at replication_factor 3 it is also the usable total.
-CAPACITY="${GARAGE_CAPACITY:-30Gi}"
+KEY_RW_SECRET="${GARAGE_KEY_RW_SECRET-claude-pods/garage-s3-seed}"
+# Per-node capacity, if you want to override the size of the node's data
+# PVC, which is what is used otherwise. Garage uses it to weight the
+# layout; with three equal nodes at replication_factor 3 it is also the
+# usable total.
+CAPACITY="${GARAGE_CAPACITY:-}"
 
 # Two wrappers, because this script asks garage two kinds of question
 # and they want opposite error handling.
@@ -87,25 +91,25 @@ g() {
   return "$rc"
 }
 
-# The HEALTHY NODES table of `garage status`, one line per node:
-#   <id-prefix> <hostname> <assigned|unassigned>
-# Stops at the next ==== header so the STAGED ROLE CHANGES table that
-# follows (same id-first shape) is not mistaken for nodes. A node whose
-# role is staged but not applied shows "pending..." and is treated as
-# assigned, so a re-run after a failed apply does not stage it twice.
-#
-# A node that discovery has found but that has not finished its
-# handshake lists with hostname "?" - it is in the table before it is a
-# member. Leave it out: counting it made the membership wait below pass
-# 30 seconds after a fresh start, and the layout step then asked
-# Kubernetes for a pod called "?".
+# Cluster members, one per line: <id> <hostname> <assigned|unassigned>.
+# From the admin API's JSON rather than the `garage status` table, which
+# an earlier version parsed with awk and needed a paragraph to defend.
+# Two things the JSON makes structural: a node discovery has found but
+# not finished a handshake with has no hostname yet and is not counted
+# (counting it made the membership wait pass 30 seconds after a fresh
+# start, and the layout step then asked Kubernetes for a pod called "?");
+# and a role that is staged but not yet applied counts as assigned, so a
+# re-run after a failed apply does not stage it twice.
 healthy_nodes() {
-  g_try status | awk '
-    /^==== HEALTHY NODES/ { in_table = 1; next }
-    /^====/               { in_table = 0 }
-    in_table && /^[0-9a-f]{16} / && $2 != "?" {
-      print $1, $2, (/NO ROLE ASSIGNED/ ? "unassigned" : "assigned")
-    }'
+  local status layout
+  status="$(g_try json-api GetClusterStatus)" || return 0
+  layout="$(g_try json-api GetClusterLayout)" || return 0
+  jq -rn --argjson s "$status" --argjson l "$layout" '
+    ([$l.roles[].id] + [$l.stagedRoleChanges[].id]) as $have
+    | $s.nodes[]
+    | select(.isUp and .hostname != null)
+    | .id as $id
+    | "\($id) \(.hostname) \(if ($have | index($id)) then "assigned" else "unassigned" end)"'
 }
 
 echo "=== garage-init: ns=$NS sts=$STS via $POD ==="
@@ -117,30 +121,39 @@ echo "=== garage-init: ns=$NS sts=$STS via $POD ==="
 #    on a race the operator did not cause.
 want="$(kubectl get sts -n "$NS" "$STS" -o jsonpath='{.spec.replicas}')"
 [ -n "$want" ] || { echo "FATAL: cannot read $STS replicas in $NS" >&2; exit 1; }
+#    `|| true` because this is the one place the script expects garage to
+#    be unreachable (a pod still attaching its volumes), and set -e would
+#    otherwise turn that into a silent exit with the kubectl error already
+#    discarded by g_try.
 for _ in $(seq 1 18); do
-  have="$(healthy_nodes | wc -l | tr -d ' ')"
-  [ "$have" -ge "$want" ] && break
-  echo "membership: $have of $want nodes visible, waiting for discovery..."
+  have="$(healthy_nodes | wc -l | tr -d ' ' || true)"
+  [ "${have:-0}" -ge "$want" ] && break
+  echo "membership: ${have:-0} of $want nodes visible, waiting for discovery..."
   sleep 10
 done
-[ "$have" -ge "$want" ] || {
-  echo "FATAL: only $have of $want nodes joined; check 'garage status' and the GarageNode objects" >&2
+[ "${have:-0}" -ge "$want" ] || {
+  echo "FATAL: only ${have:-0} of $want nodes joined; garage status says:" >&2
+  g status >&2 || true
+  echo "Also check the GarageNode objects: kubectl get garagenodes -n $NS" >&2
   exit 1
 }
 
 # 2. Layout. One zone per k8s node, named after it, so a layout listing
 #    reads as the machines it describes and Garage keeps the three copies
 #    of every object on three different machines (it treats zones as
-#    failure domains). The pod's node is asked for rather than assumed
-#    from the ordinal: anti-affinity fixes the mapping, but nothing says
-#    which ordinal landed where.
+#    failure domains). The pod's node and its PVC's size are asked for
+#    rather than assumed: anti-affinity fixes the node mapping but
+#    nothing says which ordinal landed where, and the PVC is the one
+#    place the capacity is declared (garage accepts the same Gi form).
 staged=0
 while read -r id host role; do
   [ "$role" = "unassigned" ] || continue
   zone="$(kubectl get pod -n "$NS" "$host" -o jsonpath='{.spec.nodeName}')"
   [ -n "$zone" ] || { echo "FATAL: cannot find the k8s node running $host" >&2; exit 1; }
-  echo "layout: assigning $id ($host) zone=$zone capacity=$CAPACITY"
-  g layout assign -z "$zone" -c "$CAPACITY" "$id" >/dev/null
+  cap="${CAPACITY:-$(kubectl get pvc -n "$NS" "data-$host" -o jsonpath='{.status.capacity.storage}')}"
+  [ -n "$cap" ] || { echo "FATAL: cannot read the size of PVC data-$host" >&2; exit 1; }
+  echo "layout: assigning ${id:0:16} ($host) zone=$zone capacity=$cap"
+  g layout assign -z "$zone" -c "$cap" "$id" >/dev/null
   staged=$((staged + 1))
 done < <(healthy_nodes)
 
@@ -170,49 +183,51 @@ else
   echo "bucket: $BUCKET created"
 fi
 
-# 4. Keys. Imported from the existing Secret when there is one, so the
+# 4. Keys. Imported from the named Secret when there is one, so the
 #    cluster learns the credential consumers already hold; created only
 #    when there is nothing to import. `key info <name>` resolves a name,
 #    so an existing key is found whichever way it was made.
-secret_field() { # <secret> <key>
-  kubectl get secret -n "$KEY_SOURCE_NS" "$1" -o "jsonpath={.data.$2}" 2>/dev/null | base64 -d
+secret_field() { # <namespace/secret> <field>
+  kubectl get secret -n "${1%%/*}" "${1#*/}" -o "jsonpath={.data.$2}" 2>/dev/null | base64 -d
 }
 
 created=()
-ensure_key() { # <key name> <secret name>
-  local name="$1" secret="$2" have_id want_id want_secret
-  if g_try key info "$name" >/dev/null; then
-    have_id="$(g_try key info "$name" | sed -n 's/^Key ID: *//p')"
-    if [ -n "$KEY_SOURCE_NS" ]; then
-      want_id="$(secret_field "$secret" AWS_ACCESS_KEY_ID || true)"
-      if [ -n "$want_id" ] && [ "$want_id" != "$have_id" ]; then
-        echo "WARNING: key $name is $have_id in garage but $KEY_SOURCE_NS/$secret holds $want_id;" >&2
-        echo "         consumers of that Secret cannot authenticate. Reconcile Vault or the key." >&2
-      fi
+drift=0
+ensure_key() { # <key name> <namespace/secret, or empty>
+  local name="$1" from="$2" have_id want_id want_secret
+  have_id="$(g_try key info "$name" | sed -n 's/^Key ID: *//p' || true)"
+  want_id=""
+  want_secret=""
+  if [ -n "$from" ]; then
+    want_id="$(secret_field "$from" AWS_ACCESS_KEY_ID || true)"
+    want_secret="$(secret_field "$from" AWS_SECRET_ACCESS_KEY || true)"
+  fi
+  if [ -n "$have_id" ]; then
+    if [ -n "$want_id" ] && [ "$want_id" != "$have_id" ]; then
+      # Reported here, fatal at the end: the grants below are still worth
+      # applying, but a run that leaves consumers unable to authenticate
+      # must not exit 0 - this is the failure the import step exists to
+      # prevent, and a WARNING line in a scrolled terminal is not a report.
+      echo "ERROR: key $name is $have_id in garage but $from holds $want_id;" >&2
+      echo "       consumers of that Secret cannot authenticate. Reconcile Vault or the key." >&2
+      drift=1
     fi
     echo "key: $name exists ($have_id)"
-    return
-  fi
-  want_id=""
-  if [ -n "$KEY_SOURCE_NS" ]; then
-    want_id="$(secret_field "$secret" AWS_ACCESS_KEY_ID || true)"
-    want_secret="$(secret_field "$secret" AWS_SECRET_ACCESS_KEY || true)"
-  fi
-  if [ -n "$want_id" ] && [ -n "$want_secret" ]; then
+  elif [ -n "$want_id" ] && [ -n "$want_secret" ]; then
     g key import --yes -n "$name" "$want_id" "$want_secret" >/dev/null
-    echo "key: $name imported from $KEY_SOURCE_NS/$secret ($want_id)"
+    echo "key: $name imported from $from ($want_id)"
   else
     g key create "$name" >/dev/null
-    if [ -n "$KEY_SOURCE_NS" ]; then
-      echo "key: $name created (no $KEY_SOURCE_NS/$secret to import from)"
+    if [ -n "$from" ]; then
+      echo "key: $name created (no $from to import from)"
     else
       echo "key: $name created (import disabled)"
     fi
-    created+=("$name")
+    created+=("$name:$from")
   fi
 }
-ensure_key "$KEY_RO" "$SECRET_RO"
-ensure_key "$KEY_RW" "$SECRET_RW"
+ensure_key "$KEY_RO" "$KEY_RO_SECRET"
+ensure_key "$KEY_RW" "$KEY_RW_SECRET"
 
 # 5. Grants. deny --write then allow --read, because allow only ADDS:
 #    running `allow --read` against a key that already had RW leaves it
@@ -225,18 +240,24 @@ g bucket allow --read --write "$BUCKET" --key "$KEY_RW" >/dev/null
 echo "grant: $KEY_RW has RW on $BUCKET"
 
 # 6. Only keys this run minted need seeding; imported ones are already
-#    where they belong.
+#    where they belong. The Vault path is whatever the ExternalSecret
+#    behind the Secret reads from - asked for, not repeated here.
 if [ "${#created[@]}" -gt 0 ]; then
   echo
   echo "=== credentials - put these in Vault, then delete this output ==="
-  for k in "${created[@]}"; do
-    case "$k" in
-      "$KEY_RO") path=kv/garage/s3-reference ;;
-      *)         path=kv/garage/s3-seed ;;
-    esac
+  for entry in "${created[@]}"; do
+    k="${entry%%:*}"; from="${entry#*:}"
+    path=""
+    [ -n "$from" ] && path="$(kubectl get externalsecret -n "${from%%/*}" "${from#*/}" \
+      -o jsonpath='{.spec.data[0].remoteRef.key}' 2>/dev/null || true)"
     echo "--- $k ---"
     g key info "$k" --show-secret | grep -iE '^(Key ID|Secret key):'
-    echo "  vault kv put $path \\"
+    echo "  vault kv put kv/${path:-garage/<path the consumer's ExternalSecret reads>} \\"
     echo "    access-key-id=<Key ID> secret-access-key=<Secret key>"
   done
+fi
+
+if [ "$drift" -ne 0 ]; then
+  echo "FATAL: a key in garage does not match the Secret its consumers hold (see ERROR above)" >&2
+  exit 1
 fi
