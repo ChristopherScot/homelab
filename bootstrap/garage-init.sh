@@ -203,7 +203,11 @@ ensure_key() { # <key name> <secret name>
     echo "key: $name imported from $KEY_SOURCE_NS/$secret ($want_id)"
   else
     g key create "$name" >/dev/null
-    echo "key: $name created (no $KEY_SOURCE_NS/$secret to import from)"
+    if [ -n "$KEY_SOURCE_NS" ]; then
+      echo "key: $name created (no $KEY_SOURCE_NS/$secret to import from)"
+    else
+      echo "key: $name created (import disabled)"
+    fi
     created+=("$name")
   fi
 }
