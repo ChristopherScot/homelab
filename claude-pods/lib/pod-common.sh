@@ -373,82 +373,65 @@ kaneo_enrolled() {
   return 1
 }
 
-# Moves a card to a column by slug. Never fatal: the board is a view of the
-# night's work, and failing to update it must not stop the work itself. A
-# failed move is logged so a stale card is explainable in the morning.
-kaneo_move() {
-  local task="$1" to="$2"
-  # Audible. A merged PR whose branch is not <prefix><task> has no card to
-  # move, and silence here leaves it sitting in Mergeable with nothing
-  # anywhere saying why.
-  [ -n "$task" ] || { echo "   kaneo: no card for this PR; not moved to $to" >&2; return 0; }
-  # `task status`, not `task move`: move is for sending a card to another
-  # PROJECT and fails with "there is no other project to move it to" on a
-  # single-project workspace. Every column change the pipeline makes went
-  # through that failing path, so the board never advanced past To Do even
-  # when the work ran.
-  if kaneo task status "$task" "$to" >/dev/null 2>&1; then
-    echo "   kaneo: $task -> $to"
-  else
-    echo "   kaneo: FAILED to move $task -> $to" >&2
+# A stage cannot discover or select work. The command ID is created and
+# persisted by the dispatcher, and every report must name that exact command.
+require_dispatch_command() {
+  ONLY_TASK="${1:-}"
+  ONLY_REPO="${2:-}"
+  DISPATCH_COMMAND="${3:-}"
+  [ -n "$ONLY_TASK" ] && [ -n "$ONLY_REPO" ] && [ -n "$DISPATCH_COMMAND" ] || {
+    echo 'FATAL: dispatcher task, repository and command ID are required' >&2
+    return 1
+  }
+  export ONLY_TASK ONLY_REPO DISPATCH_COMMAND
+}
+
+# Require the synchronous v1 acknowledgment. Older dispatchers answer unknown
+# POST paths with 202, which is NOT acceptance. Never retry an uncertain write.
+dispatcher_report() {
+  local event="$1" extra="${2:-}" payload reply code body
+  [ -n "${DISPATCH_COMMAND:-}" ] && [ -n "${ONLY_TASK:-}" ] || return 1
+  [ -n "$extra" ] || extra='{}'
+  payload=$(jq -cn --arg task "$ONLY_TASK" --arg command "$DISPATCH_COMMAND" \
+    --arg event "$event" --argjson extra "$extra" \
+    '$extra + {task:$task,command:$command,event:$event}') || return 1
+  reply=$(curl --silent --show-error --connect-timeout 10 --max-time 95 \
+    -H "Authorization: Bearer $KANEO_API_KEY" -H 'Content-Type: application/json' \
+    --data-binary "$payload" --write-out '\n%{http_code}' \
+    "${KANEO_DISPATCH_URL:-http://kaneo-dispatcher.claude-pods.svc.cluster.local:8080}/worker-events") || return 1
+  code="${reply##*$'\n'}"
+  body="${reply%$'\n'*}"
+  if [ "$code" != 200 ] || ! printf '%s' "$body" | jq -e \
+    --arg task "$ONLY_TASK" --arg command "$DISPATCH_COMMAND" --arg event "$event" \
+    '.version == 1 and .accepted == true and .task == $task and .command == $command and .event == $event' >/dev/null; then
+    echo "dispatcher rejected $event for $ONLY_TASK (HTTP $code)" >&2
+    return 1
   fi
 }
 
-# Attaches a pull request to a card, so it shows the PR and its state without
-# Kaneo needing a GitHub App installed. The card is the only record of why a
-# PR exists — there is no issue behind it — so this link is what makes the
-# work explicable later.
-# The CLI attaches a plain link; `resourceType: pull_request` with its
-# open/merged badge is REST-only, and not worth a second code path for a
-# badge. The URL is a PR URL either way, which is what makes the card
-# explicable later.
-kaneo_link_pr() {
-  local task="$1" url="$2" title="${3:-pull request}"
-  [ -n "$task" ] || return 0
-  # Adding the same link twice is not harmless: the card ends up listing
-  # one pull request several times, and a re-run is exactly when that
-  # happens. Checked rather than assumed, because the CLI has no upsert.
-  if kaneo task link list "$task" --jq ".[].url" 2>/dev/null | grep -qxF "$url"; then
-    return 0
-  fi
-  kaneo task link add "$task" "$url" --title "$title" \
-    >/dev/null 2>&1 || echo "   kaneo: FAILED to link $url to $task" >&2
-}
-
-# Durable start receipt for the reconciler. Call only after taking the pod
-# lock and selecting actual task work. A failed receipt must stop the work.
 kaneo_work_started() {
-  local task="$1" stage="$2" result marker
-  marker="Work started: $stage"
-  [ -n "$task" ] || { echo "kaneo: cannot start work without a task" >&2; return 1; }
-  result="$(kaneo task comment "$task" "$marker" --json)" || return 1
-  if ! printf '%s' "$result" | jq -e --arg task "$task" --arg marker "$marker" \
-    '(.error == null) and (.taskId == $task) and (.content == $marker) and (.id | type == "string") and (.createdAt | type == "string")' >/dev/null; then
-    echo "kaneo: failed to record work started for $task" >&2
-    return 1
-  fi
+  [ "$1" = "${ONLY_TASK:-}" ] || return 1
+  DISPATCH_STAGE="${2#stage-}"
+  export DISPATCH_STAGE
+  dispatcher_report "$DISPATCH_STAGE-started"
 }
 
-# Posts a comment and @-mentions a human.
-#
-# Load-bearing rather than decorative: Kaneo has no per-column notification
-# filter (taskStatusChangeEnabled is one boolean covering every column), so
-# status notifications are off and this mention is the ONLY thing that
-# reaches a phone. A RISKY verdict nobody is told about is a card in a column
-# nobody is watching, so a failure here is reported loudly, not swallowed.
-kaneo_mention() {
-  local task="$1" who="$2" body="$3"
-  # Non-zero, not silent: the comment below calls this the only channel
-  # that reaches a phone, so "there was no card to mention on" has to be
-  # as loud as "the mention failed".
-  [ -n "$task" ] || { echo "   kaneo: no card to mention on — nobody has been notified" >&2; return 1; }
-  if kaneo task comment "$task" "@$who $body" >/dev/null 2>&1; then
-    echo "   kaneo: mentioned @$who on $task"
-  else
-    echo "   kaneo: MENTION FAILED on $task — nobody has been notified" >&2
-    return 1
-  fi
+kaneo_outcome() {
+  [ "$1" = "$ONLY_TASK" ] || return 1
+  dispatcher_report "$DISPATCH_STAGE-$2"
 }
+
+kaneo_note() {
+  [ "$1" = "$ONLY_TASK" ] || return 1
+  dispatcher_report note "$(jq -cn --arg message "$2" '{message:$message}')"
+}
+
+kaneo_link_pr() {
+  [ "$1" = "$ONLY_TASK" ] || return 1
+  dispatcher_report link "$(jq -cn --arg url "$2" --arg title "${3:-pull request}" '{url:$url,title:$title}')"
+}
+
+kaneo_mention() { kaneo_note "$1" "@$2 $3"; }
 
 # The repo a card is for, from its repo:<name> label.
 #
@@ -489,20 +472,20 @@ kaneo_unfinished_branch() {
   esac
 }
 
-# The open pull request already attached to a card, if there is one.
-#
-# This is what tells a fresh ticket from a revision. Both arrive in To Do —
-# there is no separate rework column, because "a pod should work this" is
-# one state whether or not it has been tried before — so the card's own
-# links are the thing that says which. A card with a PR gets the rework
-# prompt and pushes to the existing branch; a card without gets the author
-# prompt and starts one.
-#
-# Prints the PR url and returns 0, or returns 1 when there is none.
+# Exact assigned-task PR selection, shared by author recovery and both review
+# stages. Forks reusing a branch name and old merged links cannot select work.
+command_pr() {
+  gh pr list --repo "$ONLY_REPO" --state open \
+    --head "$(kaneo_branch_for_task "$ONLY_TASK")" --limit 100 \
+    --json number,url,headRefName,headRepositoryOwner,headRepository,updatedAt,headRefOid | \
+    jq -c --arg repo "$ONLY_REPO" --arg branch "$(kaneo_branch_for_task "$ONLY_TASK")" \
+      '[.[] | select(.headRefName == $branch and ((.headRepositoryOwner.login + "/" + .headRepository.name | ascii_downcase) == ($repo | ascii_downcase)))] | sort_by(.number) | last // empty'
+}
+
 kaneo_task_pr() {
-  local task="$1" url
-  [ -n "$task" ] || return 1
-  url="$(kaneo task link list "$task" --jq '[.[] | .url | select(test("/pull/[0-9]+$"))] | first // empty' 2>/dev/null)"
+  [ "$1" = "$ONLY_TASK" ] || return 1
+  local url
+  url=$(command_pr | jq -r '.url // empty') || return 1
   [ -n "$url" ] || return 1
   printf '%s' "$url"
 }
@@ -523,9 +506,11 @@ KANEO_REWORK_HEADLINE="Sent back for rework"
 kaneo_requeue() {
   local task="$1" why="$2"
   [ -n "$task" ] || { echo "   kaneo: no card to requeue" >&2; return 1; }
-  kaneo task comment "$task" "$KANEO_REWORK_HEADLINE: $why" >/dev/null 2>&1 \
-    || echo "   kaneo: FAILED to record the requeue on $task" >&2
-  kaneo_move "$task" to-do
+  kaneo_note "$task" "$KANEO_REWORK_HEADLINE: ${why:0:9000}" || {
+    echo "   dispatcher: requeue held because its rework receipt failed" >&2
+    return 1
+  }
+  kaneo_outcome "$task" failed
 }
 
 # How many times a card has been sent back.

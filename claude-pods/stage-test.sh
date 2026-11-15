@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# dispatcher-command-protocol: 1
 # Pod 2's job: try hard to break the PRs pod 0 opened, and file issues for
 # what actually breaks.
 #
@@ -17,6 +18,8 @@ set -uo pipefail
 POD_LIB="${POD_LIB:-/usr/local/share/claude-pods/lib/pod-common.sh}"
 # shellcheck source=lib/pod-common.sh
 source "$POD_LIB" || { echo "FATAL: cannot source $POD_LIB" >&2; exit 1; }
+
+require_dispatch_command "$@" || exit 1
 
 PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-2700}"
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
@@ -39,57 +42,18 @@ preflight_credential || exit 1
 
 pick_model
 
-now=$(date +%s)
-
-# The card this run is for, passed by the dispatcher.
-#
-# With it, this tests exactly the pull request that card carries. Without
-# it — a hand-run, or the reconciler's sweep — it falls back to scanning
-# every open branch, which is what the nightly cron did.
-#
-# The distinction matters because an event names one card. The first real
-# run moved CLA-13 to in-review, and this stage ignored it and went off to
-# test an unrelated pull request that happened to be open.
-ONLY_TASK="${1:-}"
-
-for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
-  if [[ "$repo" != "$OWNER"/* ]]; then
-    continue
-  fi
-
-  mapfile -t PRS < <(gh pr list --repo "$repo" --state open --json number,headRefName,updatedAt,headRefOid \
-    --jq '.[] | select(.headRefName | startswith($ENV.KANEO_BRANCH_PREFIX)) | "\(.number) \(.updatedAt) \(.headRefOid)"' 2>/dev/null)
-  [ "${#PRS[@]}" -eq 0 ] && continue
-
+# Start acknowledgment precedes GitHub work; the dispatcher validates the
+# command's current task, repository, stage and column visit.
+kaneo_work_started "$ONLY_TASK" stage-test || exit 1
+for repo in "$ONLY_REPO"; do
+  mapfile -t PRS < <(command_pr | jq -r '"\(.number) \(.updatedAt) \(.headRefOid)"')
   for entry in "${PRS[@]}"; do
     read -r pr updated sha <<<"$entry"
-
-    # When the dispatcher named a card, test only that card's branch.
-    if [ -n "$ONLY_TASK" ]; then
-      want="$(kaneo_branch_for_task "$ONLY_TASK")"
-      head="$(gh pr view "$pr" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)"
-      [ "$head" = "$want" ] || continue
-    else
-      # Sweeping, so the quiet window still applies: nothing has told us
-      # the author finished, and a branch updated a minute ago may still
-      # be being pushed to.
-      #
-      # It is deliberately NOT applied above. The author moving the card
-      # to In Review is the signal that it stopped, and the branch was
-      # necessarily just pushed — so the window would reject every
-      # dispatched card for being too fresh, which is exactly backwards.
-      upd=$(date -d "$updated" +%s 2>/dev/null || echo 0)
-      if [ "$upd" -gt 0 ] && [ $(( (now - upd) / 60 )) -lt "$QUIET_MINUTES" ]; then
-        echo "SKIP $repo#$pr: updated $(( (now - upd) / 60 ))m ago, still settling"
-        continue
-      fi
-    fi
+    task="$ONLY_TASK"
 
     name="$(basename "$repo")"
     dir="/workspace/$name"
     [ -d "$dir" ] || { echo "SKIP $repo#$pr: no clone"; continue; }
-    task="$(kaneo_task_for_pr "$repo" "$pr")" || continue
-    kaneo_work_started "$task" stage-test || continue
     git -C "$dir" fetch --quiet origin 2>/dev/null
 
     echo "--- testing $repo#$pr ($(date -Is))"
@@ -205,7 +169,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
           # anywhere would either lose it or dispatch work twice.
           echo "   CI still running on $repo#$pr; leaving the card in in-review"
         else
-          kaneo_move "$task" mergeable
+          kaneo_outcome "$task" succeeded
         fi
         ;;
       FAIL)
@@ -216,7 +180,7 @@ for repo in $(tr ',' ' ' < /run/secrets/repos/pod2); do
         # it at all — so this wants a person, not another attempt.
         [ -n "$task" ] && kaneo_mention "$task" "${KANEO_OWNER:-chris}" \
           "integration testing could not run against \`${sha:0:7}\` (will not build, or needs something the pod does not have)"
-        kaneo_move "$task" needs-human-review
+        kaneo_outcome "$task" blocked
         ;;
     esac
     echo "--- $repo#$pr done rc=$rc verdict=${verdict:-BLOCKED}"
