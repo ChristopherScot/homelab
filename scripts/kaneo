@@ -22,19 +22,20 @@ discovered by probing (2026-11-10) and this script is their one home:
 Column semantics (routes in github.com/ChristopherScot/kaneo-dispatcher): moving a card to `to-do`,
 `in-review` or `mergeable` DISPATCHES WORK to a session pod - waking the
 StatefulSet if asleep. `backlog`, `needs-human-review` and `done` are
-inert. `in-progress` is inert for moves.
+inert. `in-progress` is inert for moves. A dispatched card needs exactly
+one `repo:<name>` label or the dispatcher skips it; `create --repo`
+handles that.
 
-Dispatch is retried, not fire-and-forget: a reconcile sweep covers the
-three dispatching columns above and `in-progress`. A dispatched card
-whose worker has not reported a start becomes eligible again 15m after
-dispatch; once a start is on record the card is left alone until 4h
-after that start. A stale `in-progress` card is re-dispatched to its
-author (a stranded card is work owed, not a parking spot). The cadence
-belongs to the CronJob (every five minutes;
-claude-pods/kaneo-reconcile-cron.yaml) and both windows are dispatcher
-defaults (RECONCILE_UNCLAIMED=15m, RECONCILE_STALE=4h). A dispatched
-card needs exactly one `repo:<name>` label or the dispatcher skips it;
-`create --repo` handles that.
+Dispatch is retried, not fire-and-forget: a reconcile sweep
+re-dispatches across the three dispatching columns above and
+`in-progress`. A card whose worker has not reported a start is eligible
+for re-dispatch by the next sweep 15m after dispatch; once a start is
+on record the card is not re-dispatched until 4h after that start. An
+eligible `in-progress` card is re-dispatched to its author (a stranded
+card is work owed, not a parking spot). The sweep runs on the CronJob's
+schedule (every five minutes; claude-pods/kaneo-reconcile-cron.yaml);
+both windows are dispatcher defaults (RECONCILE_UNCLAIMED,
+RECONCILE_STALE).
 
 Auth, first match wins: $KANEO_API_KEY; /run/secrets/kaneo/api-key (the
 pods' mount); `kubectl get secret kaneo-api -n claude-pods` (the
