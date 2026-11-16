@@ -15,7 +15,7 @@
 # kustomization.yaml).
 # Built from the reviewed dispatcher source; shares its typed wire contract.
 FROM golang:1.27 AS kaneo-worker
-ARG KANEO_WORKER_REF=112c8cbcacb4eb69f753899905f8cb081d1c94ba
+ARG KANEO_WORKER_REF=2c1a1ef40b73a15701cff586798bd5de95c610f3
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ChristopherScot/kaneo-dispatcher/cmd/kaneo-worker@${KANEO_WORKER_REF}
 
 FROM node:22-trixie-slim
