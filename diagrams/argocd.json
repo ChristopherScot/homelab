@@ -1,0 +1,8 @@
+{
+  "name": "diagrams",
+  "team": "me-myself-and-i",
+  "namespace": "diagrams",
+  "image": "ghcr.io/christopherscot/diagrams",
+  "repoURL": "https://github.com/ChristopherScot/diagrams",
+  "manifestPath": "deploy/diagrams"
+}
