@@ -144,3 +144,15 @@ not rest on assumption:
   downloaded it and diffed it byte-for-byte: upload 632ms, download
   578ms, round trip OK. That is the assumption the whole worker design
   rests on, and it is now measured rather than assumed.
+
+Author cleanup commits remaining tracked and untracked, non-ignored changes as
+`stash: unfinished work for <task> (<command>)` and pushes the task branch, even
+when execution fails or is cancelled. It refuses a changed checkout branch and
+never force-pushes. Checkpointed work reports blocked, not successful; failed
+pushes retain the local commit for recovery. Test scratch work and review
+verdicts are not author checkpoints.
+
+The session pod's preStop hook prevents new worker commands, signals the Go
+worker, and waits for its lock. The 180-second termination grace covers the
+worker's bounded checkpoint and report cleanup. This handles graceful shutdown;
+SIGKILL, node loss, or an unavailable remote can still prevent a final push.

@@ -22,7 +22,7 @@ spec:
             annotations-risk-level: Critical
           service:
             type: LoadBalancer
-            externalTrafficPolicy: Local
+            externalTrafficPolicy: Cluster
             annotations:
               metallb.universe.tf/loadBalancerIPs: "192.168.50.225"
           admissionWebhooks:
