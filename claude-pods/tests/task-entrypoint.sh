@@ -15,10 +15,12 @@ trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/bin" "$tmp/secrets/repos" "$tmp/secrets/git" \
          "$tmp/workspace/present/.git" "$tmp/skills/kernel" "$tmp/home"
-# The fake git records its arguments and the token it was handed.
+# The fake git records its arguments and the token it was handed, and
+# fails any clone whose URL contains FAKE_GIT_FAIL.
 cat > "$tmp/bin/git" <<EOF
 #!/bin/sh
 echo "git \$* token=\${GH_TOKEN:-unset}" >> "$tmp/calls.log"
+case "\${FAKE_GIT_FAIL:-}" in ?*) case "\$*" in *"\$FAKE_GIT_FAIL"*) exit 128 ;; esac ;; esac
 EOF
 # `exec sleep infinity` must be the last thing it does; a fake sleep
 # turns that into a clean exit the test can observe.
@@ -34,6 +36,9 @@ exit 1
 EOF
 chmod +x "$tmp/bin/"*
 printf 'kernel skill\n' > "$tmp/skills/kernel/SKILL.md"
+# A stale copy already on the "PVC": the image's must replace it.
+mkdir -p "$tmp/home/.claude/skills/kernel"
+printf 'stale\n' > "$tmp/home/.claude/skills/kernel/SKILL.md"
 printf 'ghp_fake\n' > "$tmp/secrets/git/token"
 # pod0's list: one already present, one slug, one full URL, one junk ref.
 printf 'owner/present, owner/missing\nhttps://example.com/elsewhere.git\njunk\n' > "$tmp/secrets/repos/pod0"
@@ -69,28 +74,48 @@ printf '%s' "$out" | grep -q 'skip unrecognized repo ref: junk' \
   || { echo "FAIL: an unrecognized ref is not reported"; fail=1; }
 check "total clones" 2 "$(grep -c 'git clone' "$tmp/calls.log")"
 
-# 2. Reads the list for ITS ordinal, not pod0's by habit.
-printf 'owner/other\n' > "$tmp/secrets/repos/pod2"
-run claude-task-2 >/dev/null
-check "ordinal 2 clones pod2's list" 1 "$(grep -c 'clone.*owner/other' "$tmp/calls.log")"
-check "ordinal 2 does not clone pod0's list" 0 "$(grep -c 'clone.*owner/missing' "$tmp/calls.log")"
-
-# 3. A missing token is reported, not fatal: public repos still clone.
-rm "$tmp/secrets/git/token"
-out=$(run claude-task-2)
-printf '%s' "$out" | grep -q 'no git token' || { echo "FAIL: a missing token is not reported"; fail=1; }
-check "still clones without a token" 1 "$(grep -c 'clone.*owner/other.* token=unset' "$tmp/calls.log")"
-
-# 4. Trusts the workspace and each listed repo, keyed by exact path.
+# 2. Trusts the workspace and each listed repo, keyed by exact path.
 for dir in "$tmp/workspace" "$tmp/workspace/present" "$tmp/workspace/missing" "$tmp/workspace/elsewhere"; do
   jq -e --arg d "$dir" '.projects[$d].hasTrustDialogAccepted == true' "$tmp/home/.claude.json" >/dev/null 2>&1 \
     || { echo "FAIL: $dir is not pre-trusted in .claude.json"; fail=1; }
 done
 
-# 5. Seeds skills from the image and then idles; nothing interactive.
-test -f "$tmp/home/.claude/skills/kernel/SKILL.md" || { echo "FAIL: skills not seeded into HOME"; fail=1; }
+# 3. Reads the list for ITS ordinal, not pod0's by habit.
+printf 'owner/other\n' > "$tmp/secrets/repos/pod2"
+run claude-task-2 >/dev/null
+check "ordinal 2 clones pod2's list" 1 "$(grep -c 'clone.*owner/other' "$tmp/calls.log")"
+check "ordinal 2 does not clone pod0's list" 0 "$(grep -c 'clone.*owner/missing' "$tmp/calls.log")"
+
+# 4. A missing token is reported, not fatal: public repos still clone.
+rm "$tmp/secrets/git/token"
+out=$(run claude-task-2)
+printf '%s' "$out" | grep -q 'no git token' || { echo "FAIL: a missing token is not reported"; fail=1; }
+check "still clones without a token" 1 "$(grep -c 'clone.*owner/other.* token=unset' "$tmp/calls.log")"
+
+# 5. A reboot on a persisted home adds to .claude.json rather than
+#    replacing it: pod0's trust from the first run survives pod2's.
+jq -e --arg d "$tmp/workspace/missing" '.projects[$d].hasTrustDialogAccepted == true' "$tmp/home/.claude.json" >/dev/null 2>&1 \
+  || { echo "FAIL: trust written by an earlier boot was lost on reboot"; fail=1; }
+
+# 6. Seeds skills from the image over the stale PVC copy, then idles;
+#    nothing interactive.
+check "image skill replaces the stale PVC copy" "kernel skill" "$(cat "$tmp/home/.claude/skills/kernel/SKILL.md")"
 check "ends in sleep infinity" 1 "$(grep -c '^sleep infinity$' "$tmp/calls.log")"
 check "never touches tmux" 0 "$(grep -c '^tmux' "$tmp/calls.log")"
+
+# 7. One failed clone is a warning: the other repos still clone, every
+#    listed dir is still trusted, and the pod still idles. The pod serves
+#    two dozen repos; a `set -e` or `|| exit 1` here would take them all
+#    down for one bad entry.
+rm -rf "$tmp/workspace/missing" "$tmp/workspace/elsewhere" "$tmp/home/.claude.json"
+out=$(FAKE_GIT_FAIL=example.com run claude-task-0); rc=$?
+check "still exits cleanly after a failed clone" 0 "$rc"
+printf '%s' "$out" | grep -q 'WARN: clone failed: https://example.com/elsewhere.git' \
+  || { echo "FAIL: a failed clone is not reported"; fail=1; }
+check "the other repo still clones" 1 "$(grep -c 'clone.*owner/missing' "$tmp/calls.log")"
+check "still idles after a failed clone" 1 "$(grep -c '^sleep infinity$' "$tmp/calls.log")"
+jq -e --arg d "$tmp/workspace/missing" '.projects[$d].hasTrustDialogAccepted == true' "$tmp/home/.claude.json" >/dev/null 2>&1 \
+  || { echo "FAIL: trust not written after another repo's clone failed"; fail=1; }
 
 [ "$fail" -eq 0 ] && echo "PASS: task entrypoint clones its ordinal's missing repos with the mounted token, trusts them, seeds skills and idles"
 exit "$fail"

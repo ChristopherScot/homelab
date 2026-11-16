@@ -1,6 +1,9 @@
 # The Claude session pods operate the cluster the same way the human-driven
-# session does (cluster-admin), since they ARE interactive sessions you drive
-# via /remote-control — not unattended agents. A person is always in the loop.
+# session does (cluster-admin). They began as interactive sessions driven
+# via /remote-control; the dispatcher-commanded stages now run in them
+# unattended with the same account, and task/statefulset.yaml binds the
+# task-worker pods to it too. Narrowing it is deferred to the card that
+# retargets the dispatcher (task/README.md).
 ---
 apiVersion: v1
 kind: Namespace
@@ -28,9 +31,9 @@ subjects:
     name: claude-session
     namespace: claude-pods
 ---
-# argocd-image-updater polls ghcr for new digests of the claude-pod and
-# desloppify-pod images (annotations on their Applications in
-# app-of-apps/apps/). Both images are private, so the poll needs the
+# argocd-image-updater polls ghcr for new digests of the claude-pod,
+# claude-task and desloppify-pod images (annotations on their Applications
+# in app-of-apps/apps/). All three are private, so the poll needs the
 # ghcr-pull dockerconfigjson - and the updater's own RBAC only reads
 # secrets in the argocd namespace. Without this grant the poll fails
 # with a forbidden secret read and nothing ever updates. One verb, one

@@ -3,25 +3,24 @@
 # list, make sure the agent's home has what the worker expects, then idle:
 # the dispatcher execs stage-author/test/merge into the running container.
 #
-# Deliberately a subset of ../entrypoint.sh. The interactive image also
-# seeds a shell/editor home, logs gh and gcloud in, installs tmux plugins
-# and starts the always-on Remote Control session; none of that is wanted
-# where nobody attaches. There is no login step: the image's system
-# gitconfig routes git through gh, which reads GH_TOKEN, and the Go worker
-# puts that token into every tool it runs. The only thing that runs git
-# outside the worker is the clone loop below, so it exports the token.
+# A copy of the repo-clone and trust steps of ../entrypoint.sh, not a
+# shared lib: lib/ and *.sh under claude-pods/ are session-image source,
+# and touching them rolls that image. README.md schedules the merge. The
+# interactive-only steps (shell/editor home, gh and gcloud login, tmux
+# plugins, the Remote Control session) are left out; the Dockerfile's
+# gitconfig comment says why no login step is needed here.
 #
-# TASK_WORKSPACE, TASK_SECRETS_DIR and TASK_SKILLS_DIR are seams for
-# tests/task-entrypoint.sh; the image sets TASK_SKILLS_DIR, the pod sets
-# neither of the others.
+# TASK_WORKSPACE and TASK_SECRETS_DIR are seams for
+# tests/task-entrypoint.sh; the pod sets neither. TASK_SKILLS_DIR is set
+# by the image.
 set -u
 
 workspace="${TASK_WORKSPACE:-/workspace}"
 secrets="${TASK_SECRETS_DIR:-/run/secrets}"
-skills_src="${TASK_SKILLS_DIR:-/opt/claude-task/skills}"
+skills_src="${TASK_SKILLS_DIR:?set by task/Dockerfile}"
 
-# Skills are image-managed: the image wins over whatever the home PVC
-# holds, every boot.
+# Skills are image-managed: image files overwrite the home PVC's copy
+# every boot. A file only the PVC has is left alone.
 if [ -d "$skills_src" ]; then
   mkdir -p "$HOME/.claude/skills" \
     && cp -rf "$skills_src/." "$HOME/.claude/skills/" \

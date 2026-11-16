@@ -45,8 +45,8 @@ spec:
           # Digest-pinned by argocd-image-updater on the live Application (see kustomization.yaml); pull-on-change, cache otherwise.
           imagePullPolicy: IfNotPresent
           env:
-            - name: HOME
-              value: /home/node
+            # HOME comes from the image; ../statefulset.yaml sets it only
+            # because its Dockerfile does not.
             # Git identity for commits made by the stages. Same as the
             # session pods so nothing downstream sees a new author.
             - name: GIT_AUTHOR_NAME

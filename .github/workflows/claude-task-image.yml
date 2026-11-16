@@ -11,10 +11,15 @@ name: claude-task image
 on:
   push:
     branches: [main]
-    # Only what claude-pods/task/Dockerfile actually COPYs (plus itself).
-    # Adding a COPY to that Dockerfile? Add its source here and below.
+    # Only what claude-pods/task/Dockerfile actually COPYs, the smoke
+    # script this workflow mounts, and itself - not task/** , which would
+    # mint a new digest for a README or manifest edit (see
+    # claude-pod-image.yml for what that cost). Adding a COPY to that
+    # Dockerfile? Add its source here and below.
     paths:
-      - 'claude-pods/task/**'
+      - 'claude-pods/task/Dockerfile'
+      - 'claude-pods/task/entrypoint.sh'
+      - 'claude-pods/task/image-smoke.sh'
       - 'claude-pods/stage-*.sh'
       - 'claude-pods/lib/maintenance.sh'
       - 'claude-pods/prompts/**'
@@ -23,7 +28,9 @@ on:
       - '.github/workflows/claude-task-image.yml'
   pull_request:
     paths:
-      - 'claude-pods/task/**'
+      - 'claude-pods/task/Dockerfile'
+      - 'claude-pods/task/entrypoint.sh'
+      - 'claude-pods/task/image-smoke.sh'
       - 'claude-pods/stage-*.sh'
       - 'claude-pods/lib/maintenance.sh'
       - 'claude-pods/prompts/**'
@@ -68,7 +75,9 @@ jobs:
             type=sha,prefix=sha-,format=short
 
       # Load and test the exact image before publishing it, the way
-      # codex-pod-image.yml does.
+      # codex-pod-image.yml does. Unlike codex, the smoke script is
+      # mounted from the checkout rather than baked in, so the shipped
+      # image carries no test code.
       - uses: docker/build-push-action@v6
         with:
           context: claude-pods

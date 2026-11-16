@@ -11,7 +11,7 @@ set -uo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 fail=0
 
-pins() { grep -oE '^ARG [A-Z_]+=[^ ]+' "$1" | sed 's/^ARG //' | sort; }
+pins() { grep -oE '^ARG [A-Z0-9_]+=[^ ]+' "$1" | sed 's/^ARG //' | sort; }
 shared=$(comm -12 <(pins "$here/Dockerfile" | cut -d= -f1) <(pins "$here/task/Dockerfile" | cut -d= -f1))
 [ -n "$shared" ] || { echo "FAIL: the two Dockerfiles share no ARG pins; expected at least KANEO_WORKER_REF"; exit 1; }
 

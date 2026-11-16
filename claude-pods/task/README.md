@@ -55,17 +55,15 @@ Against `../Dockerfile` at the commit this was split from.
   which reads `/run/secrets/git/token`, `/run/secrets/kaneo/api-key` and
   `/run/secrets/claude/oauth-token{,-personal}`, exactly as before
 
-**Moved**
+**Moved** (the Dockerfile comment at each site says why)
 
-- `DISABLE_UPDATES=1`: from `~/.claude/settings.json` (re-synced onto the
-  home PVC every boot) to an image `ENV`. Same effect, no home needed.
-- git credentials: from a boot-time `gh auth login` + `~/.git-credentials`
-  copy to a system gitconfig that routes github.com through
-  `gh auth git-credential`. The worker already puts `GH_TOKEN` into every
-  tool's environment, and the entrypoint exports it for its own clones;
-  gh reads it from there.
-- skills: from the `/opt/home-skel` first-boot seed to a plain copy on
-  every boot (image wins).
+- `DISABLE_UPDATES=1`: from `~/.claude/settings.json` on the home PVC to
+  an image `ENV`
+- git credentials: from a boot-time `gh auth login` and
+  `~/.git-credentials` copy to a system gitconfig routing github.com
+  through `gh auth git-credential`, fed by `GH_TOKEN`
+- skills: from the `/opt/home-skel` first-boot seed to a copy on every
+  boot from `TASK_SKILLS_DIR`
 
 **Removed from the task image**
 
@@ -124,5 +122,10 @@ Retargeting is a later card. It has to:
 - teach `../session-sleep-cron.yaml` about this set (its idle probe reads
   tmux sessions, which this image does not have; the lock check still
   applies)
-- drop the worker and its entrypoints from `../Dockerfile`, after which
-  `../tests/image-pins.sh` stops having `KANEO_WORKER_REF` to compare
+- drop the worker and its entrypoints from `../Dockerfile`, and retire
+  the duplication this split accepted: build the interactive image
+  `FROM` this one (or a shared base stage) and add only interactive
+  tooling, which retires `../tests/image-pins.sh`; move the clone loop
+  and trust script into `../lib/` and source it from both entrypoints.
+  Both were copied here only because `../lib/` and `../*.sh` are
+  session-image source.
