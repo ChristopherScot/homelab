@@ -1,20 +1,7 @@
 # Task-worker pods on the claude-task image: the dispatcher-commanded
-# author/test/merge stages, with no interactive session inside.
-#
-# Held at 0 replicas, on purpose. The dispatcher still execs into
-# claude-session (sessionSet in kaneo-dispatcher's kube.go, and the
-# nightly-runner Role in ../nightly-cronjobs.yaml scopes its scale writes
-# to that name), so nothing would dispatch here yet. The field exists so
-# this manifest is deployable today without starting idle pods or
-# creating their volumes, and so argocd-image-updater has an Application
-# to pin the task image on before anything runs it.
-#
-# Retargeting is the next step, not this one: when the dispatcher names
-# this set, delete the replicas: line (selfHeal would otherwise fight the
-# dispatcher's wake and the sleep cron, which is why ../statefulset.yaml
-# has none), teach session-sleep about it, and widen nightly-runner's
-# resourceNames. Until then the session StatefulSet keeps the whole
-# production flow.
+# author/test/merge stages, with no interactive session inside. Mirrors
+# ../statefulset.yaml minus the interactive mounts and env; README.md
+# here says what has to change before the dispatcher execs into it.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -22,6 +9,12 @@ metadata:
   namespace: claude-pods
 spec:
   serviceName: claude-task
+  # Held at 0 on purpose: nothing dispatches here yet, and the field lets
+  # the manifest deploy today without idle pods or their volumes while
+  # argocd-image-updater pins the image on this Application. Delete the
+  # line when the dispatcher is retargeted; ../statefulset.yaml explains
+  # why a live set must not carry it (selfHeal would fight the wake and
+  # the sleep cron).
   replicas: 0
   # Same protection as ../statefulset.yaml: a new image digest must never
   # terminate a running stage in place. 3 is one past the highest ordinal

@@ -9,11 +9,12 @@ on:
     paths:
       - 'claude-pods/**'
       - 'bootstrap/vault-policies.sh'
-      # tests/image-pinning.sh also checks the Applications and the
-      # root app, so a change there runs it too.
+      # tests/image-pinning.sh also checks the root app and the
+      # Applications it enrols. Every app file rather than a list that
+      # mirrors the test's: the suite takes seconds, and a list here
+      # was one more place to forget when the test gained an entry.
       - 'app-of-apps/app-of-apps.yaml'
-      - 'app-of-apps/apps/claude-pods.yaml'
-      - 'app-of-apps/apps/desloppify-pod.yaml'
+      - 'app-of-apps/apps/*.yaml'
       - '.github/workflows/claude-pods-tests.yml'
   push:
     branches: [main]
@@ -21,8 +22,7 @@ on:
       - 'claude-pods/**'
       - 'bootstrap/vault-policies.sh'
       - 'app-of-apps/app-of-apps.yaml'
-      - 'app-of-apps/apps/claude-pods.yaml'
-      - 'app-of-apps/apps/desloppify-pod.yaml'
+      - 'app-of-apps/apps/*.yaml'
       - '.github/workflows/claude-pods-tests.yml'
   # To run the suite on a branch before its PR exists:
   #   gh workflow run claude-pods-tests.yml --ref <branch>

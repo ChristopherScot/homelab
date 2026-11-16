@@ -18,7 +18,9 @@ for tool in kaneo-worker stage-author stage-test stage-merge \
             claude git gh bash sh flock setsid nohup mktemp timeout; do
   command -v "$tool" >/dev/null || fail "missing worker tool: $tool"
 done
-# Build/test tools the agent's allow-list permits and the repos' tests use.
+# Build/test tools the image is meant to ship for the agent. This is the
+# image's contract, not a transcription of the allow-list: that file also
+# permits golangci-lint, python3 and pytest, which neither image installs.
 for tool in go gofmt make gcc node npm npx tsc tsx jq yq rg curl \
             kubectl helm tofu agent-browser kbrowser; do
   command -v "$tool" >/dev/null || fail "missing build/test tool: $tool"
@@ -49,7 +51,8 @@ done
 settings=/usr/local/share/claude-pods/prompts/nightly-settings.json
 jq -e '.permissions.allow | length > 0' "$settings" >/dev/null || fail "$settings has no allow-list"
 bash /usr/local/share/claude-pods/lib/maintenance.sh warn || fail "maintenance.sh warn failed"
-test -f /opt/claude-task/skills/kernel/SKILL.md || fail "kernel skill not baked"
+test -n "${TASK_SKILLS_DIR:-}" || fail "TASK_SKILLS_DIR is not set in the image environment"
+test -f "$TASK_SKILLS_DIR/kernel/SKILL.md" || fail "kernel skill not baked under $TASK_SKILLS_DIR"
 
 # git goes through gh, which reads the GH_TOKEN the worker injects.
 git config --system --get-all credential.https://github.com.helper | grep -q 'gh auth git-credential' \

@@ -1,23 +1,17 @@
 # Task-worker image: the dispatcher-commanded author/test/merge stages and
-# nothing else. Split out of ../Dockerfile (the interactive session image),
-# which keeps carrying the worker until the dispatcher is retargeted; see
-# README.md here for the inventory of what moved, stayed and was dropped.
-#
-# Built by .github/workflows/claude-task-image.yml with context claude-pods/
-# so the stage entrypoints, lib/, prompts/ and skills/ are the same files
-# the interactive image copies. Pushed to ghcr.io/christopherscot/claude-task
-# and digest-pinned by argocd-image-updater on the claude-task Application
-# (app-of-apps/apps/claude-task.yaml), never on the claude-pods one.
-#
-# Nothing here is interactive: no tmux, no Remote Control loop, no shell
-# setup, no editor, no login tooling. The container boots, clones its repo
-# list and idles; the dispatcher execs a stage entrypoint into it.
+# nothing interactive. Built by .github/workflows/claude-task-image.yml
+# with context claude-pods/, so the stage entrypoints, lib/, prompts/ and
+# skills/ below are the same files ../Dockerfile (the interactive session
+# image) copies. README.md here owns the inventory, the image sizes and
+# what still has to happen before the dispatcher execs into this image.
 
 # Built from the reviewed dispatcher source; shares its typed wire contract.
-# Keep KANEO_WORKER_REF in step with ../Dockerfile until the session image
-# stops shipping the worker.
+#
+# Every ARG pin below that ../Dockerfile also carries must match it while
+# both images ship the worker; tests/image-pins.sh fails the suite when
+# one is bumped without the other.
 FROM golang:1.27 AS kaneo-worker
-ARG KANEO_WORKER_REF=112c8cbcacb4eb69f753899905f8cb081d1c94ba
+ARG KANEO_WORKER_REF=2c1a1ef40b73a15701cff586798bd5de95c610f3
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ChristopherScot/kaneo-dispatcher/cmd/kaneo-worker@${KANEO_WORKER_REF}
 
 FROM node:22-trixie-slim
@@ -96,15 +90,21 @@ RUN set -eu; \
 # environment variable needs no home at all and survives any PVC state.
 ENV DISABLE_UPDATES=1
 
-# git authenticates through gh, and gh reads GH_TOKEN. The worker puts that
-# token into every tool's environment (git, gh, claude), so no login step,
-# hosts.yml or ~/.git-credentials is needed at boot. System scope, not
-# global: $HOME may be a fresh PVC.
+# git authenticates through gh, and gh reads GH_TOKEN: the worker puts that
+# token into every tool's environment (git, gh, claude) and the entrypoint
+# exports it for its boot-time clones, so no login step, hosts.yml or
+# ~/.git-credentials is needed. System scope, not global: $HOME may be a
+# fresh PVC. The empty helper first is git's idiom for "reset the inherited
+# helper list", so a PVC's global `credential.helper store` cannot be
+# consulted ahead of gh.
 RUN git config --system --add credential.https://github.com.helper '' \
     && git config --system --add credential.https://github.com.helper '!gh auth git-credential' \
     && git config --system --add credential.https://gist.github.com.helper '' \
     && git config --system --add credential.https://gist.github.com.helper '!gh auth git-credential'
 
+# Every COPY source below must also be in claude-task-image.yml's paths:
+# filter, or a change to it will not rebuild the image.
+#
 # The worker and its three entrypoints. Prompt instructions and task
 # context come from immutable dispatcher commands; only the local tool
 # permission settings ship here.
@@ -118,9 +118,11 @@ COPY --chmod=0755 stage-test.sh  /usr/local/bin/stage-test
 COPY lib/maintenance.sh /usr/local/share/claude-pods/lib/maintenance.sh
 COPY prompts/nightly-settings.json /usr/local/share/claude-pods/prompts/nightly-settings.json
 # kbrowser + the two skills that route browser work to a Kernel cloud
-# browser. The entrypoint copies skills into $HOME/.claude on every boot.
+# browser. The entrypoint copies skills from TASK_SKILLS_DIR into
+# $HOME/.claude on every boot; the image decides the path once, here.
 COPY --chmod=0755 kbrowser.sh /usr/local/bin/kbrowser
-COPY skills/ /opt/claude-task/skills/
+ENV TASK_SKILLS_DIR=/opt/claude-task/skills
+COPY skills/ ${TASK_SKILLS_DIR}/
 COPY --chmod=0755 task/entrypoint.sh /usr/local/bin/entrypoint
 
 USER node

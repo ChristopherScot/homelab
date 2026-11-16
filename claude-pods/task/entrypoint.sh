@@ -6,13 +6,18 @@
 # Deliberately a subset of ../entrypoint.sh. The interactive image also
 # seeds a shell/editor home, logs gh and gcloud in, installs tmux plugins
 # and starts the always-on Remote Control session; none of that is wanted
-# where nobody attaches. Credentials need no boot step either: the Go
-# worker hands GH_TOKEN and the Claude token to each tool it runs, and the
-# image's system gitconfig routes git through gh.
+# where nobody attaches. There is no login step: the image's system
+# gitconfig routes git through gh, which reads GH_TOKEN, and the Go worker
+# puts that token into every tool it runs. The only thing that runs git
+# outside the worker is the clone loop below, so it exports the token.
+#
+# TASK_WORKSPACE, TASK_SECRETS_DIR and TASK_SKILLS_DIR are seams for
+# tests/task-entrypoint.sh; the image sets TASK_SKILLS_DIR, the pod sets
+# neither of the others.
 set -u
 
 workspace="${TASK_WORKSPACE:-/workspace}"
-repos_dir="${TASK_REPOS_DIR:-/run/secrets/repos}"
+secrets="${TASK_SECRETS_DIR:-/run/secrets}"
 skills_src="${TASK_SKILLS_DIR:-/opt/claude-task/skills}"
 
 # Skills are image-managed: the image wins over whatever the home PVC
@@ -23,13 +28,25 @@ if [ -d "$skills_src" ]; then
     || echo "WARN: could not seed skills into $HOME/.claude/skills" >&2
 fi
 
+# The clones below are the one git call the worker does not wrap, so they
+# need the token in their own environment; a private repo cloned without
+# it fails here and surfaces hours later as a stage with no checkout.
+if [ -r "$secrets/git/token" ]; then
+  GH_TOKEN="$(cat "$secrets/git/token")"
+  export GH_TOKEN
+else
+  echo "WARN: no git token at $secrets/git/token; private repos will not clone" >&2
+fi
+
 # Per-pod repos by StatefulSet ordinal, from the Vault-backed claude-repos
 # secret (pod<ordinal> files), falling back to CLONE_REPOS. The worker
 # expects /workspace/<repo> to exist; it never clones. Space, comma or
 # newline separated; full URLs or owner/repo slugs (assumed github.com).
 # Idempotent: a repo dir that exists is left alone, whatever its state.
+# A failed clone is a warning, not an exit: one bad entry in a list of
+# two dozen must not keep the pod from serving every other repo's cards.
 ORD="${HOSTNAME##*-}"
-REPOS="$(cat "$repos_dir/pod${ORD}" 2>/dev/null || echo "${CLONE_REPOS:-}")"
+REPOS="$(cat "$secrets/repos/pod${ORD}" 2>/dev/null || echo "${CLONE_REPOS:-}")"
 echo "pod ordinal=$ORD -> $(echo "$REPOS" | wc -w) repo(s)"
 dirs=()
 for r in $(echo "${REPOS:-}" | tr ',\n' '  '); do
@@ -52,8 +69,7 @@ done
 # Pre-trust the workspace and every repo in it. The worker runs `claude -p`
 # with the repo as its working directory; the interactive image found the
 # CLI waiting on "Is this a project you trust?" for a directory it had not
-# been told about, and nothing is attached here to answer. Keyed by exact
-# path, so no trailing slash.
+# been told about, and nothing is attached here to answer.
 node -e '
 const fs = require("fs"), os = require("os"), path = require("path");
 const f = path.join(os.homedir(), ".claude.json");
