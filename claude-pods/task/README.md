@@ -102,7 +102,7 @@ current `claude-task` figure to its job summary.
 | Image | Size |
 |---|---|
 | `claude-pod` (interactive, digest `af0467b1…`) | 1,569,488,020 bytes (1,497 MiB) |
-| `claude-task` | 573,055,610 bytes (546 MiB) |
+| `claude-task` | 573,566,109 bytes (546 MiB) |
 
 Most of the difference is the Google Cloud SDK, Neovim with its Go LSP
 and debugger, and the shell tooling; the Go toolchain, Claude Code and
