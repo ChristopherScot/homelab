@@ -22,9 +22,10 @@ deployable ahead of that step without touching the session pods.
 | `kustomization.yaml` | lists the manifests the `claude-task` Application deploys |
 
 CI: `.github/workflows/claude-task-image.yml`. It builds, loads and
-smoke-tests the image, prints its size to the job summary, then pushes
-`:latest` and a `sha-` tag. To build a branch,
-`gh workflow run claude-task-image.yml --ref <branch>`.
+smoke-tests the image and prints its size to the job summary. On a push
+to main or a manual dispatch it then pushes `:latest` and a `sha-` tag;
+on a pull request it stops after the size report, so a PR proves the
+image without publishing it.
 
 Tests that need no image: `../tests/task-entrypoint.sh` (the boot script
 against a fake git and repo secret) and `../tests/image-pinning.sh` (the
