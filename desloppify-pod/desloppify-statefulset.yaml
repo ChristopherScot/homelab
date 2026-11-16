@@ -226,7 +226,9 @@ spec:
           resources:
             requests:
               cpu: 100m
-              memory: 1Gi
+              # Sized to the observed peak (5.5-9GiB) so the scheduler
+              # only places it on a node that can absorb the spike.
+              memory: 7Gi
             # A tsc pass over this monorepo is the spike, and 6Gi was
             # not enough: the first scheduled run was OOMKilled. 9Gi is
             # what the nodes can give - node1 and node2 have ~11.6Gi
