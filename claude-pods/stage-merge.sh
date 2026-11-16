@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dispatcher-command-protocol: 1
+# dispatcher-command-protocol: 2
 # Pod 1's 04:00 job: an independent verdict on the PRs pod 0 opened at 00:00.
 #
 # The point is that this panel has NOT seen pod 0's reasoning. It gets a fresh
@@ -19,7 +19,7 @@ source "$POD_LIB" || { echo "FATAL: cannot source $POD_LIB" >&2; exit 1; }
 
 require_dispatch_command "$@" || exit 1
 
-PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-1800}"
+
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
 LOG="$STATE_DIR/merge-$(date +%Y%m%d).log"
 
@@ -28,8 +28,9 @@ log_to "$LOG"
 echo "=== stage-merge $(date -Is) model=$MODEL ==="
 
 require_gh_token || exit 1
-require_kaneo_key || exit 1
+require_dispatch_key || exit 1
 take_pod_lock || exit 0
+load_dispatch_command merge || exit 1
 
 # Prune on the way out, however this run ends. A stage that fails or
 # times out is the one most likely to have filled the disk, so a tidy
@@ -44,9 +45,9 @@ pick_model
 # command's current task, repository, stage and column visit.
 kaneo_work_started "$ONLY_TASK" stage-merge || exit 1
 for repo in "$ONLY_REPO"; do
-  mapfile -t PRS < <(command_pr | jq -r '"\(.number) \(.updatedAt) \(.headRefOid)"')
+  PRS=("$(jq -r '"\(.pr) \(.headSHA)"' "$COMMAND_PAYLOAD")")
   for entry in "${PRS[@]}"; do
-    read -r pr updated sha <<<"$entry"
+    read -r pr sha <<<"$entry"
     task="$ONLY_TASK"
 
     # Pod 2's integration testing gates the merge. Its tests are manual and
@@ -107,15 +108,9 @@ for repo in "$ONLY_REPO"; do
     name="$(basename "$repo")"
     dir="/workspace/$name"
     [ -d "$dir" ] || { echo "SKIP $repo#$pr: no clone"; continue; }
-    git -C "$dir" fetch --quiet origin 2>/dev/null
+    prepare_command_checkout "$dir" || continue
 
     echo "--- reviewing $repo#$pr ($(date -Is))"
-    # Heredoc written to a file first: nesting one inside $( ) trips bash's
-    # parser on ordinary apostrophes in the prompt text.
-    # Prompt lives in prompts/review.md so it can be edited without touching
-    # this script. Exported so render_prompt's subprocess can see them.
-    export dir repo pr
-    render_prompt "$PROMPT_DIR/review.md" > "$STATE_DIR/prompt.txt"
     # Through the failover wrapper. A limited work account produced no
     # verdict at all, and no verdict means no merge - correct, but it
     # stalled the stack behind it while a personal token sat mounted and
@@ -123,10 +118,15 @@ for repo in "$ONLY_REPO"; do
     #
     # tail -1 on the VERDICT parse below is load-bearing: a retry's
     # output replaces the first attempt's, and the last verdict wins.
-    verdict=$(run_with_account_failover --stdin "$STATE_DIR/prompt.txt" \
-      timeout "$PER_PR_TIMEOUT" claude -p --output-format json --model "$MODEL" \
+    verdict=$(run_with_account_failover --stdin "$COMMAND_PROMPT" \
+      timeout "$COMMAND_TIMEOUT" claude -p --output-format json --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir")
     rc=$?
+    if [ "$(git -C "$dir" rev-parse HEAD)" != "$sha" ]; then
+      echo 'worker checkout changed during execution; refusing its verdict' >&2
+      kaneo_outcome "$ONLY_TASK" blocked
+      continue
+    fi
     [ $rc -eq 124 ] && { echo "TIMEOUT on $repo#$pr"; continue; }
 
     verdict=$(claude_result_text "$verdict")

@@ -350,8 +350,8 @@ COPY kbrowser.sh /usr/local/bin/kbrowser
 #
 # The CronJobs that used to run these on a clock were removed 2026-11-10;
 # the dispatcher is the only caller now.
-# The prompts ship as their own files (prompts/) rather than heredocs inside
-# the scripts, so they can be edited and diffed without touching shell code.
+# Prompt instructions and task context come from immutable dispatcher commands.
+# Only the local tool permission settings ship in this image.
 COPY --chmod=0755 stage-author.sh /usr/local/bin/stage-author
 COPY --chmod=0755 stage-merge.sh /usr/local/bin/stage-merge
 COPY --chmod=0755 stage-test.sh  /usr/local/bin/stage-test
