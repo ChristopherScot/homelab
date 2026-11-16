@@ -22,13 +22,15 @@ discovered by probing (2026-11-10) and this script is their one home:
 Column semantics (routes in github.com/ChristopherScot/kaneo-dispatcher): moving a card to `to-do`,
 `in-review` or `mergeable` DISPATCHES WORK to a session pod - waking the
 StatefulSet if asleep. `backlog`, `needs-human-review` and `done` are
-inert. `in-progress` is inert for moves, but the reconcile sweep runs
-every minute and resumes a stranded card through the author (a stranded
-card is work owed, not a parking spot). Two graces gate that, both
-dispatcher env vars: a dispatched card no worker has claimed retries
-after RECONCILE_UNCLAIMED (15m); once a worker records its start, the
-card gets RECONCILE_STALE (4h) before it is eligible again. A dispatched
-card needs exactly one `repo:<name>` label or the dispatcher skips it;
+inert. `in-progress` is inert for moves. Separately, a reconcile sweep
+runs every five minutes to catch work that was owed and never happened,
+in the dispatching columns and `in-progress` (a stranded card is work
+owed, not a parking spot): a dispatched card whose worker has not
+reported a start is re-dispatched 15m after dispatch; once a start is
+on record the card is left alone for 4h first. Both windows are
+dispatcher defaults (RECONCILE_UNCLAIMED, RECONCILE_STALE). A stranded
+`in-progress` card resumes through the author. A dispatched card needs
+exactly one `repo:<name>` label or the dispatcher skips it;
 `create --repo` handles that.
 
 Auth, first match wins: $KANEO_API_KEY; /run/secrets/kaneo/api-key (the
