@@ -40,11 +40,11 @@ done
 #    updating the scripts is exactly what should fail.
 out=$(bash -uo pipefail -c '
   source "$1" || exit 1
-  for fn in pick_model render_prompt log_to require_gh_token preflight_credential \
+  for fn in pick_model load_dispatch_command log_to require_gh_token preflight_credential \
             use_claude_account claude_rate_limited run_with_account_failover; do
     declare -F "$fn" >/dev/null || { echo "missing $fn"; exit 1; }
   done
-  [ -n "${MODEL:-}" ] && [ -n "${PROMPT_DIR:-}" ] && [ -n "${STATE_DIR:-}" ] && [ -n "${OWNER:-}" ] \
+  [ -n "${MODEL:-}" ] && [ -n "${STATE_DIR:-}" ] && [ -n "${OWNER:-}" ] \
     || { echo "shared defaults not set"; exit 1; }
 ' _ "$lib" 2>&1) || fail "library did not source cleanly: $out"
 [ -z "$out" ] || fail "sourcing the library printed something: $out"

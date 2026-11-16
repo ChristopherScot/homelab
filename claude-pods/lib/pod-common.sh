@@ -53,36 +53,68 @@ pick_model() {
   echo "using model: $MODEL" >&2
 }
 
-# --- Prompts ---------------------------------------------------------------
-# Prompts live as plain files so they can be edited and reviewed on their
-# own. Expand $VAR references in them without running the text through a
-# shell — the prompts contain backticks and quotes, and `eval` on them
-# would be both fragile and an injection path from issue titles.
-PROMPT_DIR="${NIGHTLY_PROMPT_DIR:-/usr/local/share/claude-pods/prompts}"
-# acceptEdits allows file edits but NOT shell commands, so without an
-# explicit allow-list every gh / go test / kubectl call stops for an
-# approval nobody is there to give. Scoped list, not bypassPermissions.
+# Tool permissions remain a local enforcement boundary. A prompt cannot
+# expand the worker's configured permissions.
 NIGHTLY_SETTINGS="${NIGHTLY_SETTINGS:-/usr/local/share/claude-pods/prompts/nightly-settings.json}"
-# render_prompt FILE: prints FILE with its $VAR references expanded from
-# the environment; a $VAR that is not set is left as written. Exits the
-# script if FILE is unreadable: with no prompt, every ticket would fail
-# the same way.
-render_prompt() {
-  local f="$1"
-  if [ ! -r "$f" ]; then
-    echo "FATAL: prompt not readable: $f" >&2
-    exit 1
-  fi
-  # node, not python3: python3 is not installed in this image. It appeared
-  # to work when probed through an interactive shell, but `kubectl exec`
-  # gets a plain PATH and every ticket died on "python3: command not
-  # found" before a prompt was ever rendered.
-  node -e '
-const fs = require("fs");
-const src = fs.readFileSync(process.argv[1], "utf8");
-process.stdout.write(src.replace(/\$(\w+)/g, (m, k) =>
-  Object.prototype.hasOwnProperty.call(process.env, k) ? process.env[k] : m));
-' "$f"
+
+# Fetch once and archive exact payload/rendered bytes before starting work.
+# A command's audit directory is never reused for a second execution.
+load_dispatch_command() {
+  local stage="$1" code
+  COMMAND_DIR="$STATE_DIR/commands/$DISPATCH_COMMAND"
+  mkdir -p "$STATE_DIR/commands" || return 1
+  (umask 077; mkdir "$COMMAND_DIR") || return 1
+  code=$(curl --silent --show-error --connect-timeout 10 --max-time 40 --max-filesize 262144 \
+    -H "Authorization: Bearer $DISPATCH_API_KEY" -H 'Content-Type: application/json' \
+    --data-binary "$(jq -cn --arg task "$ONLY_TASK" --arg command "$DISPATCH_COMMAND" '{version:1,task:$task,command:$command}')" \
+    --output "$COMMAND_DIR/command.json" --write-out '%{http_code}' \
+    "${KANEO_DISPATCH_URL:-http://kaneo-dispatcher.claude-pods.svc.cluster.local:8080}/worker-command") || return 1
+  [ "$code" = 200 ] || { echo "dispatcher command unavailable (HTTP $code)" >&2; return 1; }
+  node "$(dirname "${BASH_SOURCE[0]}")/command-prompt.js" \
+    "$COMMAND_DIR/command.json" "$ONLY_TASK" "$ONLY_REPO" "$DISPATCH_COMMAND" "$stage" \
+    "/workspace/$(basename "$ONLY_REPO")" || return 1
+  COMMAND_PAYLOAD="$COMMAND_DIR/payload.json"
+  COMMAND_PROMPT="$COMMAND_DIR/prompt.txt"
+  COMMAND_DIGEST=$(jq -r .prompt.digest "$COMMAND_DIR/command.json")
+  COMMAND_MODE=$(jq -r .mode "$COMMAND_PAYLOAD")
+  COMMAND_TIMEOUT=$(jq -r .timeoutSeconds "$COMMAND_PAYLOAD")
+  COMMAND_BRANCH=$(jq -r .branch "$COMMAND_PAYLOAD")
+  export COMMAND_DIR COMMAND_PAYLOAD COMMAND_PROMPT
+}
+
+# Check frozen remote observations, never silently choose another mode/head.
+# Local changes are preserved by holding rather than resetting over them.
+prepare_command_checkout() {
+  local dir="$1" base base_sha branch_sha expected actual remote_refs
+  base=$(jq -r .base "$COMMAND_PAYLOAD")
+  base_sha=$(jq -r .baseSHA "$COMMAND_PAYLOAD")
+  branch_sha=$(jq -r .branchSHA "$COMMAND_PAYLOAD")
+  actual=$(git -C "$dir" status --porcelain) || return 1
+  [ -z "$actual" ] || { echo 'local edits preserved; checkout held' >&2; return 1; }
+  # Retain remote-tracking publication evidence even when preparation fails.
+  # A squash-merged task branch can disappear without its SHA reaching main.
+  for expected in HEAD "$COMMAND_BRANCH"; do
+    if git -C "$dir" rev-parse --verify "$expected" >/dev/null 2>&1; then
+      actual=$(git -C "$dir" rev-list "$expected" --not --remotes=origin) || return 1
+      [ -z "$actual" ] || { echo 'unpushed commits preserved; checkout held' >&2; return 1; }
+    fi
+  done
+  git -C "$dir" fetch --quiet --no-prune origin || return 1
+  remote_refs=$(git -C "$dir" ls-remote origin "refs/heads/$base" "refs/heads/$COMMAND_BRANCH") || return 1
+  actual=$(printf '%s\n' "$remote_refs" | awk -v ref="refs/heads/$base" '$2 == ref {print $1}')
+  [ "$actual" = "$base_sha" ] || {
+    echo 'command base changed; waiting for a new command' >&2; return 1;
+  }
+  actual=$(printf '%s\n' "$remote_refs" | awk -v ref="refs/heads/$COMMAND_BRANCH" '$2 == ref {print $1}')
+  [ "$actual" = "$branch_sha" ] || { echo 'command branch changed; waiting for a new command' >&2; return 1; }
+  case "$COMMAND_MODE" in
+    author) git -C "$dir" checkout --quiet -B "$COMMAND_BRANCH" "$base_sha" ;;
+    resume|rework|test|review)
+      git -C "$dir" checkout --quiet -B "$COMMAND_BRANCH" "$branch_sha" &&
+        git -C "$dir" branch --set-upstream-to="origin/$COMMAND_BRANCH" "$COMMAND_BRANCH" >/dev/null
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 # --- Where the run's output goes -------------------------------------------
@@ -241,136 +273,21 @@ take_pod_lock() {
   acknowledge_launch accepted
 }
 
-# --- Kaneo -----------------------------------------------------------------
-# The board at kaneo.home.chrisscotmartin.com IS the work queue. Chris files
-# tickets there, the pods move them through the columns, and a card in
-# Needs Human Review is how a human gets asked for a decision.
-#
-# GitHub issues are no longer a work source. The pods still use GitHub for
-# everything issues were not — branches, pull requests, CI, commit statuses —
-# but what to work on comes from the board and nowhere else.
-#
-# Everything here wraps the upstream `kaneo` CLI rather than curl+jq against
-# the REST API: the CLI ships with the server, so a schema change arrives as
-# a CLI upgrade instead of as a silently empty jq filter at 2am.
-KANEO_PROJECT="${KANEO_PROJECT:-claude-pods}"
-
-# The columns a project must have before the pods will touch it. More
-# is fine — a project may carry extra columns of its own — but each of these
-# has to exist, because each is a destination something below moves a card
-# to, or the queue the author pod reads.
-#
-# Backlog and To Do are deliberately different things. Backlog is where
-# everything lives; nothing reads it. Moving a card to To Do is the
-# dispatch — an explicit "work this one" — so a pod never starts on
-# something just because it was written down.
-KANEO_REQUIRED_COLUMNS="backlog to-do in-progress in-review needs-human-review mergeable done"
-
-# The branch a card's work lives on.
-#
-# One fact, one place. This convention is the join between a pull request
-# and the card it came from, and it is read by five things: the author
-# (creating it), the author prompt (told to use it), kaneo_task_for_pr
-# (parsing it back), the PR filters in the test and merge pods, and the
-# dispatcher's reconcile sweep (github.com/ChristopherScot/kaneo-dispatcher, which carries
-# the same default and reads the same variable). It was
-# previously written out at each of those sites, and when the prefix changed
-# from fix/issue-<n> to fix/<task> two of them were missed — so the test and
-# merge pods matched nothing and every card stopped dead in In Review while
-# the logs read rc=0.
-KANEO_BRANCH_PREFIX="${KANEO_BRANCH_PREFIX:-fix/}"
-# Exported: the PR filters in the test and merge pods read it as
-# $ENV.KANEO_BRANCH_PREFIX inside a jq expression.
-export KANEO_BRANCH_PREFIX
-kaneo_branch_for_task() { printf '%s%s' "$KANEO_BRANCH_PREFIX" "$1"; }
-
-# The pipeline, written down once.
-#
-# The dispatcher decides which columns START work; these scripts decide
-# which columns they may move a card TO. Both halves are the same graph, and
-# with only one half visible it is impossible to see a cycle. Keep this in
-# step with routes in github.com/ChristopherScot/kaneo-dispatcher/dispatch.go.
-#
-#   backlog             inert — holding area, nothing reads it
-#   to-do        -> author  -> in-progress -> {in-review, backlog*, needs-human-review}
-#   in-review    -> test    -> {mergeable, to-do(+), needs-human-review}
-#   mergeable    -> merge   -> {done, needs-human-review, to-do(+)}
-#   in-progress  no column dispatches FROM it, but the hourly reconcile
-#       re-dispatches the author for any card STALE there (the author
-#       moves the card first and works second, so a death in between
-#       strands it — CLA-15, 2026-11-10). The author's own mode logic
-#       then decides: advance an unreviewed PR, rework, resume, or redo.
-#   needs-human-review  inert — waiting on a person
-#   done                inert — terminal, except a revert reopens to to-do(+)
-#
-#   (*) backlog is inert ON PURPOSE for the failure path: sending a failed
-#       card to to-do would re-dispatch the author instantly and loop with
-#       no human in it.
-#   (+) the only backward edges, and the only cycles in the graph. Each is
-#       capped by kaneo_rework_count; without that cap a card can bounce
-#       between to-do and in-review forever, machine-driven.
-
-# Reads KANEO_API_KEY the way require_gh_token reads the git token. Fatal,
-# like that one: with no board there is no queue, and a pod with nothing to
-# work on should say so rather than appear to run successfully.
-require_kaneo_key() {
-  KANEO_API_KEY="$(cat /run/secrets/kaneo/api-key 2>/dev/null)"
-  # In-cluster Service, not the public hostname: cluster DNS does not
-  # resolve *.home.chrisscotmartin.com, so the pods got ENOTFOUND and every
-  # run died at the enrolment check. The dispatcher hit this first and was
-  # pointed at the Service for the same reason; this is the other half.
-  #
-  # It also keeps a run that never leaves the cluster from depending on the
-  # LAN's DNS and the ingress being healthy.
-  KANEO_API_URL="${KANEO_API_URL:-http://kaneo.kaneo.svc.cluster.local:5173}"
-  # Where a HUMAN opens the board. The Service URL above is unroutable
-  # outside the cluster, so a card link built from it in a pull request
-  # body would be dead for everyone who reads it.
-  KANEO_WEB_URL="${KANEO_WEB_URL:-https://kaneo.home.chrisscotmartin.com}"
-  export KANEO_API_KEY KANEO_API_URL KANEO_WEB_URL
-  # Both blockers in one pass: preflight exists so a single restart
-  # surfaces everything that is wrong, not the first thing.
-  local bad=0
-  [ -n "$KANEO_API_KEY" ] || { echo "FATAL: no Kaneo API key at /run/secrets/kaneo/api-key" >&2; bad=1; }
-  command -v kaneo >/dev/null 2>&1 || { echo "FATAL: kaneo CLI not installed" >&2; bad=1; }
-  [ "$bad" -eq 0 ]
+# --- Dispatcher commands --------------------------------------------------
+# Kaneo reads, policy selection and board writes belong to the dispatcher.
+# Helpers retain their historical names for the stage scripts, but report
+# command-scoped events rather than calling the Kaneo API.
+kaneo_branch_for_task() {
+  [ "$1" = "$ONLY_TASK" ] || return 1
+  printf '%s' "$COMMAND_BRANCH"
 }
 
-# True when a project carries every required column. This is the enrolment switch:
-# a project that has them is worked, one that does not is left alone, and
-# nothing anywhere lists which projects are live. The board is the config.
-#
-# Silent when a project has NONE of the required columns — that is a project
-# deliberately kept out of this flow, and a nightly line about it would be
-# noise that teaches you to skim the log. A project with SOME of them is
-# likely a typo or a renamed column, so that one says what is missing.
-kaneo_enrolled() {
-  local project="${1:-$KANEO_PROJECT}" have missing want total found=0
-  have="$(kaneo column list --project "$project" --jq '.[].slug' 2>/dev/null)"
-  # The CLI prints a JSON error object and still exits 0 — a DNS blip or an
-  # expired key comes back as {"error":"..."} rather than a failure. Trusting
-  # the exit status alone turns "I could not reach the board" into "this
-  # project has no columns", which is indistinguishable from a project
-  # deliberately left out of the flow, and would silently un-enrol
-  # everything during an outage.
-  case "$have" in
-    '') echo "kaneo: no answer listing columns for $project" >&2; return 1 ;;
-    '{"error"'*|*'"error":'*) echo "kaneo: cannot read columns for $project: $have" >&2; return 1 ;;
-  esac
-
-  missing=""
-  for want in $KANEO_REQUIRED_COLUMNS; do
-    if printf '%s\n' "$have" | grep -qx "$want"; then
-      found=$((found + 1))
-    else
-      missing="$missing $want"
-    fi
-  done
-
-  [ -z "$missing" ] && return 0
-  total=$(printf '%s\n' $KANEO_REQUIRED_COLUMNS | grep -c .)
-  [ "$found" -gt 0 ] && echo "kaneo: SKIP $project — $found/$total columns, missing:$missing" >&2
-  return 1
+require_dispatch_key() {
+  DISPATCH_API_KEY="$(cat /run/secrets/kaneo/api-key 2>/dev/null)"
+  # This key authenticates dispatcher RPCs; agents need no Kaneo environment.
+  unset KANEO_API_KEY KANEO_API_URL
+  export -n DISPATCH_API_KEY
+  [ -n "$DISPATCH_API_KEY" ] || { echo 'FATAL: dispatcher API credential missing' >&2; return 1; }
 }
 
 # A stage cannot discover or select work. The command ID is created and
@@ -383,6 +300,7 @@ require_dispatch_command() {
     echo 'FATAL: dispatcher task, repository and command ID are required' >&2
     return 1
   }
+  [[ "$DISPATCH_COMMAND" =~ ^[A-Za-z0-9_-]{1,128}$ ]] || return 1
   export ONLY_TASK ONLY_REPO DISPATCH_COMMAND
 }
 
@@ -396,7 +314,7 @@ dispatcher_report() {
     --arg event "$event" --argjson extra "$extra" \
     '$extra + {task:$task,command:$command,event:$event}') || return 1
   reply=$(curl --silent --show-error --connect-timeout 10 --max-time 95 \
-    -H "Authorization: Bearer $KANEO_API_KEY" -H 'Content-Type: application/json' \
+    -H "Authorization: Bearer $DISPATCH_API_KEY" -H 'Content-Type: application/json' \
     --data-binary "$payload" --write-out '\n%{http_code}' \
     "${KANEO_DISPATCH_URL:-http://kaneo-dispatcher.claude-pods.svc.cluster.local:8080}/worker-events") || return 1
   code="${reply##*$'\n'}"
@@ -413,7 +331,7 @@ kaneo_work_started() {
   [ "$1" = "${ONLY_TASK:-}" ] || return 1
   DISPATCH_STAGE="${2#stage-}"
   export DISPATCH_STAGE
-  dispatcher_report "$DISPATCH_STAGE-started"
+  dispatcher_report "$DISPATCH_STAGE-started" "$(jq -cn --arg digest "$COMMAND_DIGEST" '{promptDigest:$digest}')"
 }
 
 kaneo_outcome() {
@@ -433,43 +351,15 @@ kaneo_link_pr() {
 
 kaneo_mention() { kaneo_note "$1" "@$2 $3"; }
 
-# The repo a card is for, from its repo:<name> label.
-#
-# A Kaneo-native card has no GitHub issue to infer a repo from, so the label
-# is the only place that fact lives. Zero labels means nowhere to do the
-# work; two means the card does not say where. Both are refused rather than
-# guessed at — printing the reason, because unlike a non-enrolled project
-# this is always a mistake.
-kaneo_task_repo() {
-  local json="$1" repos
-  repos="$(printf '%s' "$json" | jq -r '[.labels[]?.name | select(startswith("repo:")) | sub("^repo:"; "")] | .[]' 2>/dev/null)"
-  case "$(printf '%s' "$repos" | grep -c .)" in
-    1) printf '%s' "$repos" ;;
-    0) return 1 ;;
-    *) return 2 ;;
-  esac
-}
+# Preserve the reason work stopped before parking a card with no PR.
+report_author_no_pr() {
+  local task="$1" report
+  report=$(printf '%s' "$2" | redact | jq -Rrs 'if length > 6000 then .[:6000] + "\n[truncated; full report in worker log]" else . end') || return 1
+  kaneo_note "$task" "@${KANEO_OWNER:-chris} the author produced no pull request; parking in Backlog.
 
-# Work pushed for this card that never reached a pull request.
-#
-# A run can stop between its first commit and `gh pr create` — a usage
-# limit, a timeout, a node going away — and then the branch exists on the
-# remote with real work on it while the card looks untouched. Without
-# this the next run checks out main, resets hard, and starts the ticket
-# over, abandoning what was already done.
-#
-# Prints the number of commits the branch is ahead of the default branch,
-# or returns 1 when there is no such branch.
-kaneo_unfinished_branch() {
-  local repo="$1" task="$2" branch ahead
-  branch="$(kaneo_branch_for_task "$task")"
-  git ls-remote --exit-code --heads "https://github.com/$repo" "$branch" >/dev/null 2>&1 || return 1
-  ahead="$(gh api "repos/$repo/compare/HEAD...$branch" --jq .ahead_by 2>/dev/null)"
-  case "$ahead" in
-    ''|*[!0-9]*) return 1 ;;
-    0) return 1 ;;
-    *) printf '%s' "$ahead" ;;
-  esac
+Author report:
+${report:-No final report was produced.}" || return 1
+  kaneo_outcome "$task" failed
 }
 
 # Exact assigned-task PR selection, shared by author recovery and both review
@@ -482,16 +372,8 @@ command_pr() {
       '[.[] | select(.headRefName == $branch and ((.headRepositoryOwner.login + "/" + .headRepository.name | ascii_downcase) == ($repo | ascii_downcase)))] | sort_by(.number) | last // empty'
 }
 
-kaneo_task_pr() {
-  [ "$1" = "$ONLY_TASK" ] || return 1
-  local url
-  url=$(command_pr | jq -r '.url // empty') || return 1
-  [ -n "$url" ] || return 1
-  printf '%s' "$url"
-}
-
-# The one headline every requeue writes, and the one kaneo_rework_count
-# reads. A literal shared by a writer and a reader in different files is a
+# The headline the dispatcher counts in its task-context snapshot.
+# A literal shared by a writer and a reader in different files is a
 # fact with two homes; naming it gives it one.
 KANEO_REWORK_HEADLINE="Sent back for rework"
 
@@ -513,60 +395,12 @@ kaneo_requeue() {
   kaneo_outcome "$task" failed
 }
 
-# How many times a card has been sent back.
-#
-# Counted on the CARD, not on the pull request: the card is the thing that
-# bounces, it survives a force-push, and both requeue paths touch it while
-# only one of them touches the PR.
-#
-# Two is the cap. A card the pipeline keeps rejecting is not converging,
-# and the third attempt should reach a person instead of going round again.
-kaneo_rework_count() {
-  local task="$1" n
-  [ -n "$task" ] || { echo 0; return; }
-  # `task view --full`, because `task comment` only posts — there is no
-  # list subcommand, and --full is what returns every comment rather than
-  # the latest three.
-  # Read the card whole, then count locally. Asking the CLI to both fetch
-  # and filter hides the difference between "no matching comments" and "the
-  # request failed": a rate-limited or unreachable call prints
-  # {"error":...}, exits 0, and the jq count comes back 0 — which would
-  # fail OPEN and uncap the retry loop, the exact failure this cap exists
-  # to prevent.
-  local raw
-  raw="$(kaneo task view "$task" --full --json 2>/dev/null)"
-  case "$raw" in
-    ''|*'"error":'*)
-      echo "   kaneo: cannot read $task (${raw:-no answer}); treating as capped" >&2
-      echo 99; return ;;
-  esac
-  n="$(printf '%s' "$raw" | jq "[.comments[]?.content | select(startswith(\"$KANEO_REWORK_HEADLINE\"))] | length" 2>/dev/null)"
-  # An empty answer is a failed lookup, not zero bounces. Defaulting it to
-  # 0 would fail open and uncap the loop silently, so say so and assume the
-  # cap is reached — refusing to retry is the safe direction.
-  case "$n" in
-    ''|*[!0-9]*) echo "   kaneo: cannot read rework count for $task; treating as capped" >&2; echo 99 ;;
-    *) echo "$n" ;;
-  esac
-}
-
-# The card a pull request belongs to.
-#
-# The merge pod works from pull requests, but the board works from cards, so
-# something has to join them. The branch carries the task id (fix/<task>),
-# which is the one place the link survives a force-push, a retitle and an
-# edited PR body.
+# Confirm the PR belongs to the repository and branch frozen in this command.
 kaneo_task_for_pr() {
   local repo="$1" pr="$2" head
   head="$(gh pr view "$pr" --repo "$repo" --json headRefName --jq .headRefName 2>/dev/null)"
-  # Uses KANEO_BRANCH_PREFIX, not a literal fix/: this is the inverse of
-  # kaneo_branch_for_task and the two must agree. A literal here would keep
-  # working on the default and silently stop finding cards the moment the
-  # prefix was changed anywhere else.
-  case "$head" in
-    "$KANEO_BRANCH_PREFIX"*) printf '%s' "${head#"$KANEO_BRANCH_PREFIX"}" ;;
-    *) return 1 ;;
-  esac
+  [ "$repo" = "$ONLY_REPO" ] && [ "$head" = "$COMMAND_BRANCH" ] || return 1
+  printf '%s' "$ONLY_TASK"
 }
 
 # Sends a declined pull request back to To Do with the panel's reasoning.
@@ -578,7 +412,7 @@ kaneo_task_for_pr() {
 kaneo_note_and_requeue() {
   local repo="$1" pr="$2" verdict="$3" task summary
   task="$(kaneo_task_for_pr "$repo" "$pr")" || {
-    echo "   kaneo: no card for $repo#$pr (branch is not ${KANEO_BRANCH_PREFIX}<task>); not requeued" >&2
+    echo "   kaneo: no card for $repo#$pr (not the assigned command branch); not requeued" >&2
     return 1
   }
   summary="$(printf '%s' "$verdict" | grep -v '^VERDICT:' | sed '/^[[:space:]]*$/d' | head -6)"

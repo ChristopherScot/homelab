@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
-# dispatcher-command-protocol: 1
+# dispatcher-command-protocol: 2
 # Pod 2's job: try hard to break the PRs pod 0 opened, and file issues for
 # what actually breaks.
 #
-# Runs at 02:00, between authoring (00:00) and the merge verdict (04:00),
-# so anything it finds is on the PR before pod 1 decides. A bug found at
-# 02:00 is a NO-MERGE at 04:00; the same bug found after the merge is a
-# revert.
+# Runs only when the dispatcher assigns a test command after authoring.
+# Its verdict must be available before the dispatcher advances to review.
 #
 # Deliberately separate from pod 1. Pod 1 asks "is this good code?" and
 # pod 2 asks "where does it break?" — different questions, and bundling
@@ -21,7 +19,7 @@ source "$POD_LIB" || { echo "FATAL: cannot source $POD_LIB" >&2; exit 1; }
 
 require_dispatch_command "$@" || exit 1
 
-PER_PR_TIMEOUT="${NIGHTLY_PR_TIMEOUT:-2700}"
+
 QUIET_MINUTES="${NIGHTLY_QUIET_MINUTES:-30}"
 LOG="$STATE_DIR/test-$(date +%Y%m%d).log"
 
@@ -30,8 +28,9 @@ log_to "$LOG"
 echo "=== stage-test $(date -Is) ==="
 
 require_gh_token || exit 1
-require_kaneo_key || exit 1
+require_dispatch_key || exit 1
 take_pod_lock || exit 0
+load_dispatch_command test || exit 1
 
 # Prune on the way out, however this run ends. A stage that fails or
 # times out is the one most likely to have filled the disk, so a tidy
@@ -46,36 +45,41 @@ pick_model
 # command's current task, repository, stage and column visit.
 kaneo_work_started "$ONLY_TASK" stage-test || exit 1
 for repo in "$ONLY_REPO"; do
-  mapfile -t PRS < <(command_pr | jq -r '"\(.number) \(.updatedAt) \(.headRefOid)"')
+  PRS=("$(jq -r '"\(.pr) \(.headSHA)"' "$COMMAND_PAYLOAD")")
   for entry in "${PRS[@]}"; do
-    read -r pr updated sha <<<"$entry"
+    read -r pr sha <<<"$entry"
     task="$ONLY_TASK"
 
     name="$(basename "$repo")"
     dir="/workspace/$name"
     [ -d "$dir" ] || { echo "SKIP $repo#$pr: no clone"; continue; }
-    git -C "$dir" fetch --quiet origin 2>/dev/null
-
-    echo "--- testing $repo#$pr ($(date -Is))"
     # Inside the clone, so git clean sweeps it at the end of the loop
     # and the agent is never pointed at $STATE_DIR, where the log of its
     # own run lives. Cleared first, because a file left by an earlier
-    # run would be read as this run's verdict.
+    # run would be read as this run's verdict. Remove this worker-owned
+    # artifact before the dirty-tree guard so an interrupted test can retry;
+    # all other local changes remain protected by checkout preparation.
     # prompts/test.md tells the agent this same path.
     VERDICT_FILE="$dir/.nightly-verdict"
-    rm -f "$VERDICT_FILE"
-    export dir repo pr VERDICT_FILE
-    render_prompt "$PROMPT_DIR/test.md" > "$STATE_DIR/test-prompt.txt"
+    rm -f "$VERDICT_FILE" || continue
+    prepare_command_checkout "$dir" || continue
+
+    echo "--- testing $repo#$pr ($(date -Is))"
 
     # Through the failover wrapper: a work account at its limit otherwise
     # ends the run with no verdict, which stage-merge correctly reads as
     # "not tested" and the card lands in needs-human-review. The personal
     # token was mounted and unused. This stage already captured the output,
     # so the wrapper changes nothing else.
-    out=$(run_with_account_failover --stdin "$STATE_DIR/test-prompt.txt" \
-      timeout "$PER_PR_TIMEOUT" claude -p --output-format json --model "$MODEL" \
+    out=$(run_with_account_failover --stdin "$COMMAND_PROMPT" \
+      timeout "$COMMAND_TIMEOUT" claude -p --output-format json --model "$MODEL" \
       --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" --add-dir "$dir")
     rc=$?
+    if [ "$(git -C "$dir" rev-parse HEAD)" != "$sha" ]; then
+      echo 'worker checkout changed during execution; refusing its verdict' >&2
+      kaneo_outcome "$ONLY_TASK" blocked
+      continue
+    fi
     out_text=$(claude_result_text "$out")
     printf '%s\n' "$out_text" | tail -25 | redact
 

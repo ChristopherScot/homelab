@@ -6,7 +6,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib/pod-common.sh"
 # A 202 from the old dispatcher, a failed command or mismatched acknowledgment
 # must never grant permission to work. No cluster or actual HTTP call.
 require_dispatch_command task1 owner/repo command1
-export KANEO_API_KEY=test
+export DISPATCH_API_KEY=test
+COMMAND_DIGEST=test-digest
 curl() { printf '%s\n%s' "$fixture_reply" "$fixture_code"; }
 fixture_reply='{"version":1,"accepted":true,"task":"task1","command":"command1","event":"author-started"}'
 fixture_code=200
@@ -33,6 +34,27 @@ if kaneo_requeue task1 reason 2>/dev/null; then
   echo 'requeued without its rework receipt' >&2; exit 1
 fi
 [ "$outcome_called" = false ]
+
+# A no-PR author result must reach the card before the terminal report.
+(
+  GH_TOKEN=secret_test_token
+  note="" outcome=""
+  kaneo_note() { note="$2"; }
+  kaneo_outcome() { [ -n "$note" ]; outcome="$2"; }
+  report_author_no_pr task1 'OBSOLETE: the endpoint was removed. secret_test_token'
+  [[ "$note" == *'OBSOLETE: the endpoint was removed.'* ]]
+  [[ "$note" != *secret_test_token* ]]
+  [ "$outcome" = failed ]
+  report_author_no_pr task1 "$(printf '%07000d' 0)"
+  [[ "$note" == *'[truncated; full report in worker log]'* ]]
+  [ "${#note}" -lt 6500 ]
+  outcome=""
+  kaneo_note() { return 1; }
+  if report_author_no_pr task1 'SKIPPED: missing credentials'; then
+    echo 'author failure accepted without its explanation' >&2; exit 1
+  fi
+  [ -z "$outcome" ]
+)
 
 command -v flock >/dev/null || { echo 'SKIP: flock requires Linux'; exit 0; }
 tmp=$(mktemp -d)
