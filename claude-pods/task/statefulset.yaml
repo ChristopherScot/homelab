@@ -1,0 +1,157 @@
+# Task-worker pods on the claude-task image: the dispatcher-commanded
+# author/test/merge stages, with no interactive session inside. Mirrors
+# ../statefulset.yaml minus the interactive mounts and env; README.md
+# here says what has to change before the dispatcher execs into it.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: claude-task
+  namespace: claude-pods
+spec:
+  serviceName: claude-task
+  # Held at 0 on purpose: nothing dispatches here yet, and the field lets
+  # the manifest deploy today without idle pods or their volumes while
+  # argocd-image-updater pins the image on this Application. Delete the
+  # line when the dispatcher is retargeted; ../statefulset.yaml explains
+  # why a live set must not carry it (selfHeal would fight the wake and
+  # the sleep cron).
+  replicas: 0
+  # Same protection as ../statefulset.yaml: a new image digest must never
+  # terminate a running stage in place. 3 is one past the highest ordinal
+  # the dispatcher routes to; scale-ups create pods at the new revision.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 3
+  selector:
+    matchLabels:
+      app: claude-task
+  template:
+    metadata:
+      labels:
+        app: claude-task
+    spec:
+      # Allow the worker's 2-minute checkpoint and 30-second report budgets,
+      # plus process cleanup, before kubelet can forcibly stop the container.
+      terminationGracePeriodSeconds: 180
+      # The session pods' ServiceAccount (cluster-admin, ../rbac.yaml):
+      # the stages already run with it there, and the cards they work
+      # include cluster changes. Narrowing it is its own decision.
+      serviceAccountName: claude-session
+      imagePullSecrets:
+        - name: ghcr-pull
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: worker
+          image: ghcr.io/christopherscot/claude-task:latest
+          # Digest-pinned by argocd-image-updater on the live Application (see kustomization.yaml); pull-on-change, cache otherwise.
+          imagePullPolicy: IfNotPresent
+          # Graceful shutdown for a running stage: ../stop-worker.sh.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/usr/local/bin/stop-kaneo-worker"]
+          env:
+            # HOME comes from the image; ../statefulset.yaml sets it only
+            # because its Dockerfile does not.
+            # Git identity for commits made by the stages. Same as the
+            # session pods so nothing downstream sees a new author.
+            - name: GIT_AUTHOR_NAME
+              value: "Chris (claude-pod)"
+            - name: GIT_COMMITTER_NAME
+              value: "Chris (claude-pod)"
+            - name: GIT_AUTHOR_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: claude-git-identity
+                  key: email
+                  optional: true
+            - name: GIT_COMMITTER_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: claude-git-identity
+                  key: email
+                  optional: true
+            # Kernel (kernel.sh) API key for `kbrowser` cloud browsers.
+            - name: KERNEL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: kernel-api
+                  key: api_key
+                  optional: true
+          volumeMounts:
+            # $HOME on the SSD tier: Claude transcripts, go/npm caches.
+            - name: home
+              mountPath: /home/node
+            # /workspace on the HDD tier: the repo clones and the worker's
+            # command archive under /workspace/.nightly.
+            - name: workspace
+              mountPath: /workspace
+            # The worker reads /run/secrets/git/token and hands it to every
+            # tool as GH_TOKEN.
+            - name: git-creds
+              mountPath: /run/secrets/git
+              readOnly: true
+            # Per-pod repo lists (pod<ordinal> files), read by the entrypoint.
+            - name: repos
+              mountPath: /run/secrets/repos
+              readOnly: true
+            # Kaneo API key: authenticates the worker's reports to the
+            # dispatcher. The worker makes no direct Kaneo calls.
+            - name: kaneo-api
+              mountPath: /run/secrets/kaneo
+              readOnly: true
+            # Claude subscription tokens (work, personal) for the worker's
+            # account failover.
+            - name: claude-oauth
+              mountPath: /run/secrets/claude
+              readOnly: true
+          # Same reservation and ceiling as the session pods; see
+          # ../statefulset.yaml for the reasoning.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: git-creds
+          secret:
+            secretName: claude-git-creds
+        - name: repos
+          secret:
+            secretName: claude-repos
+            optional: true
+        # optional, like ../statefulset.yaml: a pod that starts before an
+        # ExternalSecret has synced should come up and fail its own
+        # preflight with a clear message, not sit in
+        # CreateContainerConfigError.
+        - name: kaneo-api
+          secret:
+            secretName: kaneo-api
+            optional: true
+        - name: claude-oauth
+          secret:
+            secretName: claude-oauth
+            optional: true
+  volumeClaimTemplates:
+    # 15Gi from the start: the session pods' home filled at 5Gi with
+    # regenerable go/npm caches and were resized by hand to 15Gi, and a
+    # volumeClaimTemplate cannot be changed once the set exists.
+    - metadata:
+        name: home
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-single-ssd
+        resources:
+          requests:
+            storage: 15Gi
+    - metadata:
+        name: workspace
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: longhorn-hdd-single
+        resources:
+          requests:
+            storage: 10Gi
