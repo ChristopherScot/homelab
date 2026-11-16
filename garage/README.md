@@ -109,6 +109,11 @@ changes: the bucket, keys and grants live in the replicated tables.
 
 - `tests/manifests.sh` - the invariants above, against the committed
   files. Runs in CI.
+- `tests/init-faults.sh` - `garage-init.sh` against a fake kubectl: the
+  import and mint paths end to end, and what the script does when a call
+  fails (a failed import keeps the secret off its output; a failed
+  admin or key lookup is fatal rather than read as "nothing to do").
+  Runs in CI.
 - `tests/cluster-smoke.sh` - the same manifests rendered into a scratch
   namespace with small volumes: three nodes on three k8s nodes, replicas
   on the right nodes, `garage-init.sh` lays it out, an S3 round trip

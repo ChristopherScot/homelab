@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# A kubectl for garage/tests/init-faults.sh. It answers exactly the calls
+# bootstrap/garage-init.sh makes, from canned state, and fails the ones
+# the test asks it to, so the script's control flow can be driven without
+# a cluster. Every call is appended to $FAKE_LOG, one line each, for the
+# test to assert what was and was not run.
+#
+#   FAKE_LOG          file to append each call to (required)
+#   FAKE_FAIL         extended regex over the garage command line; a
+#                     matching call fails with exit 1 and an error on
+#                     stderr, the way kubectl exec reports one
+#   FAKE_FAIL_FROM    ...but only from the Nth matching call on (default
+#                     1), so a fault can land after the membership poll
+#   FAKE_KEYS         JSON array ListKeys returns (default [])
+#   FAKE_KEY_SECRET   what `key info --show-secret` prints as the secret
+#   FAKE_SECRET_JSON  what `get secret -o json` prints; empty is NotFound
+set -euo pipefail
+echo "kubectl $*" >>"$FAKE_LOG"
+
+garage() { # <args after /garage>
+  local cmd="$*"
+  if [ -n "${FAKE_FAIL:-}" ] && printf '%s' "$cmd" | grep -qE "$FAKE_FAIL"; then
+    echo "$cmd" >>"$FAKE_LOG.matched"
+    if [ "$(wc -l <"$FAKE_LOG.matched")" -ge "${FAKE_FAIL_FROM:-1}" ]; then
+      # Only the subcommand: real garage does not echo its argv, and a
+      # fake that did would fail the "no secret in output" check itself.
+      echo "Error: fault injected by the test for: garage ${cmd%% *} ..." >&2
+      echo "command terminated with exit code 1" >&2
+      exit 1
+    fi
+  fi
+  case "$cmd" in
+    "json-api GetClusterStatus")
+      echo '{"nodes":[
+        {"id":"aaaa0000","hostname":"garage-node-0","isUp":true},
+        {"id":"bbbb1111","hostname":"garage-node-1","isUp":true},
+        {"id":"cccc2222","hostname":"garage-node-2","isUp":true}]}' ;;
+    "json-api GetClusterLayout")
+      echo '{"version":0,"roles":[],"stagedRoleChanges":[]}' ;;
+    "json-api ListKeys")
+      echo "${FAKE_KEYS:-[]}" ;;
+    "layout show")
+      echo "==== STAGED ROLE CHANGES ===="
+      echo "To enact the staged role changes, type:"
+      echo "    garage layout apply --version 1" ;;
+    "bucket info "*)
+      echo "Error: NoSuchBucket (404)" >&2; exit 1 ;;
+    "key create "*)
+      echo "$3" >>"$FAKE_LOG.created" ;;
+    "key info "*)
+      # Like garage: a name it does not know is exit 1, same as a fault.
+      touch "$FAKE_LOG.created"
+      if ! grep -qx "$3" "$FAKE_LOG.created" \
+        && ! printf '%s' "${FAKE_KEYS:-[]}" | jq -e --arg n "$3" 'any(.[]; .name == $n)' >/dev/null; then
+        echo "Error: GetKeyInfo returned NoSuchAccessKey (404): Access key not found: $3" >&2
+        exit 1
+      fi
+      echo "Key ID: ${FAKE_KEY_ID:-GKfake0000000000000000000}"
+      echo "Secret key: ${FAKE_KEY_SECRET:-fake-secret-in-garage}" ;;
+    status) echo "fake garage status" ;;
+    *) ;;
+  esac
+}
+
+case "$1" in
+  exec)
+    while [ "$1" != "--" ]; do shift; done
+    shift 2 # the -- and /garage
+    garage "$@" ;;
+  get)
+    case "$2" in
+      sts) echo 3 ;;
+      pod) echo "k8s-node-for-${5}" ;;
+      pvc) echo 1Gi ;;
+      secret)
+        [ -n "${FAKE_SECRET_JSON:-}" ] || {
+          echo "Error from server (NotFound): secrets \"$5\" not found"; exit 1; }
+        echo "$FAKE_SECRET_JSON" ;;
+      externalsecret)
+        echo "Error from server (NotFound): externalsecrets.external-secrets.io \"$5\" not found" >&2
+        exit 1 ;;
+      *) echo "fake kubectl: unexpected get $2" >&2; exit 2 ;;
+    esac ;;
+  *) echo "fake kubectl: unexpected verb $1" >&2; exit 2 ;;
+esac

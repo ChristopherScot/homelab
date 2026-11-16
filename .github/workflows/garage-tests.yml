@@ -3,8 +3,9 @@ name: garage tests
 # garage/tests/manifests.sh checks the invariants that let three Garage
 # nodes survive one k8s node - replica counts, the storage class, the
 # probe, the names two files must agree on. Nothing at apply time catches
-# an edit that undoes one of them; this does. cluster-smoke.sh needs a
-# cluster and SKIPs here, saying so.
+# an edit that undoes one of them; this does. init-faults.sh drives
+# bootstrap/garage-init.sh against a fake kubectl, so it runs here too.
+# cluster-smoke.sh needs a cluster and SKIPs here, saying so.
 on:
   pull_request:
     paths:

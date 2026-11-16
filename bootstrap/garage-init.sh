@@ -76,27 +76,30 @@ KEY_RW_SECRET="${GARAGE_KEY_RW_SECRET-claude-pods/garage-s3-seed}"
 # after a timeout that had already succeeded server-side would leave two
 # keys sharing one name. It also returns rather than exits: `exit` inside
 # a function only leaves the subshell when g is in a pipeline or $(...).
+#
+# g_run is g with the command line to report given separately, for the
+# one call whose argv carries a secret: a failed `key import` must say
+# which import failed without writing the secret to stderr.
 g_try() { kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>/dev/null; }
 
-g() {
-  local err rc=0
+g_run() { # <command line to report on failure> <garage args...>
+  local shown="$1" err rc=0
+  shift
   err="$(mktemp)"
   # `|| rc=$?` and not a bare call: under set -e a failing command
   # inside a function aborts the script immediately, so the handler
-  # below would never run and the error would be discarded. It is also
-  # what lets the plain rm below suffice: an earlier version used a
-  # RETURN trap for it, but a RETURN trap is global once set and fires
-  # when the CALLER returns too, where $err is out of scope and set -u
-  # aborts the script - which is exactly what happened the first time g
-  # was called from inside another function.
+  # below would never run and the error would be discarded. A plain rm,
+  # not a RETURN trap: that trap is global once set and fires when the
+  # CALLER returns too, where $err is out of scope.
   kubectl exec -n "$NS" "$POD" -- /garage "$@" 2>"$err" || rc=$?
   if [ "$rc" -ne 0 ]; then
-    echo "FATAL: garage $* failed (exit $rc):" >&2
+    echo "FATAL: garage $shown failed (exit $rc):" >&2
     cat "$err" >&2
   fi
   rm -f "$err"
   return "$rc"
 }
+g() { g_run "$*" "$@"; }
 
 # Cluster members, one per line: <id> <hostname> <assigned|unassigned>,
 # from the admin API's JSON. Two things it makes structural: a node that
@@ -104,10 +107,16 @@ g() {
 # yet and is not a member; and a role that is staged but not yet applied
 # counts as assigned, so a re-run after a failed apply does not stage it
 # twice.
+#
+# A failed admin call is reported (g) and returned as a failure, never as
+# an empty list: an empty list fed to the layout step reads as "every
+# node already assigned", which is the one answer a fault must not give.
+# The membership poll, where silence is expected while garage is still
+# coming up, discards the report itself.
 healthy_nodes() {
   local status layout
-  status="$(g_try json-api GetClusterStatus)" || return 0
-  layout="$(g_try json-api GetClusterLayout)" || return 0
+  status="$(g json-api GetClusterStatus)" || return 2
+  layout="$(g json-api GetClusterLayout)" || return 2
   jq -rn --argjson s "$status" --argjson l "$layout" '
     ([$l.roles[].id] + [$l.stagedRoleChanges[].id]) as $have
     | $s.nodes[]
@@ -120,9 +129,8 @@ healthy_nodes() {
 # StatefulSet wants is a member, such a role is a node that was lost and
 # replaced (its identity lives on its meta volume) or a StatefulSet
 # scaled below its layout; either way the layout still maps a share of
-# every partition to it. Unlike healthy_nodes this is a one-shot gate,
-# not a poll, so a failed admin call is reported (g) and returned as a
-# failure rather than read as "no dead roles".
+# every partition to it. A failed admin call is reported (g) and returned
+# as a failure rather than read as "no dead roles".
 dead_roles() {
   local status layout
   status="$(g json-api GetClusterStatus)" || return 2
@@ -141,12 +149,13 @@ echo "=== garage-init: ns=$NS sts=$STS via $POD ==="
 #    on a race the operator did not cause.
 want="$(kubectl get sts -n "$NS" "$STS" -o jsonpath='{.spec.replicas}')"
 [ -n "$want" ] || { echo "FATAL: cannot read $STS replicas in $NS" >&2; exit 1; }
-#    healthy_nodes prints nothing while garage is unreachable (a pod still
-#    attaching its volumes); the `|| true` is for jq choking on a response
-#    it does not expect, which should be another empty poll rather than a
-#    silent exit under set -e.
+#    While garage is unreachable (a pod still attaching its volumes)
+#    healthy_nodes fails with a report; here that is an expected empty
+#    poll, so the report is dropped and the `|| true` keeps it, and jq
+#    choking on a response it does not expect, from being a silent exit
+#    under set -e. The FATAL below shows `garage status` instead.
 for _ in $(seq 1 18); do
-  have="$(healthy_nodes | wc -l | tr -d ' ' || true)"
+  have="$(healthy_nodes 2>/dev/null | wc -l | tr -d ' ' || true)"
   [ "${have:-0}" -ge "$want" ] && break
   echo "membership: ${have:-0} of $want nodes visible, waiting for discovery..."
   sleep 10
@@ -180,8 +189,13 @@ if [ -n "$dead" ]; then
   echo "old one by hand (garage/README.md, 'Re-admitting a node'), then re-run this." >&2
   exit 1
 fi
+#    Read into a variable first, not `done < <(healthy_nodes)`: a process
+#    substitution's exit status is never checked, so a fault there would
+#    run the loop zero times and print "already assigned" below.
+members="$(healthy_nodes)" || exit 1
 staged=0
 while read -r id host role; do
+  [ -n "$id" ] || continue
   [ "$role" = "unassigned" ] || continue
   zone="$(kubectl get pod -n "$NS" "$host" -o jsonpath='{.spec.nodeName}')"
   [ -n "$zone" ] || { echo "FATAL: cannot find the k8s node running $host" >&2; exit 1; }
@@ -190,7 +204,7 @@ while read -r id host role; do
   echo "layout: assigning ${id:0:16} ($host) zone=$zone capacity=$cap"
   g layout assign -z "$zone" -c "$cap" "$id" >/dev/null
   staged=$((staged + 1))
-done < <(healthy_nodes)
+done <<< "$members"
 
 if [ "$staged" -gt 0 ]; then
   # `layout show` ends with the exact command to run, version included.
@@ -220,9 +234,21 @@ fi
 
 # 4. Keys. Imported from the named Secret when there is one, so the
 #    cluster learns the credential consumers already hold; created only
-#    when there is nothing to import. `key info <name>` resolves a name,
-#    so an existing key is found whichever way it was made.
+#    when there is nothing to import. An existing key is found by name in
+#    the admin API's key list, whichever way it was made.
 #
+#    Not `key info <name>` as the predicate: it exits 1 both for "no such
+#    key" and for "could not ask", and treating the second as the first
+#    mints a key next to the one that exists - the duplicate-name hazard
+#    g's comment describes. ListKeys only fails when garage cannot be
+#    asked, which is reported and fatal. Prints every id carrying the
+#    name, one per line; more than one is for the caller to refuse.
+key_ids() { # <key name>
+  local keys
+  keys="$(g json-api ListKeys)" || return 2
+  printf '%s' "$keys" | jq -r --arg n "$1" '.[] | select(.name == $n) | .id'
+}
+
 #    The Secret is read once, as JSON, with stderr kept. "No such Secret"
 #    is the one answer that may mean mint; a denied read or an API that
 #    is down must not be mistaken for it, because minting on a fault
@@ -248,7 +274,13 @@ created=()
 drift=0
 ensure_key() { # <key name> <namespace/secret, or empty>
   local name="$1" from="$2" have_id have_secret want_id="" want_secret="" json rc=0
-  have_id="$(g_try key info "$name" | sed -n 's/^Key ID: *//p' || true)"
+  have_id="$(key_ids "$name")" || exit 1
+  case "$have_id" in *$'\n'*)
+    echo "FATAL: more than one key in garage is named $name:" >&2
+    printf '  %s\n' $have_id >&2
+    echo "       This script cannot pick one; delete the stray (garage key delete <id>) and re-run." >&2
+    exit 1 ;;
+  esac
   if [ -n "$from" ]; then
     json="$(secret_json "$from")" || rc=$?
     case "$rc" in
@@ -286,8 +318,9 @@ ensure_key() { # <key name> <namespace/secret, or empty>
       # must not exit 0 - this is the failure the import step exists to
       # prevent, and a WARNING line in a scrolled terminal is not a report.
       # Both halves are compared; Vault is seeded by hand, so a right ID
-      # with a wrong secret is as plausible as a wrong ID.
-      have_secret="$(g_try key info "$name" --show-secret | sed -n 's/^Secret key: *//p' || true)"
+      # with a wrong secret is as plausible as a wrong ID. Through g, so
+      # a failed read is a reported exit under set -e, not a mismatch.
+      have_secret="$(g key info "$name" --show-secret | sed -n 's/^Secret key: *//p')"
       if [ "$want_id" != "$have_id" ]; then
         echo "ERROR: key $name is $have_id in garage but $from holds $want_id;" >&2
         echo "       consumers of that Secret cannot authenticate. Reconcile Vault or the key." >&2
@@ -300,7 +333,8 @@ ensure_key() { # <key name> <namespace/secret, or empty>
     fi
     echo "key: $name exists ($have_id)"
   elif [ -n "$want_id" ]; then
-    g key import --yes -n "$name" "$want_id" "$want_secret" >/dev/null
+    g_run "key import --yes -n $name $want_id <secret>" \
+      key import --yes -n "$name" "$want_id" "$want_secret" >/dev/null
     echo "key: $name imported from $from ($want_id)"
   else
     g key create "$name" >/dev/null
@@ -309,7 +343,7 @@ ensure_key() { # <key name> <namespace/secret, or empty>
     else
       echo "key: $name created (import disabled)"
     fi
-    created+=("$name:$from")
+    created+=("$name")
   fi
 }
 ensure_key "$KEY_RO" "$KEY_RO_SECRET"
@@ -326,19 +360,18 @@ g bucket allow --read --write "$BUCKET" --key "$KEY_RW" >/dev/null
 echo "grant: $KEY_RW has RW on $BUCKET"
 
 # 6. Only keys this run minted need seeding; imported ones are already
-#    where they belong. The Vault path is whatever the ExternalSecret
-#    behind the Secret reads from - asked for, not repeated here.
+#    where they belong. The Vault path is the remoteRef of the
+#    ExternalSecret that will project this key (garage/secrets.yaml). It
+#    is not looked up here: a key is only minted when that ExternalSecret
+#    is absent or import is switched off, so the lookup could never
+#    succeed.
 if [ "${#created[@]}" -gt 0 ]; then
   echo
   echo "=== credentials - put these in Vault, then delete this output ==="
-  for entry in "${created[@]}"; do
-    k="${entry%%:*}"; from="${entry#*:}"
-    path=""
-    [ -n "$from" ] && path="$(kubectl get externalsecret -n "${from%%/*}" "${from#*/}" \
-      -o jsonpath='{.spec.data[0].remoteRef.key}' 2>/dev/null || true)"
+  for k in "${created[@]}"; do
     echo "--- $k ---"
     g key info "$k" --show-secret | grep -iE '^(Key ID|Secret key):'
-    echo "  vault kv put kv/${path:-garage/<path the ExternalSecret reads>} \\"
+    echo "  vault kv put kv/garage/<remoteRef.key of this key's ExternalSecret in garage/secrets.yaml> \\"
     echo "    access-key-id=<Key ID> secret-access-key=<Secret key>"
   done
 fi

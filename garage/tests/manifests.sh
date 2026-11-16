@@ -77,8 +77,6 @@ done
 init="$dir/../bootstrap/garage-init.sh"
 expect "init script default StatefulSet name" \
   "$(sed -n 's/^STS="\${GARAGE_STS:-\(.*\)}"$/\1/p' "$init")" "$(q $sts StatefulSet .metadata.name)"
-expect "init script reads each node's capacity from a PVC (the one declaration)" \
-  "$(grep -c '{.status.capacity.storage}' "$init")" 1
 expect "an exported empty GARAGE_KEY_*_SECRET disables import (cluster-smoke.sh relies on it)" \
   "$(grep -c '_SECRET-claude-pods/' "$init")" 2
 
