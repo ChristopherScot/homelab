@@ -15,7 +15,7 @@
 # kustomization.yaml).
 # Built from the reviewed dispatcher source; shares its typed wire contract.
 FROM golang:1.27 AS kaneo-worker
-ARG KANEO_WORKER_REF=2c1a1ef40b73a15701cff586798bd5de95c610f3
+ARG KANEO_WORKER_REF=f49eced221413ae824ea2e4789ef38cf5f9c089a
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ChristopherScot/kaneo-dispatcher/cmd/kaneo-worker@${KANEO_WORKER_REF}
 
 FROM node:22-trixie-slim
@@ -38,7 +38,7 @@ ENV LANG=C.UTF-8 \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates jq openssh-client less vim ripgrep gnupg \
-      tmux unzip build-essential \
+      tmux unzip build-essential procps util-linux \
       zsh fzf fd-find \
     && rm -rf /var/lib/apt/lists/*
 
@@ -358,6 +358,7 @@ COPY kbrowser.sh /usr/local/bin/kbrowser
 # Prompt instructions and task context come from immutable dispatcher commands.
 # Only the local tool permission settings ship in this image.
 COPY --from=kaneo-worker /out/kaneo-worker /usr/local/bin/kaneo-worker
+COPY --chmod=0755 stop-worker.sh /usr/local/bin/stop-kaneo-worker
 COPY --chmod=0755 stage-author.sh /usr/local/bin/stage-author
 COPY --chmod=0755 stage-merge.sh /usr/local/bin/stage-merge
 COPY --chmod=0755 stage-test.sh  /usr/local/bin/stage-test
