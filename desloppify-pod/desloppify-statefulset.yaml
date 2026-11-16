@@ -30,6 +30,13 @@ spec:
   # sync. Initial creation defaults to 1; KEDA scales it to 0 within its
   # polling interval of the ScaledObject syncing outside the window, not
   # at the first 06:30.
+  #
+  # Partition above the only ordinal: a new image never restarts a
+  # running pod; the next wake starts on it. Same as claude-session.
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 1
   selector:
     matchLabels:
       app: desloppify

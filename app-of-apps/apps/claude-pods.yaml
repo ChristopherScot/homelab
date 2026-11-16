@@ -19,6 +19,9 @@ metadata:
     # pull.
     argocd-image-updater.argoproj.io/image-list: claude-pod=ghcr.io/christopherscot/claude-pod:latest
     argocd-image-updater.argoproj.io/claude-pod.update-strategy: digest
+    # claude-session sleeps at 0 replicas; without force-update the
+    # updater ignores images with no running pod.
+    argocd-image-updater.argoproj.io/claude-pod.force-update: "true"
     # The image is private. Without this the updater's registry poll
     # 401s and nothing ever updates; apps with public images need no
     # pull-secret annotation. The updater's own RBAC only reaches
