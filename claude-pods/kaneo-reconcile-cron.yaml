@@ -8,8 +8,9 @@
 # So: a clock, reintroduced on purpose. Not to schedule the work (moving a
 # card does that) but to notice work that was owed and never happened.
 #
-# Sweep every minute: unclaimed cards retry after RECONCILE_UNCLAIMED (15m),
+# Sweep every five minutes: unclaimed cards retry after RECONCILE_UNCLAIMED (15m),
 # while a worker's durable start receipt grants RECONCILE_STALE (4h).
+# Once work is eligible, the next scheduled sweep is at most five minutes away.
 # The dispatcher serializes asynchronous sweeps while a wake is in flight.
 
 apiVersion: batch/v1
@@ -20,7 +21,7 @@ metadata:
 spec:
   # The sweep repairs both missed dispatches and cards left behind after
   # a manual merge, such as CLA-13. It never reruns agents for merged PRs.
-  schedule: "* * * * *"
+  schedule: "*/5 * * * *"
   timeZone: America/New_York
   # Avoid overlapping trigger Jobs. The dispatcher separately serializes
   # the asynchronous sweeps, which can outlive these HTTP requests.
