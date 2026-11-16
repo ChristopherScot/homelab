@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # dispatcher-command-protocol: 2
-# Pod 1's 04:00 job: an independent verdict on the PRs pod 0 opened at 00:00.
+# Pod 1's stage: independently review the dispatcher-assigned PR revision.
 #
 # The point is that this panel has NOT seen pod 0's reasoning. It gets a fresh
 # clone and the diff, nothing else — no author transcript, no earlier review

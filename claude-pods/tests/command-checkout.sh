@@ -42,4 +42,20 @@ if prepare_command_checkout "$tmp/worker" 2>/dev/null; then
   echo 'unpublished work was reset' >&2; exit 1
 fi
 [ "$(git -C "$tmp/worker" rev-parse HEAD)" = "$before" ]
-echo 'PASS: published squash history permits checkout; unpushed work is preserved'
+# A resumed branch in a fresh clone must support the promised per-commit push.
+COMMAND_BRANCH=fix/resume
+COMMAND_MODE=resume
+git -C "$tmp/operator" checkout -qb "$COMMAND_BRANCH"
+printf resumed >> "$tmp/operator/file"
+git -C "$tmp/operator" commit -qam resumed
+git -C "$tmp/operator" push -qu origin "$COMMAND_BRANCH"
+head=$(git -C "$tmp/operator" rev-parse HEAD)
+git clone -q "$tmp/remote" "$tmp/fresh"
+jq -n --arg base "$base" --arg head "$head" '{base:"main",baseSHA:$base,branchSHA:$head}' > "$COMMAND_PAYLOAD"
+prepare_command_checkout "$tmp/fresh"
+[ "$(git -C "$tmp/fresh" rev-parse HEAD)" = "$head" ]
+printf continued >> "$tmp/fresh/file"
+git -C "$tmp/fresh" commit -qam continued
+git -C "$tmp/fresh" -c push.autoSetupRemote=false -c push.default=simple push -q
+[ "$(git --git-dir="$tmp/remote" rev-parse "$COMMAND_BRANCH")" = "$(git -C "$tmp/fresh" rev-parse HEAD)" ]
+echo 'PASS: published history permits checkout; unpushed work survives; resumed commits push'

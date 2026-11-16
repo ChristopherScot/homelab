@@ -1,14 +1,10 @@
 #!/usr/bin/env bash
 # dispatcher-command-protocol: 2
-# Pod 0's stage: turn open GitHub issues into reviewed pull requests.
+# Pod 0's stage: execute one dispatcher-assigned author command.
 #
 # Runs non-interactively via `claude -p`, so everything it needs must be in
 # the prompt — there's nobody to answer a question at 00:00. It opens PRs and
-# stops; merging is pod 1's job at 04:00, from a cold read of the diff.
-#
-# Driven by issues, not repos: most of the 24 clones are dormant hobby
-# projects, and iterating repos would spend the night on ones with nothing
-# to do.
+# stops; the dispatcher assigns independent testing and review afterward.
 set -uo pipefail
 
 # Shared preamble for the three stage pods — see lib/pod-common.sh.
@@ -96,14 +92,14 @@ for t in "${TICKETS[@]}"; do
     --permission-mode acceptEdits --settings "$NIGHTLY_SETTINGS" \
     --add-dir "$dir")
   rc=$?
-  printf '%s\n' "$(claude_result_text "$out")"
+  out_text=$(claude_result_text "$out")
+  printf '%s\n' "$out_text"
 
   # Belt and braces on the push, the same way the old flow verified the
   # issue link: the prompt asks for a push after each round, but a prompt
   # is not a guarantee and the agent may have been cut off before it got
-  # there. Commits that exist only in this clone die with the pod, and the
-  # next ticket resets this checkout to origin — so unpushed work is lost
-  # even when nothing is wrong with it.
+  # there. Publishing permits the next command to resume; otherwise the
+  # checkout guard preserves local work and holds for manual recovery.
   #
   # One run reached review round 2 of 3 on a 3,000-line change, hit a
   # usage limit, and left every commit local.
@@ -119,13 +115,8 @@ for t in "${TICKETS[@]}"; do
     fi
   fi
 
-  # A timeout leaves the card in In Progress, deliberately. There is no
-  # janitor sweeping stuck cards: the column is the signal, and a card
-  # sitting in In Progress with no run behind it is visible on the board
-  # and draggable back to To Do by hand. Automating that would mean
-  # guessing when a long run is dead, and guessing wrong either kills
-  # working runs or re-dispatches them alongside the original.
-  [ $rc -eq 124 ] && echo "TIMEOUT after ${COMMAND_TIMEOUT}s on $t — card left in in-progress for a human to requeue"
+  # Even after a timeout, recover a published PR or report why none exists.
+  [ $rc -eq 124 ] && echo "TIMEOUT after ${COMMAND_TIMEOUT}s on $t — checking for a published PR"
 
   # Use the same exact-task, same-repository selection as recovery/review.
   opened=$(command_pr | jq -r '"\(.number) \(.url)"')
@@ -141,9 +132,7 @@ for t in "${TICKETS[@]}"; do
     # is inert, so the card lands somewhere visible and stops. Dragging it
     # back to To Do is then a deliberate "try again".
     echo "   no PR for $task; parking the card in backlog"
-    kaneo_outcome "$task" failed
-    kaneo_mention "$task" "${KANEO_OWNER:-chris}" \
-      "the author pod produced no pull request for this card; parked in Backlog"
+    report_author_no_pr "$task" "$out_text" || continue
   else
     pr_num="${opened%% *}"
     pr_url="${opened#* }"

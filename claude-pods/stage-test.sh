@@ -3,10 +3,8 @@
 # Pod 2's job: try hard to break the PRs pod 0 opened, and file issues for
 # what actually breaks.
 #
-# Runs at 02:00, between authoring (00:00) and the merge verdict (04:00),
-# so anything it finds is on the PR before pod 1 decides. A bug found at
-# 02:00 is a NO-MERGE at 04:00; the same bug found after the merge is a
-# revert.
+# Runs only when the dispatcher assigns a test command after authoring.
+# Its verdict must be available before the dispatcher advances to review.
 #
 # Deliberately separate from pod 1. Pod 1 asks "is this good code?" and
 # pod 2 asks "where does it break?" — different questions, and bundling
@@ -55,17 +53,18 @@ for repo in "$ONLY_REPO"; do
     name="$(basename "$repo")"
     dir="/workspace/$name"
     [ -d "$dir" ] || { echo "SKIP $repo#$pr: no clone"; continue; }
-    prepare_command_checkout "$dir" || continue
-
-    echo "--- testing $repo#$pr ($(date -Is))"
     # Inside the clone, so git clean sweeps it at the end of the loop
     # and the agent is never pointed at $STATE_DIR, where the log of its
     # own run lives. Cleared first, because a file left by an earlier
-    # run would be read as this run's verdict.
+    # run would be read as this run's verdict. Remove this worker-owned
+    # artifact before the dirty-tree guard so an interrupted test can retry;
+    # all other local changes remain protected by checkout preparation.
     # prompts/test.md tells the agent this same path.
     VERDICT_FILE="$dir/.nightly-verdict"
-    rm -f "$VERDICT_FILE"
+    rm -f "$VERDICT_FILE" || continue
+    prepare_command_checkout "$dir" || continue
 
+    echo "--- testing $repo#$pr ($(date -Is))"
 
     # Through the failover wrapper: a work account at its limit otherwise
     # ends the run with no verdict, which stage-merge correctly reads as

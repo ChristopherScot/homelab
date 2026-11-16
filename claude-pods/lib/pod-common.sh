@@ -109,7 +109,10 @@ prepare_command_checkout() {
   [ "$actual" = "$branch_sha" ] || { echo 'command branch changed; waiting for a new command' >&2; return 1; }
   case "$COMMAND_MODE" in
     author) git -C "$dir" checkout --quiet -B "$COMMAND_BRANCH" "$base_sha" ;;
-    resume|rework|test|review) git -C "$dir" checkout --quiet -B "$COMMAND_BRANCH" "$branch_sha" ;;
+    resume|rework|test|review)
+      git -C "$dir" checkout --quiet -B "$COMMAND_BRANCH" "$branch_sha" &&
+        git -C "$dir" branch --set-upstream-to="origin/$COMMAND_BRANCH" "$COMMAND_BRANCH" >/dev/null
+      ;;
     *) return 1 ;;
   esac
 }
@@ -347,6 +350,17 @@ kaneo_link_pr() {
 }
 
 kaneo_mention() { kaneo_note "$1" "@$2 $3"; }
+
+# Preserve the reason work stopped before parking a card with no PR.
+report_author_no_pr() {
+  local task="$1" report
+  report=$(printf '%s' "$2" | redact | jq -Rrs 'if length > 6000 then .[:6000] + "\n[truncated; full report in worker log]" else . end') || return 1
+  kaneo_note "$task" "@${KANEO_OWNER:-chris} the author produced no pull request; parking in Backlog.
+
+Author report:
+${report:-No final report was produced.}" || return 1
+  kaneo_outcome "$task" failed
+}
 
 # Exact assigned-task PR selection, shared by author recovery and both review
 # stages. Forks reusing a branch name and old merged links cannot select work.
