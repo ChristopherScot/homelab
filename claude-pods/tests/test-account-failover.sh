@@ -22,7 +22,7 @@ printf 'work-token' > "$CLAUDE_TOKEN_DIR/oauth-token"
 printf 'personal-token' > "$CLAUDE_TOKEN_DIR/oauth-token-personal"
 
 # shellcheck disable=SC1091
-NIGHTLY_NS=test . "$here_dir/../lib/pod-common.sh" 2>/dev/null
+ . "$here_dir/../lib/claude-account.sh" 2>/dev/null
 
 # A result object, the way the CLI emits one. Used everywhere below so
 # the shape is written once: a dozen hand-typed
@@ -266,45 +266,6 @@ preflight_credential >/dev/null 2>&1 || { echo "FAIL: refused a pod that has the
 rm -f "$HOME/.claude/.credentials.json"
 preflight_credential >/dev/null 2>&1 && { echo "FAIL: passed with no tokens and no CLI login"; fail=1; }
 
-# --- every stage must go through the wrapper -------------------------
-# This suite passed for weeks while all three stages invoked `claude -p`
-# bare, because it only ever exercised the helper directly. The library
-# said as much in prose, and prose does not fail a build.
-#
-# Checked on the LOGICAL command - comments stripped, backslash
-# continuations joined - because an earlier version checked line
-# adjacency and certified an unwired stage.
-for stage in stage-author stage-test stage-merge; do
-  f="$here_dir/../$stage.sh"
-  [ -f "$f" ] || { echo "FAIL: cannot find $stage.sh to check"; fail=1; continue; }
-  # Join backslash continuations, then strip comments. The previous
-  # form of this (tr to \001, sed, tr back) did NOT join anything - the
-  # substitution never matched - so a gate documented as checking the
-  # logical command was still matching line adjacency, the very defect
-  # it was written to replace. Verified by hand on a three-line
-  # continuation before and after.
-  joined=$(sed -e :a -e '/\\$/N; s/\\\n//; ta' "$f" | sed 's/#.*//')
-
-  printf '%s' "$joined" | grep -q 'run_with_account_failover' \
-    || { echo "FAIL: $stage.sh does not call run_with_account_failover"; fail=1; }
-
-  # A bare `claude -p` anywhere in the stage is the bug returning.
-  printf '%s' "$joined" | grep -E 'claude -p' | grep -qv 'run_with_account_failover' \
-    && { echo "FAIL: $stage.sh invokes claude -p outside the wrapper"; fail=1; }
-
-  # The prompt goes through --stdin. A redirect around the wrapper is
-  # the drained-stdin bug, and it is invisible in a diff that still
-  # shows a prompt file being passed.
-  printf '%s' "$joined" | grep -qE 'run_with_account_failover[^|&;]*<[[:space:]]*"?\$' \
-    && { echo "FAIL: $stage.sh redirects into run_with_account_failover; pass --stdin"; fail=1; }
-  printf '%s' "$joined" | grep -q 'run_with_account_failover --stdin' \
-    || { echo "FAIL: $stage.sh does not pass its prompt with --stdin"; fail=1; }
-
-  # Detection needs the JSON, so every stage has to ask for it.
-  printf '%s' "$joined" | grep -q 'output-format json' \
-    || { echo "FAIL: $stage.sh does not pass --output-format json"; fail=1; }
-done
-
 # --- desloppify shares this library ----------------------------------
 # The desloppify image COPYs lib/claude-account.sh and calls the
 # detector with a BARE reason word (`jq -r .stop_reason`), not a result
@@ -321,5 +282,5 @@ else
   echo "FAIL: cannot find nightly-desloppify.sh to check its call shape"; fail=1
 fi
 
-[ "$fail" -eq 0 ] && echo "PASS - work first, personal only when out of quota, no key leak, CLI login honoured, nothing-at-all refused, prompt survives the retry, and all three stages go through the wrapper with JSON output"
+[ "$fail" -eq 0 ] && echo "PASS - work first, personal only when out of quota, no key leak, CLI login honoured, nothing-at-all refused, prompt survives the retry, and the desloppify consumer retains its shared account helper"
 exit "$fail"

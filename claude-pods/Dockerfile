@@ -13,6 +13,11 @@
 # the dispatcher Deployment itself; the CronJobs pick the new digest up
 # on their next run. There is nothing to restart by hand (see
 # kustomization.yaml).
+# Built from the reviewed dispatcher source; shares its typed wire contract.
+FROM golang:1.27 AS kaneo-worker
+ARG KANEO_WORKER_REF=112c8cbcacb4eb69f753899905f8cb081d1c94ba
+RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ChristopherScot/kaneo-dispatcher/cmd/kaneo-worker@${KANEO_WORKER_REF}
+
 FROM node:22-trixie-slim
 
 ARG CLAUDE_CODE_VERSION=2.1.325
@@ -352,11 +357,11 @@ COPY kbrowser.sh /usr/local/bin/kbrowser
 # the dispatcher is the only caller now.
 # Prompt instructions and task context come from immutable dispatcher commands.
 # Only the local tool permission settings ship in this image.
+COPY --from=kaneo-worker /out/kaneo-worker /usr/local/bin/kaneo-worker
 COPY --chmod=0755 stage-author.sh /usr/local/bin/stage-author
 COPY --chmod=0755 stage-merge.sh /usr/local/bin/stage-merge
 COPY --chmod=0755 stage-test.sh  /usr/local/bin/stage-test
-# The preamble all three share is one sourced file, at the path the
-# scripts default POD_LIB to.
+# Disk maintenance and the account helper still used by desloppify.
 COPY lib/ /usr/local/share/claude-pods/lib/
 COPY prompts/ /usr/local/share/claude-pods/prompts/
 # The scoped Bash allow-list ships inside prompts/ (copied above). It
