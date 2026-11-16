@@ -328,6 +328,10 @@ COPY --chown=1000:1000 skills/ /home/node/.claude/skills/
 # matters when a new model needs a newer Claude Code than the pin.
 COPY --chown=1000:1000 claude-settings.json /home/node/.claude/settings.json
 
+# Machine-wide instructions are outside the persistent HOME, so existing
+# sessions receive them on their next image without rewriting user files.
+COPY pod-resources.md /etc/claude-code/CLAUDE.md
+
 # Snapshot the baked home (oh-my-zsh, nvim config, .zshrc, etc.) to a pristine
 # skeleton. At runtime /home/node is mounted on a persistent PVC, which would
 # shadow these; the entrypoint seeds an empty home from /opt/home-skel on first

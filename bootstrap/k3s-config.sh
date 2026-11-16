@@ -37,14 +37,11 @@ if ! ip -4 -o addr show "$IFACE" | grep -q "inet ${NODE_IP}/"; then
   exit 1
 fi
 
-sudo tee "$CONFIG" >/dev/null <<EOF
-write-kubeconfig-mode: "0644"
-node-ip: ${NODE_IP}
-flannel-iface: ${IFACE}
-EOF
-
-echo "wrote $CONFIG:"
-sed 's/^/  /' "$CONFIG"
+# Preserve existing settings and apply the same host memory protection as the
+# standalone maintenance command. Requires python3-yaml; see MEMORY.md.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+sudo python3 "$SCRIPT_DIR/k3s-memory.py" --config "$CONFIG" --write \
+  --node-ip "$NODE_IP" --flannel-iface "$IFACE"
 
 sudo systemctl restart k3s
 echo "restarted k3s; give it ~60s, then check: sudo systemctl is-active k3s"
