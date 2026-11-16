@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
 # Claude account selection, shared by every pod that runs the CLI.
 #
-# Separate from pod-common.sh because that file carries kubectl,
-# Kaneo and namespace machinery the desloppify pod has no use for, and
-# sourcing all of it to get two functions would couple the two images
-# together for no reason.
+# Retained for desloppify. Dispatcher-commanded stages now use the Go
+# worker account handling in the kaneo-dispatcher repository.
 #
 # No side effects on source: nothing here runs until called.
 

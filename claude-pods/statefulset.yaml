@@ -217,7 +217,7 @@ spec:
     #
     # What filled it was all regenerable: go/pkg 1.9G, .npm 1.8G,
     # .cache/go-build 1.2G, against .claude at 99M. prune_build_caches
-    # in lib/pod-common.sh now drops those when a stage ends with this
+    # in lib/maintenance.sh drops those when a stage ends with this
     # filesystem under pressure, so this size is headroom, not the fix.
     #
     # The live PVCs are already 15Gi. They were patched directly:

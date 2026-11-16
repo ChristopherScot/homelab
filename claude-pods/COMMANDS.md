@@ -4,7 +4,8 @@ The author, test and merge stages execute only dispatcher-issued commands:
 stage-author <task-id> <owner/repository> <command-id>
 ```
 
-The dispatcher persists the command before launch. A stage without all three
+The three stage scripts only exec `kaneo-worker`, built from a reviewed commit
+of the dispatcher repository. The dispatcher persists the command before launch. A stage without all three
 arguments exits before obtaining credentials or taking work. The dispatcher
 selects the mode, PR/head and base/branch revisions. Workers execute that assignment and refuse changed remote revisions.
 There is no board scan, repository sweep or daily merge-compensation sweep.
@@ -26,7 +27,7 @@ GitHub is called; a lost final report cannot make reverted work count as Done.
 
 Before starting, workers fetch `POST /worker-command`, validate its v1 payload,
 SHA-256 digest, identity and result contract, and acknowledge that digest in the
-start report. Protocol marker 2 distinguishes workers that support snapshots.
+start report. Protocol marker 3 distinguishes workers that support snapshots.
 
 The dispatcher owns the Markdown templates and deterministic fresh/rework/resume
 selection, including the rework cap. Workers substitute only workspace and verdict
@@ -50,7 +51,28 @@ Service source: https://github.com/ChristopherScot/kaneo-dispatcher
 
 Quiesce existing workers before rollout. Deploy the dispatcher endpoint/RBAC,
 then replace every session pod with this image; check the StatefulSet partition.
-The dispatcher refuses old scripts lacking `dispatcher-command-protocol: 2`,
+The dispatcher refuses old scripts lacking `dispatcher-command-protocol: 3`,
 and these workers refuse missing, unsupported or mismatched prompt payloads.
 Validate with a disposable ticket before enabling the real backlog. No deployment is performed
 by this change. Recovery instructions live in the dispatcher README.
+
+The Go worker owns the typed protocol, prompt admission/archive, pod lock,
+checkout preparation, Claude account/model selection, result parsing and reports.
+Git, `gh` and Claude remain subprocesses. One Claude deadline spans probing and
+account fallback. Each tool inherits the held pod lock, preserving busy status
+if the worker is killed while that tool survives; normal completion and
+cancellation clean up the tool process group before releasing the lock.
+
+`verdict.txt` and credential-redacted Claude attempt records now live under the
+command archive. Merge and revert intents are persisted before remote writes,
+and confirmed receipts before reports. Uncertain writes require inspection and
+manual recovery, never automatic replay. CI observations must be complete and
+known to pass before success is reported. Rework notes carry a structured kind;
+the dispatcher owns receipt wording and counting.
+
+During rollout, inspect any old repository-local `.nightly-verdict` files and
+other dirty work before enabling new commands. The Go worker does not discard
+old dirty checkouts. Bash now handles only stage entrypoints and best-effort
+pressure-based cache maintenance; `claude-account.sh` remains for desloppify.
+Worker execution tests are in the dispatcher Go module. Shell tests here cover
+entrypoints, maintenance and the other pod tools.
