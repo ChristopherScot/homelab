@@ -11,7 +11,7 @@
 # both images ship the worker; tests/image-pins.sh fails the suite when
 # one is bumped without the other.
 FROM golang:1.27 AS kaneo-worker
-ARG KANEO_WORKER_REF=2c1a1ef40b73a15701cff586798bd5de95c610f3
+ARG KANEO_WORKER_REF=f49eced221413ae824ea2e4789ef38cf5f9c089a
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ChristopherScot/kaneo-dispatcher/cmd/kaneo-worker@${KANEO_WORKER_REF}
 
 FROM node:22-trixie-slim
@@ -30,11 +30,12 @@ ENV LANG=C.UTF-8 \
 
 # git + gh for checkout and pull requests; jq/curl/ripgrep for the agent's
 # allow-listed shell; build-essential so `go test` can build cgo packages
-# and `make` targets run. flock, setsid and nohup (util-linux) and timeout
-# (coreutils) come with the base: the dispatcher's launch line and busy
-# probe need them, and image-smoke.sh checks they are there.
+# and `make` targets run; procps for the pkill the preStop hook sends.
+# flock, setsid and nohup (util-linux) and timeout (coreutils) come with
+# the base: the dispatcher's launch line and busy probe need them, and
+# image-smoke.sh checks they are there.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates jq ripgrep build-essential unzip \
+      git curl ca-certificates jq ripgrep build-essential unzip procps \
     && rm -rf /var/lib/apt/lists/*
 
 # gh CLI
@@ -109,6 +110,8 @@ RUN git config --system --add credential.https://github.com.helper '' \
 # context come from immutable dispatcher commands; only the local tool
 # permission settings ship here.
 COPY --from=kaneo-worker /out/kaneo-worker /usr/local/bin/kaneo-worker
+# preStop: refuse new commands, signal the worker, wait for its lock.
+COPY --chmod=0755 stop-worker.sh /usr/local/bin/stop-kaneo-worker
 COPY --chmod=0755 stage-author.sh /usr/local/bin/stage-author
 COPY --chmod=0755 stage-merge.sh /usr/local/bin/stage-merge
 COPY --chmod=0755 stage-test.sh  /usr/local/bin/stage-test

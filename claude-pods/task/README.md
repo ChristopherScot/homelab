@@ -40,12 +40,13 @@ Against `../Dockerfile` at the commit this was split from.
 **Kept, unchanged path**
 
 - `kaneo-worker` (same `KANEO_WORKER_REF`), `stage-author`, `stage-test`,
-  `stage-merge` with protocol marker 3
+  `stage-merge` with protocol marker 3, and `stop-kaneo-worker` as the
+  preStop hook with the same 180-second termination grace
 - `prompts/nightly-settings.json` at the worker's `NIGHTLY_SETTINGS`
   default
 - `lib/maintenance.sh` at the path the worker looks for
 - Claude Code at the same `CLAUDE_CODE_VERSION`, hardlink-deduped
-- git, gh, curl, jq, ripgrep, build-essential (make, gcc)
+- git, gh, curl, jq, ripgrep, build-essential (make, gcc), procps (pkill)
 - Go toolchain, kubectl, helm, yq, tofu at the same pins. The allow-list
   also permits golangci-lint, python3 and pytest; neither image installs
   them, and this split does not change that.
@@ -70,7 +71,9 @@ Against `../Dockerfile` at the commit this was split from.
 - tmux, tpm, `tmux.conf`, the always-on `claude --remote-control` loop and
   the `rc` session, `rclaude-layout`, `tmux-sessionizer`
 - zsh, oh-my-zsh, starship, zoxide, eza, fzf, fd-find, direnv, delta,
-  lazygit, croc, less, vim, openssh-client, gnupg
+  lazygit, croc, less, vim, openssh-client, gnupg, the explicit
+  `util-linux` install (flock and setsid come with the base; the smoke
+  test checks)
 - Neovim, LazyVim, gopls, goimports, gofumpt, delve
 - Google Cloud SDK and the gcloud boot auth, `dp` (deploy wrapper), the
   `gcp-deploy` mount: the allow-list denies `gcloud` to the agent anyway

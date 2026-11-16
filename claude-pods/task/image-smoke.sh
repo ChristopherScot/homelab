@@ -13,11 +13,14 @@ test -w "$HOME" || fail "$HOME is not writable"
 
 # The worker and what it execs: git, gh, claude, bash for maintenance.sh.
 # flock/setsid/nohup/mktemp are what the dispatcher's launch line and busy
-# probe run through `sh -c` in this container.
-for tool in kaneo-worker stage-author stage-test stage-merge \
-            claude git gh bash sh flock setsid nohup mktemp timeout; do
+# probe run through `sh -c` in this container; pkill is what the preStop
+# hook sends the worker.
+for tool in kaneo-worker stop-kaneo-worker stage-author stage-test stage-merge \
+            claude git gh bash sh flock setsid nohup mktemp timeout pkill; do
   command -v "$tool" >/dev/null || fail "missing worker tool: $tool"
 done
+# The hook on an idle pod: no worker to signal, nothing holding the lock.
+NIGHTLY_LOCK=/tmp/smoke.lock stop-kaneo-worker || fail "stop-kaneo-worker failed on an idle pod"
 # Build/test tools the image is meant to ship for the agent. This is the
 # image's contract, not a transcription of the allow-list: that file also
 # permits golangci-lint, python3 and pytest, which neither image installs.

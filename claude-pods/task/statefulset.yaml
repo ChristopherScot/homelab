@@ -31,6 +31,9 @@ spec:
       labels:
         app: claude-task
     spec:
+      # Allow the worker's 2-minute checkpoint and 30-second report budgets,
+      # plus process cleanup, before kubelet can forcibly stop the container.
+      terminationGracePeriodSeconds: 180
       # The session pods' ServiceAccount (cluster-admin, ../rbac.yaml):
       # the stages already run with it there, and the cards they work
       # include cluster changes. Narrowing it is its own decision.
@@ -44,6 +47,11 @@ spec:
           image: ghcr.io/christopherscot/claude-task:latest
           # Digest-pinned by argocd-image-updater on the live Application (see kustomization.yaml); pull-on-change, cache otherwise.
           imagePullPolicy: IfNotPresent
+          # Graceful shutdown for a running stage: ../stop-worker.sh.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/usr/local/bin/stop-kaneo-worker"]
           env:
             # HOME comes from the image; ../statefulset.yaml sets it only
             # because its Dockerfile does not.
