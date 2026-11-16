@@ -1,0 +1,13 @@
+# The claude-task Application (app-of-apps/apps/claude-task.yaml) deploys
+# this directory in kustomize mode, like ../kustomization.yaml, so that
+# argocd-image-updater can pin the task image by digest on the live
+# Application. Only what is listed under resources is deployed; the
+# Dockerfile, entrypoint, smoke test and README here are image source.
+# claude-pods/tests/image-pinning.sh checks this list and the image name.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - statefulset.yaml
+images:
+  - name: ghcr.io/christopherscot/claude-task
+    newTag: latest

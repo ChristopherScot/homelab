@@ -24,6 +24,9 @@ on:
       - 'app-of-apps/apps/claude-pods.yaml'
       - 'app-of-apps/apps/desloppify-pod.yaml'
       - '.github/workflows/claude-pods-tests.yml'
+  # To run the suite on a branch before its PR exists:
+  #   gh workflow run claude-pods-tests.yml --ref <branch>
+  workflow_dispatch:
 
 permissions:
   contents: read

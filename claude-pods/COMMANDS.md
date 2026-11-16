@@ -56,6 +56,12 @@ and these workers refuse missing, unsupported or mismatched prompt payloads.
 Validate with a disposable ticket before enabling the real backlog. No deployment is performed
 by this change. Recovery instructions live in the dispatcher README.
 
+The worker, its entrypoints and the tools it needs also ship as their own
+image, `claude-task` (task/Dockerfile, task/README.md), with no interactive
+tooling. The dispatcher still execs into the session pods on `claude-pod`;
+the task image is built, smoke-tested and digest-pinned on its own
+Application ahead of that retarget.
+
 The Go worker owns the typed protocol, prompt admission/archive, pod lock,
 checkout preparation, Claude account/model selection, result parsing and reports.
 Git, `gh` and Claude remain subprocesses. One Claude deadline spans probing and

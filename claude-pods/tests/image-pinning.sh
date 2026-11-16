@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# Our own images (claude-pod, desloppify-pod) are digest-pinned by
-# argocd-image-updater. Four pieces make that true, and each one failing
-# is silent - the cluster keeps running, on the wrong image or with the
-# wrong pull behaviour. This checks all four:
+# Our own images (claude-pod, claude-task, desloppify-pod) are
+# digest-pinned by argocd-image-updater. Four pieces make that true, and
+# each one failing is silent - the cluster keeps running, on the wrong
+# image or with the wrong pull behaviour. This checks all four:
 #
-#   1. claude-pods/ and desloppify-pod/ are kustomizations listing every
-#      top-level manifest (an unlisted one is simply not deployed).
-#   2. Every ref to our own images in those two directories is
-#      IfNotPresent. (codex-pods/ also runs claude-pod and is not
+#   1. claude-pods/, claude-pods/task/ and desloppify-pod/ are
+#      kustomizations listing every top-level manifest (an unlisted one
+#      is simply not deployed).
+#   2. Every ref to our own images in those directories is IfNotPresent,
+#      and each directory references only the one image its Application
+#      enrols - so a claude-task build can never roll the session
+#      StatefulSet. (codex-pods/ also runs claude-pod and is not
 #      enrolled; it keeps its own pull story.)
 #   3. Each Application carries the updater annotations, including the
 #      pull secret, and the updater is granted that secret.
@@ -31,13 +34,14 @@ fail() {
 }
 
 registry=ghcr.io/christopherscot
-# Both images are private and share one pull secret; the Applications
+# All three images are private and share one pull secret; the Applications
 # name it and the RBAC grant below must land in the same namespace.
 pull_secret_ns=claude-pods
 pull_secret=ghcr-pull
 # dir  alias (also the image name under $registry)  app-file
 apps=(
   "claude-pods claude-pod app-of-apps/apps/claude-pods.yaml"
+  "claude-pods/task claude-task app-of-apps/apps/claude-task.yaml"
   "desloppify-pod desloppify-pod app-of-apps/apps/desloppify-pod.yaml"
 )
 
@@ -112,5 +116,5 @@ yq -e '.spec.ignoreDifferences[]
 yq -e '.spec.syncPolicy.syncOptions[] | select(. == "RespectIgnoreDifferences=true")' "$root" >/dev/null 2>&1 ||
   fail "$root lacks RespectIgnoreDifferences=true; the ignore applies to diffs but not to syncs"
 
-[ "$failed" -eq 0 ] && echo "PASS - both apps digest-pinned, IfNotPresent at every ref, updater can read the pull secret, root app leaves the digest alone"
+[ "$failed" -eq 0 ] && echo "PASS - all three apps digest-pinned, IfNotPresent at every ref, updater can read the pull secret, root app leaves the digest alone"
 exit "$failed"

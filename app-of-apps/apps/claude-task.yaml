@@ -1,0 +1,37 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: claude-task
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+  annotations:
+    # The task-worker image, digest-pinned the same way as claude-pods;
+    # see that Application for the reasoning. Its own Application so a
+    # claude-task build writes its digest here and never touches the
+    # session StatefulSet or the CronJobs on the claude-pods Application.
+    argocd-image-updater.argoproj.io/image-list: claude-task=ghcr.io/christopherscot/claude-task:latest
+    argocd-image-updater.argoproj.io/claude-task.update-strategy: digest
+    # The StatefulSet is held at 0 replicas until the dispatcher targets
+    # it; without force-update the updater ignores an image with no
+    # running pod.
+    argocd-image-updater.argoproj.io/claude-task.force-update: "true"
+    # Private image; the pull secret lives in claude-pods and
+    # claude-pods/rbac.yaml grants the updater get on it.
+    argocd-image-updater.argoproj.io/claude-task.pull-secret: pullsecret:claude-pods/ghcr-pull
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+spec:
+  project: default
+  source:
+    repoURL: 'https://github.com/ChristopherScot/homelab'
+    targetRevision: HEAD
+    path: claude-pods/task
+  destination:
+    server: 'https://kubernetes.default.svc'
+    namespace: claude-pods
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
