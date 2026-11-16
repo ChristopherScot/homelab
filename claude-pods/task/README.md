@@ -89,13 +89,19 @@ Against `../Dockerfile` at the commit this was split from.
 
 ## Image sizes
 
-Uncompressed, as reported by `docker image inspect` in CI and by the
-nodes' image lists.
+Uncompressed. `claude-task` from `docker image inspect` in the first PR
+build (2026-11-16); `claude-pod` from the nodes' image lists for the
+digest the session pods were running that day. Every CI run prints the
+current `claude-task` figure to its job summary.
 
 | Image | Size |
 |---|---|
-| `claude-pod` (interactive, live digest `af0467b1…`) | 1,569,488,020 bytes (1,497 MiB) |
-| `claude-task` | see the claude-task image workflow run for this branch; recorded in the PR |
+| `claude-pod` (interactive, digest `af0467b1…`) | 1,569,488,020 bytes (1,497 MiB) |
+| `claude-task` | 573,055,610 bytes (546 MiB) |
+
+Most of the difference is the Google Cloud SDK, Neovim with its Go LSP
+and debugger, and the shell tooling; the Go toolchain, Claude Code and
+build-essential are in both.
 
 ## Before the dispatcher is retargeted
 
