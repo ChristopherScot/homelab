@@ -10,6 +10,13 @@ arguments exits before obtaining credentials or taking work. The dispatcher
 selects the mode, PR/head and base/branch revisions. Workers execute that assignment and refuse changed remote revisions.
 There is no board scan, repository sweep or daily merge-compensation sweep.
 
+The dispatcher restricts task work to `ChristopherScot/*` through `NIGHTLY_OWNER`.
+New repositories under that owner need no per-pod list change. After its start
+is authorized, the worker clones a missing assigned repository using the mounted
+GitHub credential. Existing checkouts must have the assigned GitHub origin;
+local changes and other repositories are preserved. Startup clone lists only
+prepare the workspace and do not grant task permissions.
+
 Starts, outcomes, notes, mentions and links are reported to
 `$KANEO_DISPATCH_URL/worker-events` (default: the in-cluster dispatcher Service).
 The existing mounted API key authenticates the request; command identity scopes

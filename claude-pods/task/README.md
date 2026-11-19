@@ -11,6 +11,15 @@ and that is what keeps the production flow running until it is
 retargeted. This directory makes the task image buildable, tested and
 deployable ahead of that step without touching the session pods.
 
+Workers clone a missing assigned repository after the dispatcher authorizes its
+start. The entrypoint's repo list only prewarms the workspace; it is not an
+allowlist. Task scope is the dispatcher's `ChristopherScot/*` owner policy.
+Deploy the updated worker images before enabling that policy in the dispatcher,
+and verify the running binary in all three session pods before proceeding.
+Both StatefulSets use `partition: 3`, so publishing an image alone does not
+replace those pods; wait for an idle sleep/wake or perform a controlled
+replacement after the running commands finish.
+
 ## What is here
 
 | File | Role |

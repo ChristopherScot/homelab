@@ -37,13 +37,7 @@ else
   echo "WARN: no git token at $secrets/git/token; private repos will not clone" >&2
 fi
 
-# Per-pod repos by StatefulSet ordinal, from the Vault-backed claude-repos
-# secret (pod<ordinal> files), falling back to CLONE_REPOS. The worker
-# expects /workspace/<repo> to exist; it never clones. Space, comma or
-# newline separated; full URLs or owner/repo slugs (assumed github.com).
-# Idempotent: a repo dir that exists is left alone, whatever its state.
-# A failed clone is a warning, not an exit: one bad entry in a list of
-# two dozen must not keep the pod from serving every other repo's cards.
+# Optional startup clones warm the workspace; workers clone missing assignments after authorization.
 ORD="${HOSTNAME##*-}"
 REPOS="$(cat "$secrets/repos/pod${ORD}" 2>/dev/null || echo "${CLONE_REPOS:-}")"
 echo "pod ordinal=$ORD -> $(echo "$REPOS" | wc -w) repo(s)"

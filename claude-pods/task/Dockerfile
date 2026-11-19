@@ -11,7 +11,7 @@
 # both images ship the worker; tests/image-pins.sh fails the suite when
 # one is bumped without the other.
 FROM golang:1.27 AS kaneo-worker
-ARG KANEO_WORKER_REF=f49eced221413ae824ea2e4789ef38cf5f9c089a
+ARG KANEO_WORKER_REF=e255ceca594fad0bb8677a933cce258011756c14
 RUN CGO_ENABLED=0 GOBIN=/out go install github.com/ChristopherScot/kaneo-dispatcher/cmd/kaneo-worker@${KANEO_WORKER_REF}
 
 FROM node:22-trixie-slim
