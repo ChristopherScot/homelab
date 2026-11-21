@@ -89,3 +89,10 @@ old dirty checkouts. Bash now handles only stage entrypoints and best-effort
 pressure-based cache maintenance; `claude-account.sh` remains for desloppify.
 Worker execution tests are in the dispatcher Go module. Shell tests here cover
 entrypoints, maintenance and the other pod tools.
+
+## Memory budget
+
+Workers share a 2 GiB hard limit across Claude and all child processes. Run
+heavy builds and tests sequentially using the supplied environment defaults.
+See [the worker instructions](pod-resources.md) and
+[host protection and rollout](../bootstrap/MEMORY.md).

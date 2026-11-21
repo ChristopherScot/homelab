@@ -1,4 +1,4 @@
-# Two interactive Claude Code sessions (claude-session-0 / -1) for parallel
+# Three Claude Code sessions (claude-session-0 / -1 / -2) for parallel
 # multitasking. StatefulSet so each replica gets its own stable workspace PVC
 # (separate repo clones + Claude login state → no git/state collisions).
 #
@@ -65,6 +65,17 @@ spec:
       # Allow the worker's 2-minute checkpoint and 30-second report budgets,
       # plus process cleanup, before kubelet can forcibly stop the container.
       terminationGracePeriodSeconds: 180
+      # Prefer separate nodes, but allow failover: dispatcher waits for all
+      # three sessions before starting work.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: claude-session
+                topologyKey: kubernetes.io/hostname
       serviceAccountName: claude-session
       # Private ghcr image — pull secret from the ghcr-pull ExternalSecret.
       imagePullSecrets:
@@ -90,6 +101,22 @@ spec:
               exec:
                 command: ["/usr/local/bin/stop-kaneo-worker"]
           env:
+            # Pod env reaches kubectl exec as well as PID 1. These per-process
+            # defaults reduce build fan-out; the cgroup enforces the total cap.
+            - name: GOMAXPROCS
+              value: "2"
+            - name: GOFLAGS
+              value: "-p=1"
+            - name: GOMEMLIMIT
+              value: "512MiB"
+            - name: NODE_OPTIONS
+              value: "--max-old-space-size=768"
+            - name: MAKEFLAGS
+              value: "-j1"
+            - name: CMAKE_BUILD_PARALLEL_LEVEL
+              value: "1"
+            - name: CARGO_BUILD_JOBS
+              value: "1"
             - name: HOME
               value: /home/node
             # Engineer who owns these pods — used by `dp <tag>` to deploy to
@@ -173,14 +200,13 @@ spec:
           # whatever the node has spare — the request only sets the floor
           # under contention.
           #
-          # Memory is the opposite: 2Gi is a hard ceiling and exceeding it
-          # is an OOM kill, so it stays. Observed steady state is ~300Mi,
-          # and nothing has been OOM-killed, but a build plus a browser
-          # plus a Go test run is the spike worth keeping headroom for.
+          # Reserve the entire 2Gi ceiling so the scheduler does not place
+          # workers on the assumption that they only need their idle memory.
+          # CPU remains burstable; equal memory does not mean Guaranteed QoS.
           resources:
             requests:
               cpu: 100m
-              memory: 512Mi
+              memory: 2Gi
             limits:
               memory: 2Gi
       volumes:
